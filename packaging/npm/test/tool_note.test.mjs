@@ -114,18 +114,18 @@ test("hook: a prompt the triage skips still gets its tool note on its own", asyn
   assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /reads it as a web request/);
 });
 
-test("hook: no tool goal named -> /tools is still asked, with no goal, and the note tells the model to search", async () => {
+test("hook: a new task with no goal named -> the note tells the model to search, and nothing is waited for", async () => {
   const calls = [], out = [];
   await runPromptHook({ stdinText: JSON.stringify({ prompt: "create a presentation for me about our launch", cwd: tmp }),
     settings: { url: "http://x/mcp" }, userAgent: "t", env: ENV,
     fetchImpl: server({ needs_retrieval: false, kind: "reusable_task", work: "change" }, REPLY, calls),
     write: (s) => out.push(s), log: () => {} });
-  const asked = calls.find((c) => c && c.tools);
-  assert.ok(asked, "the router is asked on every prompt of three or more words");
+  assert.ok(!calls.some((c) => c && c.tools), "no router round trip: no added latency");
   assert.equal(out.length, 1);
   const note = JSON.parse(out[0]).hookSpecificOutput.additionalContext;
   assert.match(note, /search for tools/);
-  assert.doesNotMatch(note, /reads it as a undefined/);
+  assert.match(note, /not at the start of a new one/);
+  assert.doesNotMatch(note, /nothing ready/);                 // the router was not asked, so it is not said to have had nothing
   assert.doesNotMatch(note, /undefined/);
 });
 
@@ -138,14 +138,32 @@ test("hook: a prompt under three words does not ask the router", async () => {
   assert.ok(!calls.some((c) => c && c.tools));
 });
 
-test("hook: in the middle of a small task (a trivial edit) the search is not asked for", async () => {
+const MID_TASK = () => {
+  const f = path.join(tmp, `mid-${Math.random().toString(36).slice(2)}.jsonl`);
+  fs.writeFileSync(f, [JSON.stringify({ type: "user", message: { role: "user", content: "calc is wrong" } }),
+                       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Fixed calc.py." }] } })].join("\n") + "\n");
+  return f;
+};
+
+test("hook: in the middle of a task (earlier turns, not a new reusable task) there is no search note and no router call", async () => {
+  for (const verdict of [{ kind: "repo_specific", work: "change" }, { kind: "trivial_edit", work: "change" }, { kind: "repo_specific", work: "change", tool: "web" }]) {
+    const calls = [], out = [];
+    await runPromptHook({ stdinText: JSON.stringify({ prompt: "now rename foo to bar in utils.py please", cwd: tmp, transcript_path: MID_TASK() }),
+      settings: { url: "http://x/mcp" }, userAgent: "t", env: ENV,
+      fetchImpl: server({ needs_retrieval: false, ...verdict }, REPLY, calls),
+      write: (s) => out.push(s), log: () => {} });
+    assert.ok(!calls.some((c) => c && c.tools), `no router call for ${JSON.stringify(verdict)}`);
+    assert.equal(out.length, 0);
+  }
+});
+
+test("hook: a new reusable task after earlier turns does get the search note", async () => {
   const calls = [], out = [];
-  await runPromptHook({ stdinText: JSON.stringify({ prompt: "rename foo to bar in utils.py", cwd: tmp }),
+  await runPromptHook({ stdinText: JSON.stringify({ prompt: "create a presentation for me about our launch", cwd: tmp, transcript_path: MID_TASK() }),
     settings: { url: "http://x/mcp" }, userAgent: "t", env: ENV,
-    fetchImpl: server({ needs_retrieval: false, kind: "trivial_edit", work: "change" }, REPLY, calls),
+    fetchImpl: server({ needs_retrieval: false, kind: "reusable_task", work: "change" }, REPLY, calls),
     write: (s) => out.push(s), log: () => {} });
-  assert.ok(!calls.some((c) => c && c.tools));
-  assert.equal(out.length, 0);
+  assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /search for tools/);
 });
 
 test("hook: STEALTHLAB_HOOK_TOOLS_ALWAYS=off -> only a named goal asks the router, as before", async () => {

@@ -560,7 +560,7 @@ export async function runPromptHook(args) {
 
 // How long routing takes (lib/routing_timing.mjs; off unless STEALTHLAB_ROUTING_TIMING=1): one line per prompt, written
 // whichever way the hook ends. A timing failure never reaches the prompt.
-const UNNAMED_TOOLS_MS = 6000;
+const NAMED_TOOLS_MS = 4000;
 
 async function runPromptHookCore(args) {
   let prompt = "";
@@ -646,8 +646,10 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
   // the server's judgment of this prompt (JEV first): whether a lookup is worth it, and -- for dispatch -- whether it asks
   // for a change now. It reads the earlier turns too: "so it needs X?" after a fix is a confirmation, not a new task.
   let verdict = null;
+  let earlierTurns = null;               // how many turns this session already has (null: not looked at)
   if (policy.triage || dispatchInstalled(env)) {
     const turns = sessionTurns({ transcriptPath: payload.transcript_path, sessionId: payload.session_id, current: payload.prompt, env });
+    earlierTurns = turns.length;
     timer.mark("triage_start");
     verdict = await callTriage({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(), context: turnsText(turns),
@@ -662,21 +664,22 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
     timer.set("triage", verdict ? { work: verdict.work || null, needs_retrieval: verdict.needs_retrieval ?? null } : null);
     log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"} category=${verdict.category || "-"} tool=${verdict.tool || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
   }
-  // the tool question, started now so it runs while the lookup and any dispatch do (lib/tool_note.mjs)
-  // The router is asked on nearly every prompt (three words or more, and not a small task in progress), not only when the triage names a tool goal (a prompt like "remove the dollars
-  // from the frontend" got tool=- and so no recommendation at all). With no goal named, the server picks the goal itself, and the wait is short
-  // (UNNAMED_TOOLS_MS) so a slow router never holds a prompt up. STEALTHLAB_HOOK_TOOLS_ALWAYS=off restores "only when the triage names one".
+  // The tool search is for STARTING a task, not for the middle of one. A new task is the first prompt of a session, or one the triage reads as a
+  // new reusable task; a follow-up inside a task (an edit, a next step, a question about the code in front of you) gets no note and no router
+  // call, so it costs no time. At a new task the model is told to search (a note, with nothing to wait for); only when the triage also named a
+  // tool goal is the router asked here for a head start, and then for at most NAMED_TOOLS_MS. STEALTHLAB_HOOK_TOOLS_ALWAYS=off: only a named goal.
   const promptText = String(payload.prompt || "").trim();
-  const always = (env.STEALTHLAB_HOOK_TOOLS_ALWAYS || "on").toLowerCase() !== "off" && promptText.split(/\s+/).filter(Boolean).length >= 3
-    && verdict?.kind !== "trivial_edit";                 // the one time it is not asked: in the middle of a small task (a quick edit, a next step)
-  if ((verdict?.tool || always) && (env.STEALTHLAB_HOOK_TOOLS || "on").toLowerCase() !== "off") {
-    tooling.goal = verdict?.tool || undefined;
-    tooling.named = Boolean(verdict?.tool);
-    tooling.pending = callTools({
-      url: settings.url, token: settings.token, userAgent, need: promptText, goal: verdict?.tool || undefined,
-      installed: installedServers(payload.cwd || process.cwd(), env, { skipUrl: settings.url }), fetchImpl,
-      ...(verdict?.tool ? {} : { timeoutMs: UNNAMED_TOOLS_MS }),
-    });
+  const newTask = earlierTurns === 0 || verdict?.kind === "reusable_task";
+  const searchAlways = (env.STEALTHLAB_HOOK_TOOLS_ALWAYS || "on").toLowerCase() !== "off" && promptText.split(/\s+/).filter(Boolean).length >= 3 && newTask;
+  tooling.goal = verdict?.tool || undefined;
+  tooling.named = Boolean(verdict?.tool);               // a prompt that needs an outside tool is the session's, not the answering agent's
+  if ((verdict?.tool || searchAlways) && newTask && (env.STEALTHLAB_HOOK_TOOLS || "on").toLowerCase() !== "off") {
+    tooling.pending = verdict?.tool
+      ? callTools({
+        url: settings.url, token: settings.token, userAgent, need: promptText, goal: verdict.tool, timeoutMs: NAMED_TOOLS_MS,
+        installed: installedServers(payload.cwd || process.cwd(), env, { skipUrl: settings.url }), fetchImpl,
+      })
+      : Promise.resolve({ tools: [], skipped: true });    // no goal named: no wait at all, the note alone sends the model to search
   }
   // a question or conversation: a cheap model answers it, a reviewer checks the reply, and the developer gets it before
   // the session's model would run (lib/answer.mjs); a reply not called good is never shown
