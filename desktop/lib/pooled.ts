@@ -12,6 +12,7 @@
 // Each returns the inline OpenCode config the engine starts with. With neither, the engine keeps its previous behaviour
 // (OpenCode's own global config, e.g. a developer-held key lane).
 import fs from "node:fs"
+import { SIGN_IN_TO_RUN, webToken } from "./websession"
 import os from "node:os"
 import path from "node:path"
 
@@ -43,7 +44,7 @@ const home = (env: NodeJS.ProcessEnv) => env.STEALTHLAB_HOME || path.join(os.hom
  *  environment (never in this text), GLM 5.3 Flash as the default when the gateway offers it, the priciest model as the
  *  provider-failure fallback and the cheapest as the cheap rung. */
 function buildConfig(models: Model[], baseUrl: string, token: string, extraHeaders: Record<string, string>,
-                     cfg: any, env: NodeJS.ProcessEnv): PooledEngine {
+                     cfg: any, env: NodeJS.ProcessEnv, modelKey?: string): PooledEngine {
   const sorted = [...models].sort((a, b) => priceOf(a) - priceOf(b))
   const cheap = sorted[0]
   const priciest = [...sorted].reverse().find((m) => Number.isFinite(priceOf(m))) || sorted[sorted.length - 1]
@@ -88,7 +89,7 @@ function buildConfig(models: Model[], baseUrl: string, token: string, extraHeade
   if (cfg?.url) {
     config.mcp = { servers: { kell: { type: "remote", url: cfg.url, codemode: false, headers: { Authorization: `Bearer ${token}` } } } }
   }
-  return { content: JSON.stringify(config), key: token }
+  return { content: JSON.stringify(config), key: modelKey ?? token }
 }
 
 /** The organization lane: the inline config and the bearer, or null when this machine is not on an organization gateway. */
@@ -139,14 +140,24 @@ export async function personalEngineConfig(env: NodeJS.ProcessEnv = process.env,
   const cfg = readJson(path.join(home(env), "config.json"))
   const token: string = cfg?.token || ""
   if (!token) return { ok: false, reason: "not-signed-in", message: "Sign in to use your kell plan." }
+  // The model API takes only a website session (the Rooms sign-in); the coding token above stays for kell's MCP tools.
+  const web = await webToken()
+  if (!web) return { ok: false, reason: "not-signed-in", message: SIGN_IN_TO_RUN }
   const origin = gatewayOrigin(cfg, env)
   let res: Response
   try {
-    res = await fetchImpl(`${origin}/v1/models`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) })
+    res = await fetchImpl(`${origin}/v1/models`, { headers: { authorization: `Bearer ${web}` }, signal: AbortSignal.timeout(15_000) })
   } catch {
     return { ok: false, reason: "unreachable", message: "Cannot reach kell right now. Check your connection and try again." }
   }
-  if (res.status === 401 || res.status === 403) return { ok: false, reason: "rejected", message: "kell did not accept this sign-in. Sign out and sign in again." }
+  if (res.status === 401 || res.status === 403) {
+    // The server's own reason: "sign in again" does not help when the gateway refuses this kind of token (the coding sign-in is
+    // an MCP-app token, and the model API takes only website sessions, 2026-11-06).
+    const why = String((await res.json().catch(() => null))?.error?.message || "")
+    return { ok: false, reason: "rejected", message: /connected MCP app/i.test(why)
+      ? "Running models on your own plan in the app isn't connected yet (the server refuses the app's sign-in for models). Use the Rooms tab, or kell.org.in, for now."
+      : why ? `kell refused this sign-in: ${why}` : "kell did not accept this sign-in. Sign out and sign in again." }
+  }
   if (!res.ok) return { ok: false, reason: "unreachable", message: `kell answered ${res.status}; try again in a moment.` }
   const body: any = await res.json().catch(() => null)
   const models: Model[] = (Array.isArray(body?.data) ? body.data : [])
@@ -154,16 +165,20 @@ export async function personalEngineConfig(env: NodeJS.ProcessEnv = process.env,
     .map((m: any) => ({ id: m.id, input: m.stealthlab?.input_per_mtok, output: m.stealthlab?.output_per_mtok }))
   if (!models.length) return { ok: false, reason: "no-models", message: "No models are available to this account yet." }
   shared.__kellPersonalModels = models.map((m) => m.id)
-  return { ok: true, engine: buildConfig(models, `${origin}/v1`, token, {}, cfg, env) }
+  // The engine calls this app's own /api/gateway (it adds the current website session to each call), never the gateway directly:
+  // a session refreshes every hour, and the engine keeps whatever key it started with.
+  const local = `http://127.0.0.1:${env.PORT || "3400"}/api/gateway/v1`
+  return { ok: true, engine: buildConfig(models, local, token, {}, cfg, env, "kell-desktop-local") }
 }
 
 /** Dollars left in the person's own wallet, or null when it cannot be read (then the model call decides). */
 export async function walletRemaining(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch): Promise<number | null> {
   const cfg = readJson(path.join(home(env), "config.json"))
-  if (!cfg?.token) return null
+  const web = await webToken()                         // the wallet is on the website API: the website session
+  if (!web) return null
   try {
     const r = await fetchImpl(`${gatewayOrigin(cfg, env)}/v1/billing/wallet`,
-      { headers: { authorization: `Bearer ${cfg.token}` }, signal: AbortSignal.timeout(8_000) })
+      { headers: { authorization: `Bearer ${web}` }, signal: AbortSignal.timeout(8_000) })
     if (!r.ok) return null
     const n = Number((await r.json())?.remaining_usd)
     return Number.isFinite(n) ? n : null

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev -p 3400",
     "bundle:cli": "node scripts/bundle-cli.mjs",
-    "build": "npm run bundle:cli && next build",
+    "build": "npm run bundle:cli && next build && node scripts/standalone.mjs",
     "typecheck": "tsc --noEmit",
     "start": "next start -p 3400",
     "electron:build": "tsc -p electron",
@@ -31,7 +31,23 @@
       "!node_modules/@opencode/cli/**",
       "!node_modules/@opencode/cli-windows-x64-baseline/**",
       "!node_modules/@next/swc-*/**",
-      "!node_modules/typescript/**"
+      "!node_modules/typescript/**",
+      "!.next/standalone/.next/cache/**",
+      "!node_modules/next/**",
+      "!node_modules/@next/**",
+      "!node_modules/effect/**",
+      "!node_modules/@img/**",
+      "!node_modules/sharp/**",
+      "!node_modules/react/**",
+      "!node_modules/react-dom/**",
+      "!node_modules/caniuse-lite/**",
+      "!node_modules/styled-jsx/**",
+      "!node_modules/@opencode/client/**",
+      "!node_modules/@opencode/protocol/**",
+      "!node_modules/@opencode/schema/**",
+      "!node_modules/marked/**",
+      "!node_modules/@fontsource/**",
+      "!node_modules/scheduler/**"
     ],
     "asarUnpack": [
       "vendor/**"

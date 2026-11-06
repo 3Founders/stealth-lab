@@ -94,6 +94,46 @@ export function setRoomsTheme(theme: "light" | "dark") {
   ).catch(() => undefined)
 }
 
+/** The website session's current access token, for the coding lane's model calls (2026-11-06): the model gateway takes only website
+ *  sessions, and the coding sign-in is an MCP-app token it refuses on purpose. The rooms view owns this session and its Supabase
+ *  client refreshes it, so the token is only ever read here, never refreshed here (two refreshers of one refresh token trip
+ *  Supabase's reuse detection and revoke the session). An expired one: the view is reloaded, which makes the client refresh it on
+ *  start. Null when the rooms are not signed in. The view is created (hidden) when needed, so the coding lane works before the
+ *  Rooms tab was ever opened. */
+export async function roomsAccessToken(win: BrowserWindow | undefined): Promise<string | null> {
+  if (!win || win.isDestroyed()) return null
+  const wc = ensureView(win).webContents
+  const loaded = () => new Promise<void>((ok) => {
+    if (!wc.isLoading() && wc.getURL().startsWith(SITE)) return ok()
+    wc.once("did-finish-load", () => ok()); setTimeout(ok, 15_000)
+  })
+  const read = async (): Promise<{ token: string; exp: number } | null> => {
+    await loaded()
+    try {
+      return await wc.executeJavaScript(`(() => {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i) || ""
+          if (!/^sb-.*-auth-token$/.test(k)) continue
+          try { const s = JSON.parse(localStorage.getItem(k) || "null"); const c = s && (s.access_token ? s : s.currentSession)
+                if (c && typeof c.access_token === "string") return { token: c.access_token, exp: Number(c.expires_at || 0) } } catch {}
+        }
+        return null
+      })()`)
+    } catch { return null }
+  }
+  let s = await read()
+  if (s && s.exp * 1000 - Date.now() < 60_000) {
+    wc.reload()
+    await new Promise((r) => setTimeout(r, 500))
+    for (let i = 0; i < 10; i++) {                       // the client refreshes on start; give it a few seconds
+      s = await read()
+      if (!s || s.exp * 1000 - Date.now() >= 60_000) break
+      await new Promise((r) => setTimeout(r, 700))
+    }
+  }
+  return s && s.exp * 1000 - Date.now() > 0 ? s.token : null
+}
+
 /** Who the rooms are signed in as: the website session's user id and email, or null. Read for display and for the
  *  same-account check only; the rooms API verifies the session itself. */
 export async function roomsAccount(): Promise<{ id: string; email: string | null } | null | undefined> {

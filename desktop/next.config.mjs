@@ -6,6 +6,9 @@
 /** @type {import("next").NextConfig} */
 const config = {
   serverExternalPackages: ["@opencode/client"],
+  // The installed app runs .next/standalone/server.js with only the files the server actually uses (scripts/standalone.mjs copies
+  // the static files in). Shipping all of node_modules made the app about 780 MB and over 10,000 files, so installing took minutes.
+  output: "standalone",
 }
 
 export default config

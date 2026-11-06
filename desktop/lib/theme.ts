@@ -1,5 +1,5 @@
-// Light or dark. The default is automatic: dark in the evening and at night where the person is, light in the day, by the clock of the
-// device. They can pick Light or Dark instead; that choice is kept on this device (localStorage). The page always carries the theme
+// Light or dark. The app opens light unless the person picked dark (owner, 2026-11-06: it turned dark by itself after 19:00, from the
+// website's clock rule). The choice is kept on this device (localStorage). The page always carries the theme
 // in effect as data-theme on <html>; the stylesheet reads only that.
 export type Theme = "auto" | "light" | "dark";
 export type Effective = "light" | "dark";
@@ -18,8 +18,8 @@ export function autoTheme(now: Date = new Date()): Effective {
   return h >= DARK_FROM_HOUR || h < DARK_UNTIL_HOUR ? "dark" : "light";
 }
 
-export function effectiveTheme(t: Theme, now: Date = new Date()): Effective {
-  return t === "auto" ? autoTheme(now) : t;
+export function effectiveTheme(t: Theme, _now: Date = new Date()): Effective {
+  return t === "auto" ? "light" : t;              // nothing chosen: light (the clock rule, autoTheme, is not used in the app)
 }
 
 /** What is saved: "light", "dark", or "auto" for nothing saved or anything else (an older "system" choice counts as automatic). */
@@ -42,5 +42,5 @@ export function saveTheme(t: Theme, storage: Pick<Storage, "setItem" | "removeIt
  * visit only. Must stay in step with readTheme and autoTheme. */
 export const THEME_INIT =
   `try{var q=new URLSearchParams(location.search).get('theme'),t=localStorage.getItem('${THEME_KEY}'),h=new Date().getHours();` +
-  `var e=(q==='light'||q==='dark')?q:(t==='light'||t==='dark')?t:(h>=${DARK_FROM_HOUR}||h<${DARK_UNTIL_HOUR})?'dark':'light';` +
+  `var e=(q==='light'||q==='dark')?q:(t==='light'||t==='dark')?t:'light';` +
   `document.documentElement.setAttribute('data-theme',e)}catch(e){}`;

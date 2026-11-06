@@ -5,6 +5,13 @@ import { pooledEngineConfig, ownKeyLane, walletRemaining, isNeedPlan } from "@/l
 
 export const dynamic = "force-dynamic"
 
+/** A failed turn's reason in one line: the engine's own message where it gave one, else what it sent. */
+const reasonOf = (d: any): string => {
+  const m = d?.error?.data?.message ?? d?.error?.message ?? d?.message ?? d?.error
+  const s = typeof m === "string" ? m : JSON.stringify(d)
+  return s.replace(/Bearer\s+\S+/gi, "Bearer …").slice(0, 300) || "the model did not answer"
+}
+
 export async function POST(req: Request) {
   const e = engineStatus()
   if (!e) return new Response("engine is down; open a project first", { status: 502 })
@@ -32,6 +39,11 @@ export async function POST(req: Request) {
               const d = (ev as any).data ?? {}
               if (d.sessionID && d.sessionID !== sessionID) continue
               // the turn ends with execution.succeeded/failed (idle may not fire in serve mode)
+              if (k === "session.execution.failed") {
+                // the reason was dropped here, so a failed turn showed nothing at all (2026-11-06)
+                const why = JSON.stringify(d)
+                enc(isNeedPlan(why) ? { type: "need_plan" } : { type: "error", error: reasonOf(d) })
+              }
               if (k === "session.execution.succeeded" || k === "session.execution.failed" || k === "session.idle") {
                 enc({ type: "done", outcome: k })
                 break
