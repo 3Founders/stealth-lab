@@ -5,7 +5,7 @@
 // The child gets ELECTRON_RUN_AS_NODE=1 so it runs as plain node, listens on an OS-picked port (port 0 probed, never a
 // fixed one — the OpenCode desktop app owns 28894 and is never touched), and its whole tree — including the opencode
 // engine it starts through lib/engine.ts's /api routes — dies with the app.
-import { app, BrowserWindow, ipcMain, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
 import { isSignInLink, openSignIn } from "./signin"
 import { openAccountSignIn, reloadRooms, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import net from "node:net"
@@ -77,6 +77,12 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.handle("kell:rooms-account", () => roomsAccount())
     ipcMain.handle("kell:rooms-signout", () => signOutRooms())
     ipcMain.handle("kell:account-open", (_e, url: string) => openAccountSignIn(win, String(url)))
+    // The project folder: the system's own folder picker (typing a path was the only way, and the button looked dead, 2026-11-06).
+    ipcMain.handle("kell:pick-folder", async () => {
+      const r = win ? await dialog.showOpenDialog(win, { title: "Choose a project folder", properties: ["openDirectory", "createDirectory"] })
+                    : await dialog.showOpenDialog({ title: "Choose a project folder", properties: ["openDirectory", "createDirectory"] })
+      return r.canceled ? null : r.filePaths[0] ?? null
+    })
     // Register the show handler BEFORE the load: "ready-to-show" can fire while loadURL is still resolving, and a handler
     // added after the await then never runs, leaving the window hidden forever (the installed app looked like it did
     // nothing, 2026-11-03). show() is idempotent, so it is also called once the load has finished.

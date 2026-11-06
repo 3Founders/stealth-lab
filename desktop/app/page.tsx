@@ -18,7 +18,7 @@ type Rect = { x: number; y: number; width: number; height: number }
 type RoomsWho = { id: string; email: string | null } | null
 type KellDesktop = {
   openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void
-  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>
+  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined> }
 }
 const desktop = () => (typeof window !== "undefined" ? (window as unknown as { kellDesktop?: KellDesktop }).kellDesktop : undefined)
@@ -65,6 +65,7 @@ const tokensOf = (d: any) => {
 export default function Home() {
   const [directory, setDirectory] = useState("")
   const [engine, setEngine] = useState<{ up: boolean; error?: string } | null>(null)
+  const [opening, setOpening] = useState(false)
   const [lines, setLines] = useState<Line[]>([])
   const [steps, setSteps] = useState<Step[]>([])
   const [ledger, setLedger] = useState<LedgerRow[]>([])
@@ -127,12 +128,24 @@ export default function Home() {
     } catch (err: any) { setCards([]); setCardsNote(String(err?.message || err)) }
   }
 
-  const openProject = async () => {
-    setEngine(null)
-    window.localStorage.setItem("kell.directory", directory)
-    const r = await fetch("/api/engine", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory }) })
-    const j = await r.json()
-    setEngine(j.up ? { up: true } : { up: false, error: j.error })
+  // Open project: with no folder typed, the system's folder picker first (in the app). Says what it is doing and what happened:
+  // it used to change nothing on screen when it worked, so it looked broken (2026-11-06).
+  const openProject = async (picked?: string) => {
+    let dir = picked ?? directory
+    if (!dir.trim()) {
+      const chosen = await desktop()?.pickFolder?.()
+      if (!chosen) return
+      dir = chosen; setDirectory(chosen)
+    }
+    setEngine(null); setOpening(true)
+    window.localStorage.setItem("kell.directory", dir)
+    let j: { up?: boolean; error?: string }
+    try {
+      const r = await fetch("/api/engine", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir }) })
+      j = await r.json()
+    } catch (err) { j = { up: false, error: err instanceof Error ? err.message : String(err) } }
+    finally { setOpening(false) }
+    setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
     if (j.up) { setQueued([]); setLines([]); setSteps([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null) }
   }
 
@@ -395,12 +408,17 @@ export default function Home() {
               placeholder="a folder path to work in" className="dk-field mono" aria-label="Project folder" />
           </div>
           <div className="dk-row">
-            <button type="button" className="btn-ink" onClick={openProject} disabled={!!sessionID || !directory || busy}>Open project</button>
+            <button type="button" className="btn-ink" onClick={() => void openProject()} disabled={!!sessionID || busy || opening}>{opening ? "Opening…" : "Open project"}</button>
+            {desktop()?.pickFolder && !sessionID && (
+              <button type="button" className="btn-line" disabled={busy || opening}
+                onClick={async () => { const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); void openProject(d) } }}>Choose folder</button>
+            )}
             {sessionID && (
               <button type="button" className="btn-line" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>New session</button>
             )}
           </div>
           {engine && !engine.up && (engine.error || sessionID) && <p className="dk-err" role="status">Engine problem{engine.error ? `: ${engine.error}` : ""}</p>}
+          {engine?.up && !sessionID && <p className="dk-note" role="status">Project open: {directory.split(/[\\/]/).filter(Boolean).pop()}. Type what you want done below.</p>}
 
           <h2>Models</h2>
           {!settings ? <p className="dk-note">reading…</p> : (
