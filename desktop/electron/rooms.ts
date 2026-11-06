@@ -5,11 +5,10 @@
 // placeholder and reports its rectangle; the view sits on top of it and hides when the page shows the coding lane.
 //
 // One account for the whole app. The coding lane signs in with `kell login` (OAuth with PKCE, the token saved in
-// ~/.stealthlab/config.json); the rooms sign in with the website's own session (Supabase, in the site's localStorage).
-// Both are the same Supabase account, so the app runs `kell login --no-browser` and opens its authorize link here, in the
-// rooms' own cookie store (partition persist:kell-web): the person signs in on kell's consent page once, which leaves the
-// website session for the rooms AND hands the CLI its code. Signing out clears both. If the two ever name different
-// accounts (someone signed in as another person inside the rooms), the page says so and offers to sign out of both.
+// ~/.stealthlab/config.json) in the person's default browser (Google refuses embedded windows); the rooms sign in with the
+// website's own session (Supabase, in the site's localStorage, partition persist:kell-web). Both are the same Supabase
+// account. Signing out clears both. If the two ever name different accounts (someone signed in as another person inside
+// the rooms), the page says so and offers to sign out of both.
 //
 // Links: the site and the sign-in providers it uses stay in the view; a tool's sign-in link opens the app's tool sign-in
 // window (electron/signin.ts); anything else goes to the system browser.
@@ -108,32 +107,17 @@ export async function roomsAccount(): Promise<{ id: string; email: string | null
   }
 }
 
-/** The one sign-in: open `kell login`'s authorize link in the rooms' cookie store. Resolves true once the flow reaches the
- *  CLI's loopback callback (the CLI then saves its token), false if the window is closed first. */
-export function openAccountSignIn(parent: BrowserWindow | undefined, url: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    let u: URL
-    try { u = new URL(url) } catch { resolve(false); return }
-    if (u.protocol !== "https:") { resolve(false); return }
-    const w = new BrowserWindow({
-      width: 520, height: 760, parent, title: "Sign in to kell", backgroundColor: "#F8F6EF", autoHideMenuBar: true,
-      webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true },
-    })
-    w.webContents.setUserAgent(plainUserAgent(w.webContents.getUserAgent()))
-    let finished = false
-    const atCallback = (to: string) => /^http:\/\/127\.0\.0\.1:\d+\/callback/.test(to)
-    const finish = (ok: boolean) => {
-      if (finished) return
-      finished = true
-      resolve(ok)
-      setTimeout(() => { if (!w.isDestroyed()) w.close() }, 1200)
-    }
-    w.webContents.on("did-navigate", (_e, to) => { if (atCallback(to)) finish(true) })
-    w.webContents.on("did-redirect-navigation", (_e, to) => { if (atCallback(to)) setTimeout(() => finish(true), 1500) })
-    w.webContents.setWindowOpenHandler(({ url: next }) => { void w.loadURL(next); return { action: "deny" } })
-    w.on("closed", () => { if (!finished) { finished = true; resolve(false) } })
-    void w.loadURL(url)
-  })
+/** The one sign-in: open `kell login`'s authorize link in the person's DEFAULT BROWSER (2026-11-06). Google refuses to sign in
+ *  inside an embedded window, whatever user agent it sends ("This browser or app may not be secure"), so the link goes where
+ *  Google accepts it. The CLI waits on a loopback address (http://127.0.0.1:<port>/callback), which any local browser can
+ *  reach, and saves its token itself; the page polls /api/settings until that token is there. Resolves true once the browser
+ *  was opened. The rooms view keeps its own website session (see the header): it is signed in inside the rooms, where
+ *  GitHub works, or the rooms are opened in the browser. */
+export function openAccountSignIn(_parent: BrowserWindow | undefined, url: string): Promise<boolean> {
+  let u: URL
+  try { u = new URL(url) } catch { return Promise.resolve(false) }
+  if (u.protocol !== "https:") return Promise.resolve(false)
+  return shell.openExternal(u.toString()).then(() => true, () => false)
 }
 
 /** Sign the rooms out: the site's session and its local copies (cached chat keys included) go, so a next account never

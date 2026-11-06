@@ -6,6 +6,7 @@
 // fixed one — the OpenCode desktop app owns 28894 and is never touched), and its whole tree — including the opencode
 // engine it starts through lib/engine.ts's /api routes — dies with the app.
 import { app, BrowserWindow, ipcMain, shell } from "electron"
+import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
 import { openAccountSignIn, reloadRooms, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import net from "node:net"
@@ -85,6 +86,16 @@ if (!app.requestSingleInstanceLock()) {
     await win.loadURL(base)
     say("window loaded")
     win.show()
+
+    // Updates: the installed app asks the public releases-only repo (build.publish in package.json) for a newer installer
+    // once at start, downloads it quietly and installs it when the app closes. Not in dev or the smoke run; a failure (no
+    // network, no release yet) is logged and never stops the app. No token is involved: the releases are public.
+    if (app.isPackaged && process.env.KELL_SMOKE !== "1" && process.env.KELL_NO_UPDATE !== "1") {
+      autoUpdater.autoDownload = true
+      autoUpdater.autoInstallOnAppQuit = true
+      autoUpdater.on("update-downloaded", (i) => say(`update ${i.version} downloaded; installs when the app closes`))
+      autoUpdater.checkForUpdates().catch((e) => say(`update check failed: ${String(e?.message || e).slice(0, 160)}`))
+    }
 
     // Smoke (KELL_SMOKE=1): with the window up, start the engine through the UI's own route, report, quit.
     // KELL_SMOKE_DIR is the project directory to boot the engine on.

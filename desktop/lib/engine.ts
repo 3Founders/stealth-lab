@@ -7,7 +7,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import type { OC, Client } from "./oc-types"
-import { pooledEngineConfig } from "./pooled"
+import { pooledEngineConfig, personalEngineConfig, ownKeyLane } from "./pooled"
 
 export type { Client }
 
@@ -58,6 +58,14 @@ export async function engineStart(directory: string): Promise<Engine> {
   if (!exe) throw new Error("opencode.exe not found; set KELL_OC_ENGINE or run `kell setup --client opencode`")
   if (state.engine && state.child && !state.child.killed && state.engine.directory === directory) return state.engine
   engineStop()
+  // Which lane pays: a joined organization first; else a developer's own key when `kell setup --client opencode` set one up;
+  // else the signed-in person's own plan through kell's gateway (the models come from the gateway, so this waits on it).
+  let pooled = pooledEngineConfig()
+  if (!pooled && !ownKeyLane()) {
+    const personal = await personalEngineConfig()
+    if (!personal.ok) throw new Error(personal.message)
+    pooled = personal.engine
+  }
   let engine: Engine | undefined
   engine = await new Promise<Engine>((ok, no) => {
     const read = (chunk: any, fail: boolean) => {
@@ -72,7 +80,6 @@ export async function engineStart(directory: string): Promise<Engine> {
     }
     // The organization lane: when this machine ran `kell join`, the child gets an inline provider on the company's
     // gateway, authenticated with the person's kell sign-in. Nothing provider-shaped is on the machine.
-    const pooled = pooledEngineConfig()
     state.child = spawn(exe, ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: directory, stdio: [null, "pipe", "pipe"],
       windowsHide: true,        // a console program started from a GUI app opens a visible black window on Windows without this
