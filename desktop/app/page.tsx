@@ -68,6 +68,42 @@ export default function Home() {
   const [directory, setDirectory] = useState("")
   const [engine, setEngine] = useState<{ up: boolean; error?: string } | null>(null)
   const [opening, setOpening] = useState(false)
+  // Projects opened before, newest first (this device only), shown in the sidebar instead of the model list.
+  const [recents, setRecents] = useState<string[]>([])
+  useEffect(() => { try { const r = JSON.parse(window.localStorage.getItem("kell.projects") || "[]"); if (Array.isArray(r)) setRecents(r.filter((x) => typeof x === "string").slice(0, 12)) } catch { /* none */ } }, [])
+  const remember = (dir: string) => setRecents((r) => {
+    const next = [dir, ...r.filter((x) => x.toLowerCase() !== dir.toLowerCase())].slice(0, 12)
+    try { window.localStorage.setItem("kell.projects", JSON.stringify(next)) } catch { /* storage blocked */ }
+    return next
+  })
+  const forget = (dir: string) => setRecents((r) => {
+    const next = r.filter((x) => x !== dir)
+    try { window.localStorage.setItem("kell.projects", JSON.stringify(next)) } catch { /* storage blocked */ }
+    return next
+  })
+  // The two side columns can be dragged wider or narrower; the widths are kept on this device.
+  const [widths, setWidths] = useState({ left: 260, right: 340 })
+  useEffect(() => { try { const w = JSON.parse(window.localStorage.getItem("kell.layout") || "null"); if (w && typeof w.left === "number" && typeof w.right === "number") setWidths(w) } catch { /* default */ } }, [])
+  const dragColumn = (side: "left" | "right") => (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const el = e.currentTarget
+    el.setPointerCapture(e.pointerId)
+    const startX = e.clientX
+    const start = widths[side]
+    let last = widths
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX
+      const w = Math.round(side === "left" ? Math.min(480, Math.max(190, start + dx)) : Math.min(640, Math.max(240, start - dx)))
+      last = { ...widths, [side]: w }
+      setWidths(last)
+    }
+    const up = () => {
+      el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up)
+      try { window.localStorage.setItem("kell.layout", JSON.stringify(last)) } catch { /* storage blocked */ }
+    }
+    el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up)
+  }
+  const [accountOpen, setAccountOpen] = useState(false)
   const [lines, setLines] = useState<Line[]>([])
   const [steps, setSteps] = useState<Step[]>([])
   const [ledger, setLedger] = useState<LedgerRow[]>([])
@@ -148,6 +184,7 @@ export default function Home() {
     } catch (err) { j = { up: false, error: err instanceof Error ? err.message : String(err) } }
     finally { setOpening(false) }
     setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
+    if (j.up) remember(dir)
     if (j.up) { setQueued([]); setLines([]); setSteps([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null) }
   }
 
@@ -424,7 +461,10 @@ export default function Home() {
           )}
         </div>
       )}
-      <div className="dg-shell" hidden={pane !== "code"}>
+      <div className="dg-shell" hidden={pane !== "code"}
+        style={{ "--dk-left": `${widths.left}px`, "--dk-right": `${widths.right}px` } as React.CSSProperties}>
+        <div className="dk-resize" data-side="left" role="separator" aria-orientation="vertical" aria-label="Drag to resize the project list" onPointerDown={dragColumn("left")} />
+        <div className="dk-resize" data-side="right" role="separator" aria-orientation="vertical" aria-label="Drag to resize the changes panel" onPointerDown={dragColumn("right")} />
         <aside className="dg-side" aria-label="Project, models and account">
           <div className="dg-brand">
             <img className="wm-light" src="/kel-wordmark.png" alt="keळ" style={{ height: 38, width: "auto" }} />
@@ -459,53 +499,71 @@ export default function Home() {
               {signinNote && <p className="dk-note">{signinNote}</p>}
             </div>
           )}
-          {engine?.up && !sessionID && <p className="dk-note" role="status">Project open: {directory.split(/[\\/]/).filter(Boolean).pop()}. Type what you want done below.</p>}
+          {engine?.up && !sessionID && <p className="dk-note" role="status">Project open: {project}. Type what you want done below.</p>}
 
-          <h2>Models</h2>
-          {!settings ? <p className="dk-note">reading…</p> : (
-            <ul className="dg-members">
-              {([["cheap", settings.models.cheap], ["strong", settings.models.strong], ["fallback", settings.models.fallback]] as const).map(([k, v]) => (
-                <li key={k}>
-                  <span className="dg-dot" data-a={v ? "online" : "idle"} aria-hidden="true" />
-                  <span className="dg-handle mono" title={v || ""}>{v ? v.split("/").pop() : "not set"}</span>
-                  <span className="dg-badge" data-kind="tab">{k}</span>
-                </li>
-              ))}
+          <h2>Projects</h2>
+          {recents.length === 0 ? <p className="dk-note">Projects you open show here.</p> : (
+            <ul className="dk-recents" aria-label="Recent projects">
+              {recents.map((d) => {
+                const name = d.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || d
+                const here = !!directory && d.toLowerCase() === directory.toLowerCase()
+                return (
+                  <li key={d} data-here={here || undefined}>
+                    <button type="button" className="dk-recent" title={d} disabled={busy || opening || (here && !!engine?.up)}
+                      onClick={() => { setSessionID(null); setDirectory(d); void openProject(d) }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                      <span className="nm">{name}</span>
+                    </button>
+                    <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>×</button>
+                  </li>
+                )
+              })}
             </ul>
           )}
-          {settings && (
-            <p className="dk-note">
-              {settings.lane === "organization" ? <>Paid through your organization ({settings.gateway || "kell"}).</>
-                : settings.lane === "personal" ? "Paid from your own kell plan."
-                : settings.lane === "own-key" ? "Your own provider key." : "Sign in to use your kell plan, or run `kell join` for your organization's keys."}
-              {settings.models.mode ? <> Mode: {settings.models.mode}.</> : null}
-            </p>
-          )}
 
-          <h2>Account</h2>
-          {settings && (
-            <dl className="dk-kv">
-              <dt>kell</dt>
-              <dd>{settings.signedIn ? <>signed in <span className="mono">{settings.account || ""}</span></> : "not signed in"}</dd>
-              <dt>engine</dt>
-              <dd>{settings.engine.exe ? "ready" : "not found: run `kell setup --client opencode`"}</dd>
-            </dl>
-          )}
-          <div className="dk-row">
-            {settings && !settings.signedIn && <button type="button" className="btn-ink" onClick={() => void signIn()}>Sign in</button>}
-            {settings?.signedIn && <button type="button" className="btn-line" onClick={() => void signOut()}>Sign out</button>}
-            <button type="button" className="btn-line" onClick={openConsole}>Open console</button>
+          <div className="dk-foot">
+            {signinNote && <p className="dk-note" role="status">{signinNote}</p>}
+            {consoleNote && <p className="dk-note">{consoleNote}</p>}
+            {accountOpen && settings && (
+              <div className="dk-account" role="dialog" aria-label="Account">
+                <p><b>{settings.signedIn ? settings.account || "your kell account" : "Not signed in"}</b></p>
+                <p className="dk-note">
+                  {settings.lane === "organization" ? <>Paid through your organization ({settings.gateway || "kell"}).</>
+                    : settings.lane === "personal" ? "Paid from your own kell plan."
+                    : settings.lane === "own-key" ? "Your own provider key." : "Sign in to use your kell plan."}
+                </p>
+                {(settings.models.cheap || settings.models.strong) && (
+                  <p className="dk-note">Models: {[settings.models.cheap, settings.models.strong].filter(Boolean).map((m) => String(m).split("/").pop()).join(", ")}</p>
+                )}
+                {!settings.engine.exe && <p className="dk-err">The coding engine is missing: run `kell setup --client opencode`.</p>}
+              </div>
+            )}
+            <div className="dk-iconrow">
+              {settings && !settings.signedIn ? (
+                <button type="button" className="btn-ink" onClick={() => void signIn()}>Sign in</button>
+              ) : (
+                <button type="button" className="dk-icon" aria-label="Account" title={settings?.account ? `Signed in as ${settings.account}` : "Account"}
+                  aria-expanded={accountOpen} onClick={() => setAccountOpen((o) => !o)}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+                </button>
+              )}
+              <button type="button" className="dk-icon" aria-label="Open console" title="Open console" onClick={openConsole}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3M13 15h4" /></svg>
+              </button>
+              {settings?.signedIn && (
+                <button type="button" className="dk-icon" aria-label="Sign out" title="Sign out" onClick={() => void signOut()}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
+                </button>
+              )}
+            </div>
           </div>
-          {signinNote && <p className="dk-note" role="status">{signinNote}</p>}
-          {consoleNote && <p className="dk-note">{consoleNote}</p>}
         </aside>
 
         <section className="dg-main" aria-label={`Chat in ${project}`}>
           <header className="dg-head">
             <h1>{project}</h1>
             <div className="dk-chips">
-              <span className="dk-chip" data-on={readEngine || undefined}>{readEngine ? "engine up" : "engine down"}</span>
-              <span className="dk-spend">{spend > 0 ? `$${spend.toFixed(4)} this session` : "no spend yet"}</span>
+              {spend > 0 && <span className="dk-spend">${spend.toFixed(4)} this session</span>}
             </div>
             <ThemeToggle className="dg-theme" />
           </header>
