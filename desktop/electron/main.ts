@@ -8,7 +8,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
 import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
-import { openAccountSignIn, reloadRooms, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
+import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import net from "node:net"
 import { spawn, type ChildProcess } from "node:child_process"
 import path from "node:path"
@@ -74,9 +74,11 @@ if (!app.requestSingleInstanceLock()) {
     // The team rooms (electron/rooms.ts) and the one account sign-in shared by the coding lane and the rooms.
     ipcMain.on("kell:rooms-bounds", (_e, rect) => { if (win) setRoomsBounds(win, rect && typeof rect === "object" ? rect : null) })
     ipcMain.on("kell:rooms-reload", () => reloadRooms())
+    ipcMain.on("kell:rooms-email", () => openRoomsEmailSignIn())
     ipcMain.on("kell:rooms-theme", (_e, t) => setRoomsTheme(t === "dark" ? "dark" : "light"))
     ipcMain.handle("kell:rooms-account", () => roomsAccount())
     ipcMain.handle("kell:rooms-signout", () => signOutRooms())
+    ipcMain.handle("kell:rooms-signin", (_e, provider) => (win ? signInRooms(win, provider === "github" ? "github" : "google") : false))
     ipcMain.handle("kell:account-open", (_e, url: string) => openAccountSignIn(win, String(url)))
     // The project folder: the system's own folder picker (typing a path was the only way, and the button looked dead, 2026-11-06).
     ipcMain.handle("kell:pick-folder", async () => {

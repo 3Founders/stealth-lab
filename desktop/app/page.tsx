@@ -19,7 +19,7 @@ type RoomsWho = { id: string; email: string | null } | null
 type KellDesktop = {
   openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>
-  rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined> }
+  rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
 const desktop = () => (typeof window !== "undefined" ? (window as unknown as { kellDesktop?: KellDesktop }).kellDesktop : undefined)
 
@@ -266,11 +266,22 @@ export default function Home() {
     const tick = async () => {
       const s = await fetch("/api/settings").then((r) => r.json()).catch(() => null)
       if (s) setSettings(s)
-      if (s?.signedIn && (!again || s.subject)) { setSigninNote(""); d?.rooms.reload(); return }
+      if (s?.signedIn && (!again || s.subject)) { setSigninNote(""); setPane("rooms"); return }
       if (Date.now() > until) { setSigninNote("Still not signed in. Try again."); return }
       setTimeout(tick, 1500)
     }
     setTimeout(tick, 500)
+  }
+
+  // The rooms' website session is the app's own (electron/rooms.ts::signInRooms): its own PKCE sign-in in the default browser,
+  // so only a one-time code crosses and no token is copied from anywhere.
+  const connectRooms = async (provider: "google" | "github") => {
+    const d = desktop()
+    if (!d) return
+    setSigninNote("Finish signing in in your browser, then come back here.")
+    const ok = await d.rooms.signIn(provider)
+    setSigninNote(ok ? "" : "The rooms were not signed in. Try again.")
+    if (ok) setRoomsWho(undefined)
   }
 
   // Sign out of everything: the coding lane's token and the rooms' session (and its cached copies) together, so the app
@@ -378,8 +389,13 @@ export default function Home() {
       )}
       {roomsOn && roomsWho === null && (
         <div className="dk-err dk-mismatch" role="status">
-          <p style={{ margin: 0 }}>You are signed in as <b>{settings?.account || "your kell account"}</b> for coding. The rooms keep their own website sign-in, and Google will not sign in inside an app window. Use <b>GitHub</b> in the rooms below, or open the rooms in your browser, where Google works.</p>
-          <div className="dk-row" style={{ margin: 0 }}><a className="btn-ink" href="https://www.kell.org.in/chat" target="_blank" rel="noopener">Open the rooms in my browser</a></div>
+          <p style={{ margin: 0 }}>You are signed in as <b>{settings?.account || "your kell account"}</b> for coding. The rooms need their own sign-in, with the same account. Choose how you signed in; it opens in your browser and nothing is copied.</p>
+          <div className="dk-row" style={{ margin: 0 }}>
+            <button type="button" className="btn-ink" onClick={() => void connectRooms("google")}>Continue with Google</button>
+            <button type="button" className="btn-ink" onClick={() => void connectRooms("github")}>Continue with GitHub</button>
+            <button type="button" className="btn-ink" onClick={() => desktop()?.rooms.emailSignIn()}>Use email and password</button>
+          </div>
+          {signinNote && <p className="dk-note">{signinNote}</p>}
         </div>
       )}
       {pane === "rooms" && (

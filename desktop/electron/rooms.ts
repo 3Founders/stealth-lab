@@ -13,6 +13,8 @@
 // Links: the site and the sign-in providers it uses stay in the view; a tool's sign-in link opens the app's tool sign-in
 // window (electron/signin.ts); anything else goes to the system browser.
 import { BrowserWindow, WebContentsView, session, shell } from "electron"
+import { createServer, type Server, type ServerResponse } from "node:http"
+import { createHash, randomBytes } from "node:crypto"
 import { isSignInLink, openSignIn } from "./signin"
 
 export const SITE = (process.env.KELL_SITE || "https://www.kell.org.in").replace(/\/$/, "")
@@ -78,6 +80,12 @@ export function reloadRooms() {
   if (view && !view.webContents.isDestroyed()) void view.webContents.loadURL(`${SITE}/chat`)
 }
 
+/** Email and password: the site's own sign-in page (with its CAPTCHA) inside the rooms view. Only Google refuses an embedded
+ *  window; email works there, and it lands back on the rooms. No token is copied and no Supabase setting is needed. */
+export function openRoomsEmailSignIn() {
+  if (view && !view.webContents.isDestroyed()) void view.webContents.loadURL(`${SITE}/sign-in?redirect=${encodeURIComponent("/chat")}`)
+}
+
 /** Keep the rooms in the app's light/dark choice (the site reads `kell:theme`, like the app). */
 export function setRoomsTheme(theme: "light" | "dark") {
   if (!view || view.webContents.isDestroyed()) return
@@ -118,6 +126,77 @@ export function openAccountSignIn(_parent: BrowserWindow | undefined, url: strin
   try { u = new URL(url) } catch { return Promise.resolve(false) }
   if (u.protocol !== "https:") return Promise.resolve(false)
   return shell.openExternal(u.toString()).then(() => true, () => false)
+}
+
+/** Sign the rooms in with the app's OWN session, no token copied (2026-11-06; RFC 8252 + Supabase PKCE). The two tokens stay
+ *  two (the coding lane's MCP token and the website session are rejected on each other's surface on purpose,
+ *  authn.py::supabase_token_allowed), and neither is ever moved between programs. Here the app is its own OAuth client: it makes
+ *  a PKCE verifier that never leaves this process, listens once on 127.0.0.1, sends the person's default browser to
+ *  Supabase's authorize endpoint with the challenge, and the browser comes back to the loopback address carrying only a
+ *  one-time code (valid 5 minutes, single use, useless without the verifier). The app swaps the code for a session of its own
+ *  (its own refresh-token family, so the browser's session is untouched and nothing gets revoked) and puts it into the rooms
+ *  view's storage. Needs the loopback address (http://127.0.0.1, any port, any path) in Supabase redirect allow list. The project URL and anon key are public
+ *  by design and come from the site (/api/desktop-config). Resolves true once the rooms hold the session. */
+export type RoomsProvider = "google" | "github"
+
+export function signInRooms(win: BrowserWindow, provider: RoomsProvider): Promise<boolean> {
+  if (provider !== "google" && provider !== "github") return Promise.resolve(false)
+  const verifier = randomBytes(48).toString("base64url")
+  const challenge = createHash("sha256").update(verifier).digest("base64url")
+  const nonce = randomBytes(18).toString("base64url")
+  return new Promise<boolean>(async (resolve) => {
+    let settled = false
+    let server: Server | undefined
+    const finish = (ok: boolean) => { if (settled) return; settled = true; clearTimeout(timer); server?.close(); resolve(ok) }
+    const timer = setTimeout(() => finish(false), 300_000)
+    const page = (res: ServerResponse, status: number, text: string) => {
+      res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" })
+      res.end(`<!doctype html><meta charset="utf-8"><title>kell</title><body style="font-family:system-ui;max-width:32rem;margin:15vh auto;padding:0 1rem"><p>${text}</p>`)
+    }
+    let cfg: { url: string; anonKey: string }
+    try {
+      const r = await fetch(`${SITE}/api/desktop-config`, { signal: AbortSignal.timeout(10_000) })
+      cfg = await r.json()
+      const host = new URL(cfg.url).hostname
+      if (!r.ok || new URL(cfg.url).protocol !== "https:" || !host.endsWith(".supabase.co") || !cfg.anonKey) throw new Error("bad config")
+    } catch { finish(false); return }
+    const ref = new URL(cfg.url).hostname.split(".")[0]
+    server = createServer(async (req, res) => {
+      const u = new URL(req.url || "/", "http://127.0.0.1")
+      if (req.method !== "GET" || u.pathname !== `/callback/${nonce}`) { page(res, 404, "Not found."); return }
+      const code = u.searchParams.get("code")
+      if (!code || !/^[A-Za-z0-9._-]{8,200}$/.test(code)) { page(res, 400, "The sign-in did not finish. Go back to kell and try again."); finish(false); return }
+      try {
+        const r = await fetch(`${cfg.url}/auth/v1/token?grant_type=pkce`, {
+          method: "POST", signal: AbortSignal.timeout(15_000),
+          headers: { "content-type": "application/json", apikey: cfg.anonKey },
+          body: JSON.stringify({ auth_code: code, code_verifier: verifier }),
+        })
+        const s = await r.json()
+        if (!r.ok || typeof s?.access_token !== "string" || typeof s?.refresh_token !== "string" || !s?.user?.id) throw new Error("exchange refused")
+        if (!s.expires_at) s.expires_at = Math.floor(Date.now() / 1000) + Number(s.expires_in || 3600)
+        const wc = ensureView(win).webContents
+        if (wc.isLoading() || !wc.getURL().startsWith(SITE)) await new Promise<void>((ok) => { wc.once("did-finish-load", () => ok()); setTimeout(ok, 15_000) })
+        await wc.executeJavaScript(`localStorage.setItem(${JSON.stringify(`sb-${ref}-auth-token`)}, ${JSON.stringify(JSON.stringify(s))})`)
+        void wc.loadURL(`${SITE}/chat`)
+        page(res, 200, "Signed in. You can close this tab and go back to kell.")
+        finish(true)
+      } catch {
+        page(res, 500, "Could not finish signing in. Go back to kell and try again.")
+        finish(false)
+      }
+    })
+    server.on("error", () => finish(false))
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server!.address() as { port: number }).port
+      const authorize = new URL(`${cfg.url}/auth/v1/authorize`)
+      authorize.searchParams.set("provider", provider)
+      authorize.searchParams.set("redirect_to", `http://127.0.0.1:${port}/callback/${nonce}`)
+      authorize.searchParams.set("code_challenge", challenge)
+      authorize.searchParams.set("code_challenge_method", "s256")
+      shell.openExternal(authorize.toString()).catch(() => finish(false))
+    })
+  })
 }
 
 /** Sign the rooms out: the site's session and its local copies (cached chat keys included) go, so a next account never
