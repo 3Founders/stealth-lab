@@ -12,6 +12,7 @@
 // Each returns the inline OpenCode config the engine starts with. With neither, the engine keeps its previous behaviour
 // (OpenCode's own global config, e.g. a developer-held key lane).
 import fs from "node:fs"
+import { SIGN_IN_TO_RUN, webToken } from "./websession"
 import os from "node:os"
 import path from "node:path"
 
@@ -39,7 +40,7 @@ const home = (env: NodeJS.ProcessEnv) => env.STEALTHLAB_HOME || path.join(os.hom
 /** The one engine config both lanes share: kell's gateway as an OpenAI-compatible provider, the bearer in the child's
  *  environment (never in this text), the strongest priced model as the default and the cheapest as its fallback. */
 function buildConfig(models: Model[], baseUrl: string, token: string, extraHeaders: Record<string, string>,
-                     cfg: any, env: NodeJS.ProcessEnv): PooledEngine {
+                     cfg: any, env: NodeJS.ProcessEnv, modelKey?: string): PooledEngine {
   const sorted = [...models].sort((a, b) => priceOf(a) - priceOf(b))
   const cheap = sorted[0]
   const strong = [...sorted].reverse().find((m) => Number.isFinite(priceOf(m))) || sorted[sorted.length - 1]
@@ -80,7 +81,7 @@ function buildConfig(models: Model[], baseUrl: string, token: string, extraHeade
   if (cfg?.url) {
     config.mcp = { servers: { kell: { type: "remote", url: cfg.url, codemode: false, headers: { Authorization: `Bearer ${token}` } } } }
   }
-  return { content: JSON.stringify(config), key: token }
+  return { content: JSON.stringify(config), key: modelKey ?? token }
 }
 
 /** The organization lane: the inline config and the bearer, or null when this machine is not on an organization gateway. */
@@ -131,10 +132,13 @@ export async function personalEngineConfig(env: NodeJS.ProcessEnv = process.env,
   const cfg = readJson(path.join(home(env), "config.json"))
   const token: string = cfg?.token || ""
   if (!token) return { ok: false, reason: "not-signed-in", message: "Sign in to use your kell plan." }
+  // The model API takes only a website session (the Rooms sign-in); the coding token above stays for kell's MCP tools.
+  const web = await webToken()
+  if (!web) return { ok: false, reason: "not-signed-in", message: SIGN_IN_TO_RUN }
   const origin = gatewayOrigin(cfg, env)
   let res: Response
   try {
-    res = await fetchImpl(`${origin}/v1/models`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) })
+    res = await fetchImpl(`${origin}/v1/models`, { headers: { authorization: `Bearer ${web}` }, signal: AbortSignal.timeout(15_000) })
   } catch {
     return { ok: false, reason: "unreachable", message: "Cannot reach kell right now. Check your connection and try again." }
   }
@@ -153,16 +157,20 @@ export async function personalEngineConfig(env: NodeJS.ProcessEnv = process.env,
     .map((m: any) => ({ id: m.id, input: m.stealthlab?.input_per_mtok, output: m.stealthlab?.output_per_mtok }))
   if (!models.length) return { ok: false, reason: "no-models", message: "No models are available to this account yet." }
   shared.__kellPersonalModels = models.map((m) => m.id)
-  return { ok: true, engine: buildConfig(models, `${origin}/v1`, token, {}, cfg, env) }
+  // The engine calls this app's own /api/gateway (it adds the current website session to each call), never the gateway directly:
+  // a session refreshes every hour, and the engine keeps whatever key it started with.
+  const local = `http://127.0.0.1:${env.PORT || "3400"}/api/gateway/v1`
+  return { ok: true, engine: buildConfig(models, local, token, {}, cfg, env, "kell-desktop-local") }
 }
 
 /** Dollars left in the person's own wallet, or null when it cannot be read (then the model call decides). */
 export async function walletRemaining(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch): Promise<number | null> {
   const cfg = readJson(path.join(home(env), "config.json"))
-  if (!cfg?.token) return null
+  const web = await webToken()                         // the wallet is on the website API: the website session
+  if (!web) return null
   try {
     const r = await fetchImpl(`${gatewayOrigin(cfg, env)}/v1/billing/wallet`,
-      { headers: { authorization: `Bearer ${cfg.token}` }, signal: AbortSignal.timeout(8_000) })
+      { headers: { authorization: `Bearer ${web}` }, signal: AbortSignal.timeout(8_000) })
     if (!r.ok) return null
     const n = Number((await r.json())?.remaining_usd)
     return Number.isFinite(n) ? n : null

@@ -8,7 +8,9 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
 import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
-import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
+import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
+import { createServer } from "node:http"
+import { randomBytes } from "node:crypto"
 import fs from "node:fs"
 import net from "node:net"
 import { spawn, type ChildProcess } from "node:child_process"
@@ -44,7 +46,19 @@ if (!app.requestSingleInstanceLock()) {
     // The installed app ships Next's standalone server (only the files it uses); a dev tree without that build runs `next start`.
     // KELL_ROOT tells the routes where the app is: the standalone server changes its working directory to its own folder.
     const standalone = path.join(ROOT, ".next", "standalone", "server.js")
-    const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", KELL_PARENT_PID: String(process.pid), KELL_ROOT: ROOT, PORT: String(port), HOSTNAME: "127.0.0.1" }
+    // The website session for the coding lane's model calls (lib/websession.ts asks here; electron/rooms.ts roomsAccessToken). Loopback
+    // only, and only for a caller holding this run's secret, which only the Next child gets: the token never touches the disk.
+    const secret = randomBytes(24).toString("base64url")
+    const tokens = createServer(async (req, res) => {
+      if (req.method !== "GET" || req.url !== "/web-token" || req.headers["x-kell-secret"] !== secret) { res.writeHead(404); res.end(); return }
+      const token = await roomsAccessToken(win).catch(() => null)
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" })
+      res.end(JSON.stringify({ token }))
+    })
+    const tokenPort = await new Promise<number>((ok) => tokens.listen(0, "127.0.0.1", () => ok((tokens.address() as { port: number }).port)))
+    app.on("will-quit", () => tokens.close())
+    const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", KELL_PARENT_PID: String(process.pid), KELL_ROOT: ROOT, PORT: String(port), HOSTNAME: "127.0.0.1",
+                  KELL_WEB_TOKEN_URL: `http://127.0.0.1:${tokenPort}/web-token`, KELL_WEB_TOKEN_SECRET: secret }
     next = fs.existsSync(standalone)
       ? spawn(process.execPath, [standalone], { cwd: ROOT, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] })
       : spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)],

@@ -21,6 +21,8 @@ type KellDesktop = {
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
+/** A model call refused for want of a website session (lib/websession.ts SIGN_IN_TO_RUN): the page offers the sign-in instead of an error. */
+const needsWebSignIn = (e?: string | null) => !!e && /sign in to run models/i.test(e)
 const desktop = () => (typeof window !== "undefined" ? (window as unknown as { kellDesktop?: KellDesktop }).kellDesktop : undefined)
 
 // A tool that needs a sign-in comes back from kell's gateway as JSON inside the tool's result:
@@ -216,7 +218,11 @@ export default function Home() {
           if (d.cost != null) setSpend((c) => c + Number(d.cost))
         }
         else if (t === "need_plan") { setLines((l) => [...l, { who: "plan", text: "", at: Date.now() }]); setBusy(false) }
-        else if (t === "error") { appendAssistant(`\n(error: ${ev.error})`); setBusy(false) }
+        else if (t === "error") {
+          if (needsWebSignIn(ev.error)) { setEngine({ up: false, error: String(ev.error) }); appendAssistant("Sign in to run models: the buttons are on the left.") }
+          else appendAssistant(`\n(error: ${ev.error})`)
+          setBusy(false)
+        }
         else if (t === "done") ended = true
       }
     }
@@ -440,7 +446,19 @@ export default function Home() {
               <button type="button" className="btn-line" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>New session</button>
             )}
           </div>
-          {engine && !engine.up && (engine.error || sessionID) && <p className="dk-err" role="status">Engine problem{engine.error ? `: ${engine.error}` : ""}</p>}
+          {engine && !engine.up && (engine.error || sessionID) && !needsWebSignIn(engine.error) && <p className="dk-err" role="status">Engine problem{engine.error ? `: ${engine.error}` : ""}</p>}
+          {needsWebSignIn(engine?.error) && desktop() && (
+            // Models on your own plan run on the website session (the same sign-in as the rooms): one click, in your browser, nothing copied.
+            <div className="dk-err" role="status">
+              <p style={{ margin: "0 0 6px" }}>Sign in once more to run models on your kell plan (the same sign-in the rooms use). It opens in your browser; nothing is copied.</p>
+              <div className="dk-row" style={{ margin: 0 }}>
+                <button type="button" className="btn-ink" onClick={async () => { await connectRooms("google"); void openProject() }}>Continue with Google</button>
+                <button type="button" className="btn-ink" onClick={async () => { await connectRooms("github"); void openProject() }}>Continue with GitHub</button>
+                <button type="button" className="btn-line" onClick={() => { setPane("rooms"); desktop()?.rooms.emailSignIn() }}>Email and password</button>
+              </div>
+              {signinNote && <p className="dk-note">{signinNote}</p>}
+            </div>
+          )}
           {engine?.up && !sessionID && <p className="dk-note" role="status">Project open: {directory.split(/[\\/]/).filter(Boolean).pop()}. Type what you want done below.</p>}
 
           <h2>Models</h2>
