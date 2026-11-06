@@ -21,16 +21,25 @@ export const SITE = (process.env.KELL_SITE || "https://www.kell.org.in").replace
 const PARTITION = "persist:kell-web"
 const plainUserAgent = (ua: string) => ua.replace(/\s(Electron|kell(-desktop)?)\/\S+/gi, "")
 
-// Where the rooms view may go by itself: kell's site, its auth server and the sign-in providers the site offers.
-function staysInView(raw: string): boolean {
+// Where the rooms view may go by itself: on kell's site only the chat and what signing in needs (owner, 2026-11-06: the rooms show
+// the chat, never the rest of the website; anything else opens in the person's browser), plus kell's auth server and the sign-in
+// providers the site offers.
+const SITE_PATHS = /^\/(chat|sign-in|auth|oauth|onboarding|api)(\/|$)/
+export function staysInView(raw: string): boolean {
   let u: URL
   try { u = new URL(raw) } catch { return false }
   if (u.protocol !== "https:") return false
   const h = u.hostname
   const site = new URL(SITE).hostname
-  return h === site || h === "kell.org.in" || h.endsWith(".kell.org.in") || h.endsWith(".supabase.co")
-    || h === "accounts.google.com" || h === "github.com"
+  if (h === site || h === "kell.org.in" || h === "www.kell.org.in") return SITE_PATHS.test(u.pathname)
+  return h.endsWith(".supabase.co") || h === "accounts.google.com" || h === "github.com"
 }
+// The site's own links back to the website (the logo, "Back to home"): hidden in the app. Navigation is blocked too (below), so this is
+// only so nothing points somewhere it cannot go.
+// With the logo row and the "Back to home" row gone, the sidebar's collapse button (absolutely placed at its top) sat on the Search
+// box; the sidebar keeps that top row empty for it instead.
+const HIDE_SITE_LINKS = `.back-btn, a[aria-label^="keळ, back to the site"], a[href="/"], .dg-side > .dg-brand, .dg-side > .dg-backrow { display: none !important; }
+.dg-side { padding-top: 48px !important; }`
 
 type Rect = { x: number; y: number; width: number; height: number }
 let view: WebContentsView | undefined
@@ -46,7 +55,8 @@ function route(url: string, done: (r: { url: string; ok: boolean }) => void): "s
 function ensureView(win: BrowserWindow): WebContentsView {
   if (view && !view.webContents.isDestroyed()) return view
   owner = win
-  view = new WebContentsView({ webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  // devTools off: nobody opens the inspector here to reach the rest of the site.
+  view = new WebContentsView({ webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: false } })
   const wc = view.webContents
   wc.setUserAgent(plainUserAgent(wc.getUserAgent()))   // Google refuses sign-in in a user agent that names Electron
   // A tool's sign-in started in the rooms opens the app's sign-in window; when it finishes, the rooms page hears it
@@ -56,7 +66,19 @@ function ensureView(win: BrowserWindow): WebContentsView {
     if (r.ok && !wc.isDestroyed()) void wc.executeJavaScript(`window.dispatchEvent(new CustomEvent("kell:tool-signin-done"))`).catch(() => undefined)
   }
   // Tells the site it runs inside the app, so a sign-in window it could not open itself is not reported as a blocked pop-up.
-  wc.on("dom-ready", () => { void wc.executeJavaScript("window.__kellDesktop = true").catch(() => undefined) })
+  wc.on("dom-ready", () => {
+    void wc.executeJavaScript("window.__kellDesktop = true").catch(() => undefined)
+    void wc.insertCSS(HIDE_SITE_LINKS).catch(() => undefined)
+  })
+  // The site is a single-page app: its own links change the address without a navigation event, so will-navigate never sees them.
+  // Any address outside the chat goes to the person's browser and the view goes back to the chat.
+  wc.on("did-navigate-in-page", (_e, url) => {
+    if (staysInView(url)) return
+    if (/^https?:/.test(url)) void shell.openExternal(url)
+    void wc.loadURL(`${SITE}/chat`)
+  })
+  wc.on("did-navigate", (_e, url) => { if (url.startsWith("http") && !staysInView(url)) void wc.loadURL(`${SITE}/chat`) })
+  wc.on("devtools-opened", () => wc.closeDevTools())
   wc.setWindowOpenHandler(({ url }) => {
     if (route(url, toolDone) === "stay") void wc.loadURL(url)
     return { action: "deny" }

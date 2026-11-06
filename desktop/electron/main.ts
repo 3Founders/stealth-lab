@@ -8,6 +8,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
 import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
+import { setAppMenu } from "./menu"
 import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import { createServer } from "node:http"
 import { randomBytes } from "node:crypto"
@@ -41,6 +42,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     const say = (...a: unknown[]) => console.log("KELL_SMOKE", ...a)
     say("electron ready; starting next")
+    setAppMenu(() => win)
     const port = await freePort()
     if (port === 28894) throw new Error("28894 belongs to the OpenCode desktop app") // unreachable; the rule's guard
     // The installed app ships Next's standalone server (only the files it uses); a dev tree without that build runs `next start`.
@@ -76,7 +78,8 @@ if (!app.requestSingleInstanceLock()) {
     say(`next up on ${base}`)
 
     win = new BrowserWindow({ width: 1240, height: 880, title: "kell", backgroundColor: "#F8F6EF", show: false,
-                              webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false } })
+                              webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false,
+                                                               devTools: !app.isPackaged } })   // no inspector in the installed app
     // Links: a tool's sign-in opens in the app's own sign-in window (electron/signin.ts); any other link goes to the
     // system browser. The app window itself never navigates away from the UI.
     const signInDone = (r: { url: string; ok: boolean }) => win?.webContents.send("kell:signin-done", r)

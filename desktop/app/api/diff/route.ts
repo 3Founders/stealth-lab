@@ -8,8 +8,16 @@ import path from "node:path"
 import { NextResponse } from "next/server"
 import { clientFor, engineStatus } from "@/lib/engine"
 import { blobOf, isNoise, lastPair, pairFiles } from "@/lib/snapshots"
+import { worktreeChanges } from "@/lib/worktree"
 
 export const dynamic = "force-dynamic"
+
+/** The folder's other uncommitted changes: everything git sees as changed that kell's last turn did not touch (lib/worktree.ts). */
+async function others(dir: string, kells: string[]) {
+  const mine = new Set(kells)
+  const w = await worktreeChanges(dir)
+  return { other: w.files.filter((f) => !mine.has(f.file)), more: w.more, repo: w.repo }
+}
 
 export async function GET(req: Request) {
   const e = engineStatus()
@@ -30,11 +38,16 @@ export async function GET(req: Request) {
         if (!now || !was) return f.status !== "added" ? !now : true
         return !now.equals(was)
       }).length
-      return NextResponse.json({ directory: e.directory, sessionID, snapshot: { before: p.before, after: p.after }, files, pending })
+      const other = await others(e.directory, files.map((f) => f.file))
+      return NextResponse.json({ directory: e.directory, sessionID, snapshot: { before: p.before, after: p.after }, files, pending, ...other })
     }
+    // No session: kell has changed nothing yet, so everything uncommitted is "other". A folder that is not a git repository falls
+    // back to the engine's own view of the working tree.
+    const other = await others(e.directory, [])
+    if (other.repo) return NextResponse.json({ directory: e.directory, sessionID: null, files: [], ...other })
     const client = await clientFor(e)
     const r = await client.vcs.diff({ location: { directory: e.directory }, mode: "working", untracked: "files", context: 3 })
-    return NextResponse.json({ directory: e.directory, sessionID: null, files: r.data.filter((f) => !isNoise(f.file)) })
+    return NextResponse.json({ directory: e.directory, sessionID: null, files: [], other: r.data.filter((f) => !isNoise(f.file)), more: 0, repo: false })
   } catch (err: any) {
     return NextResponse.json({ error: String(err?.message || err) }, { status: 502 })
   }
