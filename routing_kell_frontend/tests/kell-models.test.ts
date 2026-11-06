@@ -25,9 +25,10 @@ describe("addresses", () => {
     expect(kellModelsAvailable("https://mcp.example.org", undefined)).toBe(true);
     expect(kellModelsAvailable("https://mcp.example.org", "off")).toBe(false);
   });
-  it("only the two pilot models are offered", () => {
+  it("only the pilot models are offered", () => {
     expect(onlyKellModels(["x", "glm-5.3-flash", "gemma-4-31b-it", "other"])).toEqual(["glm-5.3-flash", "gemma-4-31b-it"]);
-    expect([...KELL_MODEL_IDS]).toEqual(["glm-5.3-flash", "gemma-4-31b-it"]);
+    expect([...KELL_MODEL_IDS]).toEqual(["glm-5.3-flash", "gemma-4-31b-it", "glm-5.3", "deepseek-v3.2",
+      "deepseek-v4-pro", "deepseek-v4.1-flash", "kimi-k2", "minimax-m2.5", "qwen3-coder", "gpt-oss-120b"]);
   });
 });
 

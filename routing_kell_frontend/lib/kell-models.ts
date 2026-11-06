@@ -13,8 +13,19 @@ import { providerById } from "@/lib/byok/providers";
 import type { ProviderTarget } from "@/lib/byok/chat";
 import type { KeyValue } from "@/lib/byok/spend";
 
-/** The two pilot models. /v1/models may list more for other callers; only these are offered here. */
-export const KELL_MODEL_IDS = ["glm-5.3-flash", "gemma-4-31b-it"] as const;
+/** The pilot models. /v1/models may list more for other callers; only these are offered here. */
+export const KELL_MODEL_IDS = [
+  "glm-5.3-flash",
+  "gemma-4-31b-it",
+  "glm-5.3",
+  "deepseek-v3.2",
+  "deepseek-v4-pro",
+  "deepseek-v4.1-flash",
+  "kimi-k2",
+  "minimax-m2.5",
+  "qwen3-coder",
+  "gpt-oss-120b",
+] as const;
 
 export function kellBase(origin: string = MCP_ORIGIN): string | null {
   if (!origin) return null;
