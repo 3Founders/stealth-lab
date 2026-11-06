@@ -53,7 +53,7 @@ test("installedServers: names and a package or host only -- never env, headers, 
 
 test("formatToolNote: installed first, one to add beside it, the publisher-data caveat; nothing found -> empty", () => {
   const note = formatToolNote(REPLY, "browser");
-  assert.match(note, /search for tools/);
+  assert.match(note, /search for tools first/i);
   assert.match(note, /discover_tools\(need=/);
   assert.match(note, /reads it as a browser request/);
   assert.match(note, /installed: `playwright` \(its tools are mcp__playwright__\*\)/);
@@ -65,7 +65,7 @@ test("formatToolNote: installed first, one to add beside it, the publisher-data 
   // nothing found still carries the instruction to search (the default after every prompt is a search)
   for (const none of [{ tools: [] }, null]) {
     const n = formatToolNote(none, "web");
-    assert.match(n, /search for tools/);
+    assert.match(n, /search for tools first/i);
     assert.match(n, /nothing ready/);
     assert.doesNotMatch(n, /not installed/);
   }
@@ -123,7 +123,7 @@ test("hook: a new task with no goal named -> the note tells the model to search,
   assert.ok(!calls.some((c) => c && c.tools), "no router round trip: no added latency");
   assert.equal(out.length, 1);
   const note = JSON.parse(out[0]).hookSpecificOutput.additionalContext;
-  assert.match(note, /search for tools/);
+  assert.match(note, /search for tools first/i);
   assert.match(note, /not at the start of a new one/);
   assert.doesNotMatch(note, /nothing ready/);                 // the router was not asked, so it is not said to have had nothing
   assert.doesNotMatch(note, /undefined/);
@@ -163,7 +163,7 @@ test("hook: a new reusable task after earlier turns does get the search note", a
     settings: { url: "http://x/mcp" }, userAgent: "t", env: ENV,
     fetchImpl: server({ needs_retrieval: false, kind: "reusable_task", work: "change" }, REPLY, calls),
     write: (s) => out.push(s), log: () => {} });
-  assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /search for tools/);
+  assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /search for tools first/i);
 });
 
 test("hook: STEALTHLAB_HOOK_TOOLS_ALWAYS=off -> only a named goal asks the router, as before", async () => {
@@ -184,7 +184,7 @@ test("hook: STEALTHLAB_HOOK_TOOLS=off leaves the prompt as it was; a failing /to
       fetchImpl: server({ needs_retrieval: false, kind: "knowledge_question", tool: "web" }, tools, calls),
       write: (s) => out.push(s), log: () => {} });
     if (env.STEALTHLAB_HOOK_TOOLS === "off") assert.equal(out.length, 0);
-    else assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /search for tools/);
+    else assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /search for tools first/i);
   }
 });
 

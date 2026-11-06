@@ -86,7 +86,7 @@ export function formatToolNote(reply, goal) {
   const add = tools.filter((t) => t.source !== "installed").slice(0, have.length ? 1 : 2);
   // The default after every prompt is a tool SEARCH, not a passive hint: the model is told to run kell's discover_tools for this prompt first,
   // and shown what the router already found as a head start. A task already in progress skips the search: it is for starting one.
-  const lines = [`kell tool router: before you answer, search for tools. Call kell's discover_tools(need="<this request in plain words>") now${goal ? ` (the router reads it as a ${goal} request)` : ""} and use what it marks via_kell if it fits; skip the search only if you are in the middle of a task already (a follow-up, an edit, the next step), not at the start of a new one.`];
+  const lines = [`kell tool router: this starts a new task, so SEARCH FOR TOOLS FIRST. Your first tool call this turn must be kell's discover_tools(need="<this request in plain words>")${goal ? ` (the router reads it as a ${goal} request)` : ""}: do not start making the thing yourself (no writing files, scripts or slides) until that search has returned. It may be listed as mcp__<kell connector>__discover_tools; if it is not in your tool list, find it with ToolSearch (query "discover_tools") and call it. Use what it marks via_kell if one fits. Skip the search only if you are in the middle of a task already (a follow-up, an edit, the next step), not at the start of a new one.`];
   if (!have.length && !add.length) {
     if (!reply?.skipped) lines.push("The router had nothing ready for this prompt; the search may still find a tool.");
     return lines.join("\n");
