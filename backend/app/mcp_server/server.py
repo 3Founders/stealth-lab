@@ -1299,7 +1299,7 @@ async def _room_agent_call_model_one(authorization: str, model: str, prompt: str
     return str(msg.get("content") or "")
 
 
-async def _room_agent_find(need: str) -> list[dict]:
+async def _room_agent_find(need: str, owner: str | None = None) -> list[dict]:
     """The router's short list for this message: the same code the hook and claude.ai get (find_ways/discover_tools).
     Bounded in time: a slow router must not delay the answer; without a list the model simply has no outside tools."""
     import asyncio as _asyncio
@@ -1309,7 +1309,7 @@ async def _room_agent_find(need: str) -> list[dict]:
 
     try:
         ext = await _asyncio.wait_for(
-            _external_tools(condense(need.strip(), _ft.QUERY_MAX), "", None, 3),
+            _external_tools(condense(need.strip(), _ft.QUERY_MAX), "", None, 3, owner),
             timeout=float(_os.environ.get("KELL_ROOM_AGENT_TOOL_WAIT", "2.0")))
     except Exception:  # noqa: BLE001 -- timeout or router failure: answer without tools
         return []
@@ -3565,6 +3565,7 @@ from app.tool_routing import gateway as _gateway  # noqa: E402
 
 _PREFLIGHT: dict[str, tuple[float, Any]] = {}          # connector url -> (when checked, True / False / "signin")
 PREFLIGHT_TTL_S = 900.0
+NO_VERDICT_TTL_S = float(os.environ.get("KELL_PREFLIGHT_NO_VERDICT_S", "300"))      # a server that did not answer in time is not asked again for this long
 
 
 async def _preflight_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3617,8 +3618,10 @@ async def _preflight_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         except Exception:  # noqa: BLE001 -- not a gateway server: leave the entry as it is
             return
         hit = _PREFLIGHT.get(url)
-        if hit and _time.monotonic() - hit[0] < PREFLIGHT_TTL_S:
+        if hit and _time.monotonic() - hit[0] < (NO_VERDICT_TTL_S if hit[1] is None else PREFLIGHT_TTL_S):
             ok = hit[1]
+            if ok is None:
+                return                                    # asked a moment ago and it did not answer: left as it was, without waiting again
         elif url in _gateway.NEEDS_SIGNIN and not oauth_on:
             ok = False
         else:
@@ -3630,6 +3633,7 @@ async def _preflight_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
             except _gateway.GatewayRefused as exc:
                 ok = "signin" if (oauth_on and "sign-in" in str(exc)) else ("sign-in" not in str(exc))
             except Exception:  # noqa: BLE001 -- slow or down: no verdict
+                _PREFLIGHT[url] = (_time.monotonic(), None)
                 return
             _PREFLIGHT[url] = (_time.monotonic(), ok)
         if ok is False:
@@ -3668,14 +3672,79 @@ def _via_kell(card: Any) -> str:
     return "signin" if _gateway.signin_allowed(card) else "no"
 
 
+SEARCH_K = 14                                   # a shared search is made this wide; a caller that wants fewer is given the top of it
+_SEARCH_CACHE: dict[tuple, tuple[float, dict[str, Any]]] = {}
+_SEARCH_FLIGHT: dict[tuple, Any] = {}
+
+
 async def _external_tools(need: str, goal: str, installed: list[Any] | None, k: int, owner: str | None = None) -> dict[str, Any] | None:
-    """The router's answer for `need` with its runnable-looking servers checked live (see _preflight_tools)."""
+    """The router's answer for `need` with its runnable-looking servers checked live (see _preflight_tools).
+
+    The same request is often searched twice within seconds (the room agent's prefetch, then the model's own forced search; the hook; a retry).
+    A search for the same words, goal and person is made ONCE: a second caller waits for the one in flight, or reuses its answer for
+    KELL_SEARCH_CACHE_S seconds (default 120; 0 turns this off). A caller that passes its own installed-tools list is never shared, since that
+    list changes the ranking. An answer is never cached when it is empty."""
+    import asyncio as _asyncio
+    import copy as _copy
+    import time as _time
+
+    try:
+        ttl = float(os.environ.get("KELL_SEARCH_CACHE_S", "120"))
+    except ValueError:
+        ttl = 120.0
+    if installed or ttl <= 0 or k > SEARCH_K:
+        return await _external_tools_uncached(need, goal, installed, k, owner)
+    key = (need.strip().lower(), goal or "", owner or _gateway_owner() or "")
+
+    def top(result: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not result:
+            return result
+        out = _copy.deepcopy(result)
+        if isinstance(out.get("tools"), list):
+            out["tools"] = out["tools"][:k]
+        return out
+
+    hit = _SEARCH_CACHE.get(key)
+    if hit and _time.monotonic() - hit[0] < ttl:
+        return top(hit[1])
+    flight = _SEARCH_FLIGHT.get(key)
+    if flight is None:
+        flight = _asyncio.ensure_future(_external_tools_uncached(need, goal, None, SEARCH_K, key[2] or None))
+        _SEARCH_FLIGHT[key] = flight
+
+        def done(task: Any, key: tuple = key) -> None:
+            _SEARCH_FLIGHT.pop(key, None)
+            if task.cancelled() or task.exception() is not None:
+                return
+            result = task.result()
+            if result:
+                _SEARCH_CACHE[key] = (_time.monotonic(), result)
+                if len(_SEARCH_CACHE) > 256:             # keep it small: drop the oldest
+                    for old in sorted(_SEARCH_CACHE, key=lambda x: _SEARCH_CACHE[x][0])[:64]:
+                        _SEARCH_CACHE.pop(old, None)
+        flight.add_done_callback(done)
+    # shield: a caller that gives up (the room agent's prefetch waits at most two seconds) must not cancel the search the next caller will use
+    return top(await _asyncio.shield(flight))
+
+
+async def _external_tools_uncached(need: str, goal: str, installed: list[Any] | None, k: int, owner: str | None = None) -> dict[str, Any] | None:
+    import time as _time
+
+    started = _time.monotonic()
     out = await _external_tools_ranked(need, goal, installed, k, owner)
+    ranked = _time.monotonic()
     if out and isinstance(out.get("tools"), list):
         try:
             out["tools"] = await _preflight_tools(out["tools"])
         except Exception:  # noqa: BLE001 -- the check never breaks a search
             logging.getLogger(__name__).warning("tool preflight failed", exc_info=True)
+    done = _time.monotonic()
+    total_ms = int((done - started) * 1000)
+    stages = {**((out or {}).pop("timing_ms", None) or {}), "preflight": int((done - ranked) * 1000), "total": total_ms}
+    if total_ms >= 3000:                                          # a slow search says where the time went (Railway log), so it can be fixed with numbers
+        logging.getLogger(__name__).warning("slow tool search: %s ms %s", total_ms, stages)
+    if out is not None and os.environ.get("KELL_ROUTER_TIMING", "").lower() == "on":
+        out["timing_ms"] = stages
     return out
 
 
@@ -3716,27 +3785,40 @@ async def _external_tools_ranked(need: str, goal: str, installed: list[Any] | No
         # the router's own embedder (its vectors are its own; find_ways' stay in their space): none without its key
         embedder = ToolEmbedder()
         embedder = embedder if embedder.available() else None
+        import asyncio as _aio
+        import time as _time
+
+        stage: dict[str, int] = {}
+        t0 = _time.monotonic()
         query = condense(need.strip(), 2000)
         pool = _LIFESPAN_STATE.get("pool")
         known = qvec = outcomes = None
         if pool is not None:
             from app.tool_routing import liveness as _liveness
 
-            await _liveness.refresh(pool)                     # the daily check's outcomes and the servers real calls show are down
+            _aio.ensure_future(_liveness.refresh(pool))        # reloads at most every few minutes; the search does not wait for it (what it holds is a few minutes old at worst)
         if pool is not None and await _store.ready(pool):
             # the catalog in the database (db/160_tool_cards.sql): its full-text and nearest-neighbour candidates
             qvec = await _query_vector(need_text(query, goal or None), embedder) if embedder else None
-            found, known = await _store.candidates(pool, query, qvec)
+            stage["embed"] = int((_time.monotonic() - t0) * 1000)
+            t1 = _time.monotonic()
+            (found, known), outcomes = await _aio.gather(
+                _store.candidates(pool, query, qvec),
+                _store.tool_outcomes(pool, goal) if goal else _aio.sleep(0),
+            )
+            outcomes = outcomes if goal else None
+            stage["candidates"] = int((_time.monotonic() - t1) * 1000)
             cards = [*installed_cards(_installed_list(installed)), *found]
-            outcomes = await _store.tool_outcomes(pool, goal) if goal else None
         else:
             cards = [*installed_cards(_installed_list(installed)), *registry_cards()]
         if not cards:
             return None
+        t2 = _time.monotonic()
         hits, info = await rank(query, cards, goal=goal or None, embedder=embedder, k=max(1, min(int(k or 8), 20)),
                                 reranker=rerank, known_sims=known, query_vector=qvec, outcomes=outcomes,
                                 refs=_store.card_refs,
                                 outcomes_for=(lambda g: _store.tool_outcomes(pool, g)) if pool is not None else None)
+        stage["rank"] = int((_time.monotonic() - t2) * 1000)
         _store.note_goal(owner or _gateway_owner(), info.get("goal"))   # the calls that follow are judged under this goal
     except Exception:  # noqa: BLE001 -- the router never breaks discover_tools
         logging.getLogger(__name__).warning("tool routing failed", exc_info=True)
@@ -3750,6 +3832,7 @@ async def _external_tools_ranked(need: str, goal: str, installed: list[Any] | No
     if not hits and not builtin:
         return None
     return {
+        "timing_ms": stage,
         "goal": info.get("goal"),
         "found_by": " + ".join(["keywords", *(["meaning"] if info.get("semantic") else []),
                                 *(["a reranker"] if info.get("reranked") else [])]),

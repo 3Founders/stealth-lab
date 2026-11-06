@@ -108,6 +108,19 @@ def trace_turn(room_id: Any, handle: str, outcome: "agent.AgentOutcome | None", 
              ",".join(tools) or "-", made, bool(outcome and outcome.text.strip()), _time.monotonic() - started)
 
 
+def with_owner(find_tools: Any, subject: str) -> Any:
+    """The router's prefetch, told whose search it is when it can take that (the real one can; a test's fake takes only the words)."""
+    import inspect
+
+    try:
+        takes_owner = len(inspect.signature(find_tools).parameters) >= 2
+    except (TypeError, ValueError):
+        takes_owner = False
+    if not takes_owner:
+        return find_tools
+    return lambda need: find_tools(need, subject)
+
+
 def mine(discover: Any, subject: str) -> Any:
     """discover_tools for this person: the search notes its goal under them, so the calls that follow are judged under it."""
     if discover is None:
@@ -398,7 +411,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                     async for kind, value in agent.stream_answer(
                         text.strip()[: rm.MAX_BODY], history,
                         model_stream=lambda messages, tools: model_stream(bearer, messages, tools),
-                        find_tools=find_tools,
+                        find_tools=with_owner(find_tools, subject),
                         use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                         handle=handle, instructions=instructions, tz=tz,
                         discover=mine(discover, subject), tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
@@ -456,7 +469,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
 
         try:
             outcome = await agent.converse(text.strip()[: rm.MAX_BODY], history, model_call=lambda m, t: model_call(bearer, m, t),
-                                           find_tools=find_tools,
+                                           find_tools=with_owner(find_tools, subject),
                                            use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                                            handle=handle, instructions=instructions, tz=tz, discover=mine(discover, subject), classify=classify, images=images,
                                            tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
@@ -566,7 +579,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                 async for kind, value in agent.stream_answer(
                     text.strip()[: rm.MAX_BODY], history,
                     model_stream=lambda messages, tools: model_stream(bearer, messages, tools),
-                    find_tools=find_tools,
+                    find_tools=with_owner(find_tools, subject),
                     use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                     handle=handle, instructions=instructions, tz=tz,
                     discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,

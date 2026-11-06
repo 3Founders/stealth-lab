@@ -104,25 +104,32 @@ def small(v: Sequence[float]) -> np.ndarray:
 async def candidates(pool: Any, query: str, qvec: Optional[np.ndarray]) -> tuple[list[ToolCard], dict[str, float]]:
     """(cards, card id -> cosine to qvec) from full-text search and nearest neighbours; ({}, ...) parts are skipped
     when there is no query vector or no searchable word."""
+    import asyncio
+
     out: dict[str, ToolCard] = {}
     sims: dict[str, float] = {}
     q = tsquery(query)
     v = _vec(qvec) if qvec is not None else None
-    async with pool.acquire() as conn:
-        if v is not None:
-            for r in await conn.fetch(
-                    f"SELECT {_COLS}, 1 - (t.embedding <=> $2::vector) AS sim FROM "
-                    f"(SELECT id FROM tool_card_vectors ORDER BY small <=> $1::vector LIMIT {VECTOR_LIMIT}) s "
-                    f"JOIN tool_cards t USING (id)",
-                    _vec(small(qvec)), v):
-                out[r["id"]] = card_from_row(r)
-                sims[r["id"]] = float(r["sim"])
-        if q:
+
+    async def nearest() -> list[Any]:
+        if v is None:
+            return []
+        async with pool.acquire() as conn:
+            return await conn.fetch(
+                f"SELECT {_COLS}, 1 - (t.embedding <=> $2::vector) AS sim FROM "
+                f"(SELECT id FROM tool_card_vectors ORDER BY small <=> $1::vector LIMIT {VECTOR_LIMIT}) s "
+                f"JOIN tool_cards t USING (id)",
+                _vec(small(qvec)), v)
+
+    async def words() -> list[Any]:
+        if not q:
+            return []
+        async with pool.acquire() as conn:
             # the request's rare words only (fewer than RARE of the cards hold them): an OR of every word matched 22k
             # cards for a Stripe request and ranking them took 4.6 s
             sim_sql = "CASE WHEN t.embedding IS NULL THEN NULL ELSE 1 - (t.embedding <=> $3::vector) END" if v else "NULL"
             args = (q, RARE, v) if v else (q, RARE)    # $2::float8: inferred from the integer column it was 0
-            for r in await conn.fetch(f"""
+            return await conn.fetch(f"""
                     WITH n AS (SELECT count(*) AS n FROM tool_cards),
                     words AS (SELECT w.lexeme FROM unnest(to_tsvector('english', $1)) u
                               JOIN tool_terms w ON w.lexeme = u.lexeme, n
@@ -130,11 +137,18 @@ async def candidates(pool: Any, query: str, qvec: Optional[np.ndarray]) -> tuple
                     q AS (SELECT string_agg(quote_literal(lexeme), ' | ')::tsquery AS query FROM words)
                     SELECT {_COLS}, {sim_sql} AS sim FROM tool_cards t, q
                     WHERE q.query IS NOT NULL AND t.search_tsv @@ q.query
-                    ORDER BY ts_rank_cd(t.search_tsv, q.query) DESC LIMIT {FTS_LIMIT}""", *args):
-                if r["id"] not in out:
-                    out[r["id"]] = card_from_row(r)
-                if r["sim"] is not None:
-                    sims[r["id"]] = float(r["sim"])
+                    ORDER BY ts_rank_cd(t.search_tsv, q.query) DESC LIMIT {FTS_LIMIT}""", *args)
+
+    # two queries, two connections, at the same time (they used to run one after the other)
+    near, fts = await asyncio.gather(nearest(), words())
+    for r in near:
+        out[r["id"]] = card_from_row(r)
+        sims[r["id"]] = float(r["sim"])
+    for r in fts:
+        if r["id"] not in out:
+            out[r["id"]] = card_from_row(r)
+        if r["sim"] is not None:
+            sims[r["id"]] = float(r["sim"])
     return list(out.values()), sims
 
 
