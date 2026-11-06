@@ -7,6 +7,7 @@ import StateNotice from "@/components/NotConnected";
 import { getMyProfile, suggestUsernames, updateMyProfile, uploadAvatar, type MyProfileResult } from "@/lib/kel-api";
 import { isSafeRedirectPath } from "@/lib/session";
 import type { ApiState } from "@/lib/api";
+import { handleFor, usernameProblem } from "@/lib/profile-form";
 
 const MAX_REGENERATE = 3;
 
@@ -15,7 +16,8 @@ function OnboardingInner() {
   const searchParams = useSearchParams();
   const [profile, setProfile] = useState<ApiState<MyProfileResult>>({ kind: "loading" });
   const [name, setName] = useState("");
-  const [editing, setEditing] = useState(false);
+  const [suggested, setSuggested] = useState("");
+  const [touched, setTouched] = useState(false);
   const [regenCount, setRegenCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,11 +28,18 @@ function OnboardingInner() {
   useEffect(() => {
     getMyProfile().then((r) => {
       setProfile(r);
-      if (r.kind === "ok") setName(r.data.profile.username || "");
+      // The field starts EMPTY: a generated name was being kept by people who just pressed Continue, and then friends had to call their agents by it.
+      // The generated name is offered with "Suggest a name"; the person decides.
+      if (r.kind === "ok") setSuggested(r.data.profile.username || "");
     });
   }, []);
 
-  async function generateAnother() {
+  async function suggestOne() {
+    if (suggested && regenCount === 0) {            // the first press offers the name that was generated for this account
+      setName(suggested);
+      setRegenCount(1);
+      return;
+    }
     if (regenCount >= MAX_REGENERATE) return;
     setBusy(true);
     setError(null);
@@ -53,6 +62,8 @@ function OnboardingInner() {
 
   async function continueToKel() {
     if (profile.kind !== "ok") return;
+    const problem = usernameProblem(name);
+    if (problem) { setTouched(true); setError(problem); return; }
     setBusy(true);
     setError(null);
 
@@ -99,32 +110,34 @@ function OnboardingInner() {
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>WELCOME</b></div>
         <h1 className="display"><AnimatedHeading>Welcome to keळ</AnimatedHeading></h1>
-        <p className="lead">Choose a username for your account.</p>
+        <p className="lead">Choose your username. It is how people call your agents: {name.trim() && !usernameProblem(name) ? <b>{handleFor(name)}</b> : <b>@yourname/kell</b>}.</p>
       </section>
 
       <section className="frame grid" style={{ paddingBottom: 120 }}>
         <div className="signin" style={{ gridColumn: "1 / span 6" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <Avatar username={avatarPreview ? null : name} size={48} authenticated />
+            <Avatar username={avatarPreview ? null : (name.trim() && !usernameProblem(name) ? name.trim() : null)} size={48} authenticated />
             {avatarPreview && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={avatarPreview} alt="" width={48} height={48} style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover" }} />
             )}
-            {editing ? (
+            <div className="cfield" style={{ flex: 1, minWidth: 0 }}>
+              <label htmlFor="onboard-username">Your username</label>
               <input
-                type="text" value={name} onChange={(e) => setName(e.target.value)} maxLength={32}
-                style={{ font: "inherit", fontSize: 22, border: "1px solid transparent", boxShadow: "var(--sh-dent)", background: "var(--glass)", borderRadius: 6, padding: "6px 10px" }}
-                autoFocus onBlur={() => setEditing(false)}
+                id="onboard-username" type="text" value={name} maxLength={32} autoComplete="username" autoCapitalize="none" spellCheck={false}
+                placeholder="for example, anuj" aria-describedby="onboard-username-help"
+                onChange={(e) => { setName(e.target.value); setTouched(true); setError(null); }}
+                style={{ fontSize: 16, minHeight: 44 }}
               />
-            ) : (
-              <h2 className="h3" style={{ margin: 0 }}>{name || "…"}</h2>
-            )}
+            </div>
           </div>
+          <p id="onboard-username-help" className="small dim" style={{ marginTop: -4 }}>
+            Letters and numbers, 3 to 32, starting with a letter. You can change it later in your profile; people who call you by the old name will need the new one.
+          </p>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button type="button" className="oauth-btn" style={{ width: "auto" }} onClick={() => setEditing(true)}>Edit name</button>
-            <button type="button" className="oauth-btn" style={{ width: "auto" }} onClick={generateAnother} disabled={busy || regenCount >= MAX_REGENERATE}>
-              Generate another{regenCount > 0 ? ` (${MAX_REGENERATE - regenCount} left)` : ""}
+            <button type="button" className="oauth-btn" style={{ width: "auto" }} onClick={suggestOne} disabled={busy || (regenCount >= MAX_REGENERATE)}>
+              Suggest a name{regenCount > 1 ? ` (${MAX_REGENERATE - regenCount} left)` : ""}
             </button>
           </div>
 
@@ -136,9 +149,9 @@ function OnboardingInner() {
             </button>
           </div>
 
-          {error && <p className="small dim">{error}</p>}
+          {(error || (touched && usernameProblem(name))) && <p className="small" role="alert">{error || usernameProblem(name)}</p>}
 
-          <button className="btn-ink" type="button" onClick={continueToKel} disabled={busy || !name.trim()} style={{ alignSelf: "flex-start" }}>
+          <button className="btn-ink" type="button" onClick={continueToKel} disabled={busy || !!usernameProblem(name)} style={{ alignSelf: "flex-start" }}>
             <span>{busy ? "Please wait…" : "Continue to keळ"}</span><span className="sq" aria-hidden="true">→</span>
           </button>
 

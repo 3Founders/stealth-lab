@@ -13,6 +13,20 @@ export function avatarProblem(file: { type: string; size: number }): string | nu
   return null;
 }
 
+/** The server's own username rule (backend/app/services/username_generator.py): 3 to 32 letters or digits, starting with a letter. null when fine. */
+export function usernameProblem(raw: string): string | null {
+  const name = raw.trim();
+  if (!name) return "Choose a username.";
+  if (name.length < 3) return "Use at least 3 characters.";
+  if (name.length > 32) return "Use at most 32 characters.";
+  if (!/^[A-Za-z]/.test(name)) return "Start with a letter.";
+  if (!/^[A-Za-z0-9]+$/.test(name)) return "Use letters and numbers only, no spaces or symbols.";
+  return null;
+}
+
+/** What other people type to call your agent: the username in lower case, as the room shows it ("@anuj/kell"). */
+export const handleFor = (name: string): string => `@${name.trim().toLowerCase()}/kell`;
+
 export interface ProfileForm { username: string; tagline: string; visibility: "private" | "public" }
 
 /** Only the fields that differ from what is saved, so an untouched field is never rewritten. Null when nothing changed. */
