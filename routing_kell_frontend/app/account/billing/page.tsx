@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import PlanSummary from "@/components/billing/PlanSummary";
 import CreditPacks from "@/components/billing/CreditPacks";
+import FreeCodeRedeem from "@/components/billing/FreeCodeRedeem";
 import { billingApi, buyPlansOn } from "@/lib/billing";
 import { getAccessToken, getSession, onSessionChange, type Session } from "@/lib/session";
 
@@ -17,6 +18,7 @@ const link = { textDecoration: "underline" } as const;
  */
 export default function AccountBillingPage() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [walletKey, setWalletKey] = useState(0);
   useEffect(() => {
     let live = true;
     getSession().then((s) => { if (live) setSession(s); });
@@ -41,7 +43,8 @@ export default function AccountBillingPage() {
               <p className="small">Plans can&rsquo;t be bought online yet. <Link href="/pricing" style={link}>See the plans</Link> and <Link href="/contact" style={link}>ask for one</Link>; we will set it up with you directly.</p>
             </div>
           )}
-          <CreditPacks api={api} session={session} buy={buyPlansOn()} history returnTo={back} />
+          {session ? <FreeCodeRedeem api={api} onRedeemed={() => setWalletKey((n) => n + 1)} /> : null}
+          <CreditPacks key={walletKey} api={api} session={session} buy={buyPlansOn()} history returnTo={back} />
           <p className="small dim">
             <Link href="/pricing" style={link}>Plans and pricing</Link> · <Link href="/docs/legal/terms" style={link}>Terms</Link> · <Link href="/docs/legal/privacy" style={link}>Privacy</Link> · <Link href="/legal/refunds" style={link}>Refunds and cancellation</Link> · <Link href="/contact" style={link}>Contact</Link>
           </p>

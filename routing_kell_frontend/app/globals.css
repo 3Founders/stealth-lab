@@ -73,6 +73,8 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 
 /* grid */
 .frame { width: calc(100% - 2 * var(--pad)); max-width: var(--max); margin-inline: auto; }
+/* a grid child may shrink below its content (a wide table or code line scrolls inside its own box instead of widening the page) */
+.frame > * { min-width: 0; }
 .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--gap); }
 .gridlines { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
 .gridlines .frame { height: 100%; position: relative; }
@@ -664,7 +666,8 @@ main, footer { position: relative; z-index: 1; }
 .models-found-row { display: flex; align-items: center; gap: 10px; }
 
 /* Profile page (/account/profile) */
-.profile-wrap { grid-column: 1 / span 8; display: grid; gap: 36px; }
+.profile-wrap { grid-column: 1 / span 8; display: grid; grid-template-columns: minmax(0, 1fr); gap: 36px; }
+.profile-wrap > .empty { grid-column: 1 / -1; }
 @media (max-width: 900px) { .profile-wrap { grid-column: 1 / -1; } }
 .profile-card { display: grid; gap: 14px; padding: 20px; border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--wash-45); }
 .profile-photo { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }

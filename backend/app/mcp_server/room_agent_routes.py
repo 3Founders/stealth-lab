@@ -217,9 +217,38 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         room_id = request.path_params["room_id"]
         # Every agent is kell: the default one is @kell, any other name is another instance of it.
         raw_name = str(data.get("agent") or "kell").strip().lstrip("@").lower()
-        if not _INSTANCE_NAME.match(raw_name):
+        owner_name = ""
+        if "/" in raw_name:                               # "@anuj/kell": another person's kell, answered from THEIR memory
+            owner_name, _, raw_name = raw_name.partition("/")
+        if not _INSTANCE_NAME.match(raw_name) or (owner_name and not _INSTANCE_NAME.match(owner_name)):
             return _error(request, "an agent name is 1 to 40 letters, numbers, dots, dashes or underscores", 400)
         handle = f"@{raw_name}"
+        mem_sub, remote_owner = subject, ""
+        my_label = await rm.owner_label(pool, subject)
+        if owner_name and owner_name != my_label:
+            their = await rm.sub_of_username(pool, owner_name)
+            if their is None:
+                return _error(request, f"no person named {owner_name!r}", 404)
+            from app.services import delegate as _dg
+            in_room = False
+            try:
+                in_room = bool(await pool.fetchval(
+                    "SELECT 1 FROM room_members WHERE room_id::text = $1 AND member_sub = $2 AND removed_at IS NULL", str(room_id), their))
+            except Exception:  # noqa: BLE001
+                in_room = False
+            if not (in_room or await _dg._linked(pool, their, subject)):
+                return _error(request, f"{owner_name} has not shared their agent with you (they are not in this room and have not allowed you)", 403)
+            mem_sub, remote_owner = their, owner_name
+            handle = f"@{owner_name}/{raw_name}"
+        # What the room shows as the sender: your own agent is @you/kell once other people are in the room, so two people's kells are never both "@kell".
+        post_handle = handle
+        if not remote_owner:
+            try:
+                people = await pool.fetchval("SELECT count(*) FROM room_members WHERE room_id::text = $1 AND removed_at IS NULL", str(room_id))
+            except Exception:  # noqa: BLE001
+                people = 0
+            if (people or 0) > 1:
+                post_handle = f"@{my_label}/{raw_name}"
         instructions = data.get("instructions") if isinstance(data.get("instructions"), str) else ""
         if instructions:                                  # a key pasted into "what should it do?" must not reach the model
             instructions = redact_value(instructions.strip()[:1500], [])
@@ -246,15 +275,24 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         mem_used: list[str] = []
         mem_on = False
         try:
-            mem_block, mem_used = await mem.context(pool, subject, text)
-            mem_on = bool(mem_block)
-            if mem_block:
+            cfg = await mem.settings(pool, mem_sub)
+            if remote_owner and not (cfg["enabled"] and cfg["share_agents"]):
+                mem_block, mem_used = "", []           # their memory is off, or they keep it from other agents: this kell answers without it
+            else:
+                mem_block, mem_used = await mem.context(pool, mem_sub, text)
+            mem_on = bool(mem_block) and not remote_owner     # what is learned in someone else's question is never written to the owner's memory
+            if mem_block and remote_owner:
+                instructions = (instructions + "\n\n" if instructions else "") + (
+                    f"You are {remote_owner}'s kell, answering a question from another person ({my_label}) in a shared room. The memory below is {remote_owner}'s. "
+                    "Use it where it helps answer; give only what the question needs, and never share credentials, private contact details, finances or anything "
+                    f"{remote_owner} would not want a colleague to see. Do not save anything to memory.\n" + mem_block)
+            elif mem_block:
                 instructions = (instructions + "\n\n" if instructions else "") + mem_block + MEMORY_HINT
         except Exception:  # noqa: BLE001
             mem_used = []
         try:
             recent_rows = await rm.recent_events(pool, subject, room_id, recent)
-            history = agent.transcript(recent_rows, self_handle=handle)
+            history = agent.transcript(recent_rows, self_handle=(handle, post_handle))
             oldest_seen = int(recent_rows[0]["seq"]) if recent_rows else 1
         except rm.RoomError as exc:
             return _error(request, str(exc), exc.status)
@@ -313,8 +351,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                     reply = reply.rstrip() + "\n\n(The picture was made but could not be attached to this message.)"
             try:
                 # A canvas too big for one message goes straight into the room's canvases; the message keeps a card for it.
-                reply = await rm.externalize_canvases(pool, subject, room_id, handle, reply)
-                events = rm.agent_events(handle, reply)
+                reply = await rm.externalize_canvases(pool, subject, room_id, post_handle, reply)
+                events = rm.agent_events(post_handle, reply)
                 appended = await rm.append_events(pool, subject, room_id, events)
             except rm.RoomError as exc:
                 return reply, None, str(exc), links, sign_ins, remembered

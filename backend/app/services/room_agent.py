@@ -332,10 +332,11 @@ class AgentOutcome:
     tool_goal: str | None = None              # the kind of outside tool the request needed (app/tool_routing/goals.py), when the judge said
 
 
-def transcript(events: list[dict[str, Any]], self_handle: str = SELF_HANDLE) -> list[dict[str, Any]]:
+def transcript(events: list[dict[str, Any]], self_handle: "str | tuple[str, ...]" = SELF_HANDLE) -> list[dict[str, Any]]:
     """Room events -> chat turns. A person or another agent is a user turn ("Asha (@alice): ..."); this agent's own earlier
     messages are assistant turns. Only `msg` events; anything else is ignored."""
     out: list[dict[str, Any]] = []
+    selves = {self_handle} if isinstance(self_handle, str) else set(self_handle)      # an agent may be @kell or @you/kell in one room
     for e in events[-MAX_TRANSCRIPT_TURNS:]:
         if e.get("kind") != "msg":
             continue
@@ -344,7 +345,7 @@ def transcript(events: list[dict[str, Any]], self_handle: str = SELF_HANDLE) -> 
             continue
         sender = e.get("sender") or {}
         handle = str(sender.get("handle") or "@person")
-        if sender.get("kind") == "agent" and handle.lower() == self_handle:
+        if sender.get("kind") == "agent" and handle.lower() in selves:
             out.append({"role": "assistant", "content": body})
         else:
             name = sender.get("name") or handle

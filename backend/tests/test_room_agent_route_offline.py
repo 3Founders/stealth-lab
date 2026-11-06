@@ -235,3 +235,68 @@ async def test_the_highlighted_part_of_an_open_canvas_reaches_the_model_beside_t
     assert r.status_code == 200
     assert seen["user"].endswith('make it clearer') and "Step one." not in seen["user"] and "<canvas>" not in seen["user"]   # the message is the short line
     assert "<canvas>\n# Plan" in seen["system"] and "<selection>\nStep one.\n</selection>" in seen["system"]
+
+
+@pytest.mark.asyncio
+async def test_anujs_kell_answers_from_anujs_memory_and_posts_as_anuj_slash_kell(monkeypatch):
+    """"@anuj/kell": the answer is posted as @anuj/kell (not a second "@kell"), his memory is in the prompt, and nothing is saved to it."""
+    from app.services import memory as mem
+    from app.services import rooms as rm
+
+    async def sub_of(pool, name):
+        return {"anuj": "person-anuj", "me": "person-1"}.get(name)
+
+    async def label(pool, sub):
+        return {"person-anuj": "anuj", "person-1": "me"}[sub]
+
+    async def settings(pool, sub):
+        return {"enabled": True, "share_agents": True, "last_dream_at": None}
+
+    async def context(pool, sub, query):
+        assert sub == "person-anuj"                      # HIS memory, not the asker's
+        return "<memory>Anuj is fixing the billing webhook.</memory>", ["MEMORY.md"]
+
+    monkeypatch.setattr(rm, "sub_of_username", sub_of)
+    monkeypatch.setattr(rm, "owner_label", label)
+    monkeypatch.setattr(mem, "settings", settings)
+    monkeypatch.setattr(mem, "context", context)
+    seen = {}
+
+    async def model(authorization, messages, tools):
+        seen["system"] = messages[0]["content"]
+        return {"choices": [{"message": {"content": "He is on the billing webhook.\n```memory\n- Anuj likes tea\n```"}}]}
+
+    pool = _pool()
+
+    async def fetchval(sql, *a):
+        return 1 if "FROM room_members" in sql else None
+
+    pool.fetchval = fetchval
+    r = await _route(model, pool=pool)(_request({"text": "what is anuj on?", "agent": "anuj/kell"}))
+    assert r.status_code == 200
+    assert "billing webhook" in seen["system"] and "Do not save anything to memory" in seen["system"]
+    inserts = [a for s, a in pool.conn.log if "WITH bump AS" in s]
+    assert inserts[0][4] == "@anuj/kell"
+    assert not [1 for s, _ in pool.conn.log if "memory_files" in s and "INSERT" in s]          # nothing written to his memory
+
+
+@pytest.mark.asyncio
+async def test_anujs_kell_is_refused_when_he_has_not_shared_it(monkeypatch):
+    from app.services import rooms as rm
+
+    async def sub_of(pool, name):
+        return "person-anuj"
+
+    async def label(pool, sub):
+        return "me"
+
+    monkeypatch.setattr(rm, "sub_of_username", sub_of)
+    monkeypatch.setattr(rm, "owner_label", label)
+    pool = _pool()
+
+    async def fetchval(sql, *a):
+        return None                                        # not in the room, no grant
+
+    pool.fetchval = fetchval
+    r = await _route(lambda a, m, t: None, pool=pool)(_request({"text": "hi", "agent": "anuj/kell"}))
+    assert r.status_code == 403

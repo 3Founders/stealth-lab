@@ -24,7 +24,7 @@ export interface EventIn {
 }
 export interface AppendResult { accepted: Array<{ id: string; seq: number; duplicate?: boolean }>; rejected: Array<{ id: string | null; reason: string; retry: boolean }> }
 export interface EventsPage { events: ServerEvent[]; next: number; more: boolean; last_seq: number }
-export interface RoomMember { kind: "person" | "agent"; sub: string | null; agent_id: string | null; name: string | null; role: "owner" | "admin" | "member"; added_at: string; me: boolean }
+export interface RoomMember { kind: "person" | "agent"; sub: string | null; agent_id: string | null; name: string | null; username?: string; role: "owner" | "admin" | "member"; added_at: string; me: boolean }
 export interface RoomInvite { id: string; code: string; expires_at: string; max_uses: number }
 
 export class RoomsApiError extends Error {

@@ -228,9 +228,14 @@ async def list_members(pool: Any, sub: str, room_id: str) -> list[dict[str, Any]
         "LEFT JOIN delegate_agents a ON a.id = m.agent_id WHERE m.room_id = $1 AND m.removed_at IS NULL ORDER BY m.added_at",
         room["id"])
     names = await _names(pool, [r["member_sub"] for r in rows if r["member_sub"]])
+    # `username` is what a handle names a person by (@anuj/kell, @anuj/claude); `name` is the display name, which can have spaces and capitals
+    usernames: dict[str, str] = {}
+    for r in rows:
+        if not r["agent_id"] and r["member_sub"] and r["member_sub"] not in usernames:
+            usernames[r["member_sub"]] = await owner_label(pool, r["member_sub"])
     return [{"kind": "agent" if r["agent_id"] else "person", "sub": r["member_sub"], "agent_id": str(r["agent_id"]) if r["agent_id"] else None,
              "name": (f"@{r['agent_name']}" if r["agent_id"] else names.get(r["member_sub"])), "role": r["role"], "added_at": _iso(r["added_at"]),
-             "me": r["member_sub"] == sub} for r in rows]
+             "me": r["member_sub"] == sub, **({"username": usernames[r["member_sub"]]} if r["member_sub"] in usernames else {})} for r in rows]
 
 
 async def set_member_role(pool: Any, sub: str, room_id: str, who: str, role: str) -> dict[str, Any]:

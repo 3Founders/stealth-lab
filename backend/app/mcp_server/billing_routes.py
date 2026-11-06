@@ -39,7 +39,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.mcp_server.chat_routes import BY_ADDRESS, Window, client_address, cors_headers as _chat_cors, resolve_identity
-from app.services import accounts, packs, plans, referrals, subscriptions, wallet
+from app.services import accounts, free_credits, packs, plans, referrals, subscriptions, wallet
 
 log = logging.getLogger(__name__)
 RAZORPAY_ORDERS = "https://api.razorpay.com/v1/orders"
@@ -283,6 +283,28 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         if why is not None:
             return _err(request, 400, why)
         return _json(request, {"valid": True})
+
+    @server.custom_route("/v1/billing/redeem", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def redeem_route(request: Request) -> Response:
+        """Redeem a free-credit code (db/183): no payment, a small credit once per person, a limited number of people."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        who, account, bad = await person(request)
+        if bad is not None:
+            return bad
+        if not CODE_CHECKS_PER_ADDRESS.allow(client_address(request)):
+            return _err(request, 429, "too many tries; wait a minute")
+        try:
+            data = await request.json()
+        except ValueError:
+            return _err(request, 400, "the request body must be JSON")
+        try:
+            out = await free_credits.redeem(pool_getter(), user_id=account, code=data.get("code") if isinstance(data, dict) else None,
+                                            phone=(getattr(who, "claims", None) or {}).get("phone"))
+        except free_credits.FreeCodeError as exc:
+            return _err(request, exc.status, str(exc))
+        out["remaining_usd"] = await free_credits.balance_after(pool_getter(), account)
+        return _json(request, out, 200 if out["already"] else 201)
 
     @server.custom_route("/v1/billing/plan", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def plan_route(request: Request) -> Response:

@@ -49,7 +49,7 @@ async def active_codes(pool: Any) -> frozenset[str]:
     deployed before the migration) nothing unlocks, and the route says so rather than crashing."""
     try:
         async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
-            rows = await conn.fetch("SELECT code FROM billing_referral_codes WHERE active")
+            rows = await conn.fetch("SELECT code FROM billing_referral_codes WHERE active AND grant_usd IS NULL AND grant_org_id IS NULL")      # a free-credit code (db/183) is not a key to the paid plan
         return frozenset(r["code"] for r in rows)
     except Exception:  # noqa: BLE001
         log.exception("billing: reading referral codes failed; the pilot stays locked")

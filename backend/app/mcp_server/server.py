@@ -640,7 +640,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
         "report_discovery", "submit_way", "submit", "report_model_run", "report_result", "report_audit", "report_check_evidence",
         "report_tools", "room_post", "memory_write",
-        "delegate_inbox", "delegate_result")},
+        "delegate_inbox", "delegate_result", "delegate_call")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
         "call_model", "delegate", "find_best_way", "reproduce_procedure", "continue_run",
@@ -665,7 +665,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 V1_TOOLS: frozenset[str] = frozenset({
     "find_ways", "report_discovery", "submit_way", "submit", "recommend_models", "report_model_run", "report_result",
     "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool", "delegate_inbox",
-    "delegate_result", "room_list", "room_read", "room_post", "room_members", "canvas_list", "canvas_read", "canvas_write",
+    "delegate_result", "delegate_call", "room_list", "room_read", "room_post", "room_members", "canvas_list", "canvas_read", "canvas_write",
     "memory_read", "memory_search", "memory_write"})
 
 
@@ -700,6 +700,8 @@ _V1_ANNOTATIONS: dict[str, dict] = {
     # takes the next task the signed-in person queued for this agent: changes its state, never leaves their account
     "delegate_inbox": {"title": "Check my kell inbox", "read_only_hint": False, "destructive_hint": False,
                        "idempotent_hint": False, "open_world_hint": False},
+    "delegate_call": {"title": "Call another agent", "read_only_hint": False, "destructive_hint": False,
+                      "idempotent_hint": False, "open_world_hint": False},
     "delegate_result": {"title": "Post a task result", "read_only_hint": False, "destructive_hint": False,
                         "idempotent_hint": False, "open_world_hint": False},
     # rooms: the tools that make a connector a real participant in the person's kell rooms (P5, docs/rooms_design.md)
@@ -3871,6 +3873,35 @@ async def delegate_inbox(ctx: Context, agent: str = "", wait_seconds: int = 0) -
             if out.get("task") or _time.monotonic() >= end:
                 return json.dumps(out, default=str)
             await _asyncio.sleep(2.0)
+    except _dg.DelegateError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def delegate_call(ctx: Context, to: str = "", text: str = "", task_id: str = "", parent_task_id: str = "", agent: str = "") -> str:
+    """
+    Call another agent, yours or another person's: to="@anuj/kell" asks Anuj's agent called kell, to="@claude-code" asks your own. It works when
+    that person shares a room with you or allowed you to call their agents, and their agent's owner still approves the task unless they
+    turned that off for you. The answer is not pushed to you: call this again with task_id (and no `to`) to see its status and result.
+
+    to + text: who to call and what to ask (at most 8,000 characters, never keys or passwords). parent_task_id: the task you are working on
+    now (from delegate_inbox), so kell counts how many agents in a row have called each other and stops at 4.
+    task_id: instead of calling, look up a task you made.
+    agent: which tool you are (claude, claude-code, chatgpt ...), so the call shows who asked.
+
+    Example: delegate_call(to="@anuj/kell", text="what is the status of the billing fix?") -> {"task": {"id": "...", "status": "needs_approval"}}
+    """
+    from app.services import delegate as _dg
+    from app.services import rooms as _rooms
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        owner = _kell_owner()
+        if task_id and not to:
+            return json.dumps({"task": await _dg.get_task(pool, owner, task_id)}, default=str)
+        name = (agent or "").strip() or _rooms.connector_tool(*_client_hints(ctx))
+        return json.dumps({"task": await _dg.call_agent(pool, owner, to, text, name, parent_task_id)}, default=str)
     except _dg.DelegateError as exc:
         return f"REFUSED: {exc}"
 

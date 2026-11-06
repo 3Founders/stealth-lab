@@ -134,6 +134,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [members, setMembers] = useState<RoomMember[]>([]);
   /** The other people in this room, as the @handles you can mention (their account name, the way the server stores a mention of them). */
   const peopleHandles = members.filter((m) => m.kind === "person" && !m.me).map((m) => personHandle(m.name ?? fallbackName(m.sub)));
+  /** Each other person's kell, by their USERNAME (what the server resolves), falling back to the display-name handle: "@anuj/kell". */
+  const peerKells = members.filter((m) => m.kind === "person" && !m.me).map((m) => `${m.username ? `@${m.username}` : personHandle(m.name ?? fallbackName(m.sub))}/kell`);
   /** Your own @handle in a shared room: a message that mentions it is a mention of you. */
   const myHandleRef = useRef<string | null>(null);
   const meMember = members.find((m) => m.kind === "person" && m.me);
@@ -1291,7 +1293,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         })();
     // what can be called: your own agents by name (@claude), everyone's by owner/name (@alice/claude)
     const relayNames = relayAgents.flatMap((a) => (a.owner ? [relayKey(a), `${a.owner}/${a.name}`.toLowerCase()] : [relayKey(a)]));
-    const route = routeMessage(line, { local: agents, relay: relayNames, people: peopleHandles, follow });
+    const route = routeMessage(line, { local: agents, relay: relayNames, people: peopleHandles, follow, remoteKells: peerKells });
     const toAgent = route.toRelay.length && !/@[a-z0-9]/i.test(line) ? `@${route.toRelay[0]} ${ask}` : ask;
     if (route.toRelay.length) {
       if (pictures?.length) note("Pictures can't go to connector agents yet, so only the text was sent to them.");
@@ -1315,6 +1317,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     await broker.send(m);
     if (route.asksKell) void askKell(room, ask);
     for (const h of route.localMentions) if (h !== "@kell") void askKell(room, ask, h);
+    for (const h of route.remoteKells) void askKell(room, ask, h);      // "@anuj/kell": his kell, answering from his memory
   };
 
   /** Stops everything running in this room: kell's and the added agents' answers, and any connected agent's task still waiting or being worked. */
@@ -1327,7 +1330,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const relayWorkingHandles = tasks
     .filter((t) => t.status === "queued" || t.status === "claimed")
     .map((t) => relayAgents.find((a) => a.id === t.agent_id)?.handle ?? "@agent");
-  const mentionable = [...new Set([...agents, "@kell", ...relayAgents.map((a) => a.handle), ...peopleHandles])];
+  const mentionable = [...new Set([...agents, "@kell", ...relayAgents.map((a) => a.handle), ...peopleHandles, ...peerKells])];
   const filesCtx = useMemo(() => ({
     fetchBlob: async (fileId: string) => {
       const rid = engineRef.current?.roomId(roomRef.current) ?? infoRef.current[roomRef.current]?.id;

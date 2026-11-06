@@ -15,7 +15,7 @@ What this module refuses to be, so nobody has to wonder:
 
 Every function takes ``owner_sub`` (the Supabase subject) and checks it on every row it touches; the tables have RLS on with no
 policies (migration 155), so the application check is the whole gate. Honest limits: there is one queue per (owner, agent),
-no agent-to-agent hops yet (``depth`` is stored, always 0), and expiry is enforced by opportunistic deletes, not a job.
+agent-to-agent calls (``call_agent``) carry ``depth`` and stop at MAX_DEPTH, and expiry is enforced by opportunistic deletes, not a job.
 """
 from __future__ import annotations
 
@@ -211,7 +211,8 @@ async def _room_for(pool: Any, sub: str, room_id: Optional[str], label: str) -> 
 
 
 async def post_message(pool: Any, owner_sub: str, text: str, room: Optional[str] = None,
-                       needs_approval: bool = False, from_handle: str = "@me", room_id: Optional[str] = None) -> dict[str, Any]:
+                       needs_approval: bool = False, from_handle: str = "@me", room_id: Optional[str] = None,
+                       depth: int = 0) -> dict[str, Any]:
     """A line from a person in a room: one task per live agent it mentions. ``@claude`` is the sender's own claude; ``@alice/claude`` is Alice's,
     if Alice is in the same room (anyone in a room can call anyone's agent there; the agent's owner still sees and answers every task).
     A line that mentions nobody (or only unknown names) creates no task and says so."""
@@ -247,8 +248,10 @@ async def post_message(pool: Any, owner_sub: str, text: str, room: Optional[str]
                 agent = found[0] if len(found) == 1 else None
         else:
             their = their_sub
-            if their and rid is not None and await pool.fetchval(
-                    "SELECT 1 FROM room_members WHERE room_id = $1 AND member_sub = $2 AND removed_at IS NULL", rid, their):
+            # reachable when they share a room with the caller, or the agent's owner granted the caller access (agent_links, migration 182)
+            in_room = bool(their and rid is not None and await pool.fetchval(
+                "SELECT 1 FROM room_members WHERE room_id = $1 AND member_sub = $2 AND removed_at IS NULL", rid, their))
+            if their and (in_room or await _linked(pool, their, sender)):
                 agent = await pool.fetchrow(
                     "SELECT * FROM delegate_agents WHERE owner_sub = $1 AND name = $2 AND revoked_at IS NULL", their, name)
         if agent is None:
@@ -262,17 +265,111 @@ async def post_message(pool: Any, owner_sub: str, text: str, room: Optional[str]
         owner = agent["owner_sub"]
         # Someone else's text runs in your agent with your tools, so a task from another person waits for its owner's OK (the approve button); a
         # person's own tasks go straight through unless they asked for approval.
-        status = "needs_approval" if (needs_approval or owner != sender) else "queued"
+        trusted = owner != sender and await _linked(pool, owner, sender, auto_only=True)
+        status = "needs_approval" if (needs_approval or (owner != sender and not trusted)) else "queued"
         open_now = await pool.fetchval(
             "SELECT count(*) FROM delegate_tasks WHERE owner_sub = $1 AND status = ANY($2::text[])", owner, list(OPEN_STATES))
         if open_now + 1 > MAX_OPEN_TASKS_PER_OWNER:
             raise DelegateError("too many unfinished tasks; cancel or finish some first", 429)
         row = await pool.fetchrow(
-            "INSERT INTO delegate_tasks (id, owner_sub, agent_id, room, from_handle, body, status, requester_sub, room_id) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
-            uuid7(), owner, agent["id"], room, asked_by[:80], body, status, sender, rid)
+            "INSERT INTO delegate_tasks (id, owner_sub, agent_id, room, from_handle, body, status, requester_sub, room_id, depth) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *",
+            uuid7(), owner, agent["id"], room, asked_by[:80], body, status, sender, rid, depth)
         tasks.append(_task_json(row))
     return {"room": room, "tasks": tasks, "unknown": unknown}
+
+
+MAX_DEPTH = 4
+
+
+async def _linked(pool: Any, owner_sub: str, caller_sub: str, auto_only: bool = False) -> bool:
+    """True when ``owner_sub`` let ``caller_sub`` call their agents without a shared room (a live row in agent_links). With auto_only, only a
+    grant that also skips the owner's approval counts. A missing table (migration 182 not applied) means no grant."""
+    try:
+        return bool(await pool.fetchval(
+            "SELECT 1 FROM agent_links WHERE owner_sub = $1 AND peer_sub = $2 AND revoked_at IS NULL AND ($3 = false OR auto_approve)",
+            owner_sub, caller_sub, auto_only))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def grant_access(pool: Any, owner_sub: str, peer_username: str, auto_approve: bool = False) -> dict[str, Any]:
+    """Let another person (by username) call your agents from anywhere, not only from a room you share: ``@you/agent`` then works for them.
+    One-way: for both of you to call each other, each grants the other. Their task still waits for your approval unless auto_approve."""
+    from app.services import rooms as _rooms
+
+    peer = await _rooms.sub_of_username(pool, peer_username)
+    if peer is None:
+        raise DelegateError(f"no person named {peer_username!r}", 404)
+    if peer == owner_sub:
+        raise DelegateError("that is you: your own agents are always reachable", 400)
+    await pool.execute(
+        "INSERT INTO agent_links (owner_sub, peer_sub, auto_approve) VALUES ($1, $2, $3) "
+        "ON CONFLICT (owner_sub, peer_sub) DO UPDATE SET revoked_at = NULL, auto_approve = EXCLUDED.auto_approve",
+        owner_sub, peer, bool(auto_approve))
+    return {"peer": peer_username.lower(), "auto_approve": bool(auto_approve)}
+
+
+async def revoke_access(pool: Any, owner_sub: str, peer_username: str) -> dict[str, Any]:
+    from app.services import rooms as _rooms
+
+    peer = await _rooms.sub_of_username(pool, peer_username)
+    if peer is None:
+        raise DelegateError(f"no person named {peer_username!r}", 404)
+    await pool.execute("UPDATE agent_links SET revoked_at = now() WHERE owner_sub = $1 AND peer_sub = $2 AND revoked_at IS NULL", owner_sub, peer)
+    return {"revoked": peer_username.lower()}
+
+
+async def list_access(pool: Any, owner_sub: str) -> dict[str, Any]:
+    """Who you let call your agents, and whose agents you may call."""
+    from app.services import rooms as _rooms
+
+    given = await pool.fetch("SELECT peer_sub, auto_approve FROM agent_links WHERE owner_sub = $1 AND revoked_at IS NULL", owner_sub)
+    got = await pool.fetch("SELECT owner_sub, auto_approve FROM agent_links WHERE peer_sub = $1 AND revoked_at IS NULL", owner_sub)
+    return {"you_allow": [{"person": await _rooms.owner_label(pool, r["peer_sub"]), "auto_approve": r["auto_approve"]} for r in given],
+            "allow_you": [{"person": await _rooms.owner_label(pool, r["owner_sub"]), "auto_approve": r["auto_approve"]} for r in got]}
+
+
+async def call_agent(pool: Any, caller_sub: str, to: str, text: str, from_agent: str = "agent", parent_task_id: str = "") -> dict[str, Any]:
+    """An AGENT calls another agent: ``to`` is ``@anuj/kell`` (a person's agent) or ``@kell`` (one of the caller's own). The question becomes a
+    task for that agent, one hop deeper than the task the caller is working on (``parent_task_id``), refused past MAX_DEPTH so two agents cannot
+    call each other forever. The answer stays on the task (no room): read it with get_task. Another person's agent still needs its owner's
+    approval unless they granted auto_approve; and reaching it needs a shared room or a grant."""
+    from app.services import rooms as _rooms
+
+    depth = 1
+    if parent_task_id:
+        try:
+            parent = await pool.fetchrow("SELECT depth FROM delegate_tasks WHERE id = $1 AND owner_sub = $2 AND status = 'claimed'",
+                                         _uuid(parent_task_id), caller_sub)
+        except ValueError as exc:
+            raise DelegateError("not a valid task id", 400) from exc
+        if parent is None:
+            raise DelegateError("parent_task_id is not a task you are working on", 404)
+        depth = int(parent["depth"]) + 1
+    if depth > MAX_DEPTH:
+        raise DelegateError(f"agents have called each other {MAX_DEPTH} times in a row: a person has to step in", 409)
+    pairs = mention_pairs(to if to.strip().startswith("@") else "@" + to.strip())
+    if len(pairs) != 1:
+        raise DelegateError("name one agent, like @anuj/kell", 400)
+    who, name = pairs[0]
+    mine = await _rooms.owner_label(pool, caller_sub)
+    out = await post_message(pool, caller_sub, f"@{who + '/' if who else ''}{name} {text}", "#direct",
+                             from_handle=f"@{mine}/{(from_agent or 'agent').lower()}", depth=depth)
+    if not out["tasks"]:
+        raise DelegateError(f"{to} is not reachable: it has to exist, and its owner has to share a room with you or allow you (agent_links)", 404)
+    return out["tasks"][0]
+
+
+async def get_task(pool: Any, sub: str, task_id: str) -> dict[str, Any]:
+    """One task you asked or own: its status and, once done, its result."""
+    try:
+        row = await pool.fetchrow("SELECT * FROM delegate_tasks WHERE id = $1 AND (owner_sub = $2 OR requester_sub = $2)", _uuid(task_id), sub)
+    except ValueError as exc:
+        raise DelegateError("not a valid task id", 400) from exc
+    if row is None:
+        raise DelegateError("no such task", 404)
+    return _task_json(row)
 
 
 async def list_tasks(pool: Any, owner_sub: str, room: Optional[str] = None, after: Optional[datetime] = None,

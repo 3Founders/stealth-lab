@@ -124,6 +124,7 @@ class Identity:
     def __init__(self, actor_id: str, scope: Any, org_ids: tuple[str, ...], user_id: Optional[str] = None) -> None:
         self.actor_id, self.scope, self.org_ids = actor_id, scope, org_ids
         self.user_id = str(user_id).lower() if user_id else None       # also the id of the person's own wallet account
+        self.claims: dict = {}                                          # the validated token's claims (phone, amr ...), set by resolve_identity
 
 
 async def resolve_identity(verifier: Any, pool: Any, request: Request, is_local: Callable[[Request], bool]
@@ -170,7 +171,9 @@ async def resolve_identity(verifier: Any, pool: Any, request: Request, is_local:
         org_ids = (*org_ids, pilot.pilot_org_id())
     scope = (AccessScope.for_org_member(actor.subject, list(org_ids), ctx.user_id) if org_ids
              else AccessScope.for_user(actor.subject))
-    return Identity(actor.subject, scope, org_ids, ctx.user_id), None
+    ident = Identity(actor.subject, scope, org_ids, ctx.user_id)
+    ident.claims = dict(actor.claims or {})
+    return ident, None
 
 
 def paying_org(requested: Optional[str], org_ids: tuple[str, ...], pilot_org: Optional[str],

@@ -60,6 +60,7 @@ export interface RouteDecision {
   localMentions: string[];  // in-tab agent handles (with @)
   unknown: string[];        // mentioned names that are not in this room
   asksKell: boolean;
+  remoteKells: string[];    // another person's kell named in the line ("@anuj/kell"): answered on the server from THEIR memory
   defaultToKell: boolean;   // the untagged solo-room rule, for the recipients list
 }
 
@@ -67,7 +68,7 @@ export interface RouteDecision {
  * Who a message without an @name goes to. `follow` is the agent that spoke last in the room ("kell", a connected agent's name, or a local
  * agent's @handle): a reply with no @ continues that conversation, so nobody types @kell or @claude-code before every answer.
  */
-export function routeMessage(line: string, opts: { local: string[]; relay: string[]; people: string[]; follow?: string | null }): RouteDecision {
+export function routeMessage(line: string, opts: { local: string[]; relay: string[]; people: string[]; follow?: string | null; remoteKells?: string[] }): RouteDecision {
   const handles = mentionsIn(line).map((h) => h.toLowerCase());
   const names = handles.map((h) => h.replace(/^@/, ""));
   const local = new Set(opts.local.map((h) => h.toLowerCase()));
@@ -78,10 +79,12 @@ export function routeMessage(line: string, opts: { local: string[]; relay: strin
   const sticky = !anyAt && follow !== "";
   const toRelay = sticky && relay.has(follow) ? [follow] : names.filter((n) => relay.has(n));
   const localMentions = sticky && local.has(`@${follow}`) && follow !== "kell" ? [`@${follow}`] : handles.filter((h) => local.has(h));
-  const unknown = names.filter((n) => n !== "kell" && !local.has(`@${n}`) && !relay.has(n) && !people.has(n));
+  const remote = new Set((opts.remoteKells ?? []).map((h) => h.replace(/^@/, "").toLowerCase()));
+  const remoteKells = handles.filter((h) => remote.has(h.replace(/^@/, "")));
+  const unknown = names.filter((n) => n !== "kell" && !local.has(`@${n}`) && !relay.has(n) && !people.has(n) && !remote.has(n));
   const defaultToKell = !anyAt && opts.people.length === 0;
   const asksKell = defaultToKell || handles.includes("@kell") || (sticky && follow === "kell");
-  return { toRelay, localMentions, unknown, asksKell, defaultToKell };
+  return { toRelay, localMentions, unknown, asksKell, defaultToKell, remoteKells };
 }
 
 export interface MessageRun {

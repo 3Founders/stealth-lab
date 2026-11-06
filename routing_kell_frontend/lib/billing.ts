@@ -186,6 +186,14 @@ export function billingApi(deps: BillingDeps) {
       if (r.kind === "signed-out") return { kind: "error", message: "The code could not be checked." };   // cannot happen: no session is asked for
       return { kind: "error", message: r.message };
     },
+    /** Redeem a free-credit code (no payment): a small credit once per person, for a limited number of people. */
+    async redeemCode(code: string): Promise<Loaded<{ creditedUsd: string; already: boolean; placesLeft: number | null; remainingUsd: string; team: boolean }>> {
+      const r = await call("POST", "/redeem", { code });
+      if (r.kind !== "ok") return r;
+      const d = r.data;
+      return { kind: "ok", data: { creditedUsd: String(d.credited_usd ?? "0"), already: d.already === true,
+                                   placesLeft: typeof d.places_left === "number" ? d.places_left : null, remainingUsd: String(d.remaining_usd ?? "0"), team: d.kind === "team" } };
+    },
     /** The signed-in buyer's own personal referral code, if they have one (made when their first plan is activated). */
     async myReferral(): Promise<Loaded<{ code: string | null }>> {
       const r = await call("GET", "/referral");

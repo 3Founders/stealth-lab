@@ -47,3 +47,18 @@ describe("room message routing", () => {
     expect(d.asksKell).toBe(false);
   });
 });
+
+describe("another person's kell (@anuj/kell)", () => {
+  const opts = { local: [], relay: [], people: ["@anuj"], remoteKells: ["@anuj/kell"] };
+  it("is answered by that person's kell, not refused as unknown and not handed to your own @kell", () => {
+    const r = routeMessage("@anuj/kell what are you working on?", opts);
+    expect(r.remoteKells).toEqual(["@anuj/kell"]);
+    expect(r.unknown).toEqual([]);
+    expect(r.asksKell).toBe(false);
+  });
+  it("is still refused when that person is not in the room", () => {
+    const r = routeMessage("@bob/kell hi", opts);
+    expect(r.remoteKells).toEqual([]);
+    expect(r.unknown).toEqual(["bob/kell"]);
+  });
+});

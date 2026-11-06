@@ -155,6 +155,17 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
                                     room_id=str(data["room_id"]) if data.get("room_id") else None)
         return _json(request, out, 201 if out["tasks"] else 200)
 
+    @server.custom_route("/v1/delegate/access", methods=["GET", "POST", "DELETE", "OPTIONS"], include_in_schema=False)
+    @handler
+    async def access(request: Request, pool: Any, subject: str) -> Response:
+        """Who may call your agents from anywhere (one way). GET lists both directions; POST {person, auto_approve?} allows; DELETE {person} stops."""
+        if request.method == "GET":
+            return _json(request, await dg.list_access(pool, subject))
+        data = await body_of(request)
+        if request.method == "DELETE":
+            return _json(request, await dg.revoke_access(pool, subject, str(data.get("person", ""))))
+        return _json(request, await dg.grant_access(pool, subject, str(data.get("person", "")), bool(data.get("auto_approve", False))), 201)
+
     @server.custom_route("/v1/delegate/tasks", methods=["GET", "OPTIONS"], include_in_schema=False)
     @handler
     async def tasks(request: Request, pool: Any, subject: str) -> Response:
