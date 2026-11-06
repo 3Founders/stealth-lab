@@ -21,6 +21,16 @@ type KellDesktop = {
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
+/** The Help menu: the site's pages that answer what people ask in the app. */
+const HELP_LINKS: [string, string][] = [
+  ["How kell works", "https://www.kell.org.in/docs"],
+  ["Agents in rooms", "https://www.kell.org.in/docs#agents"],
+  ["Teams", "https://www.kell.org.in/docs#teams"],
+  ["Plans and credits", "https://www.kell.org.in/pricing"],
+  ["Your account and billing", "https://www.kell.org.in/account/billing"],
+  ["Contact us", "https://www.kell.org.in/contact"],
+]
+
 /** One list of changed files, each opening to its diff. A new file listed by name only says so. */
 function FileList({ files, openOne = false }: { files: FileDiff[]; openOne?: boolean }) {
   return (
@@ -123,6 +133,7 @@ export default function Home() {
     el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up)
   }
   const [accountOpen, setAccountOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [lines, setLines] = useState<Line[]>([])
   const [steps, setSteps] = useState<Step[]>([])
   const [ledger, setLedger] = useState<LedgerRow[]>([])
@@ -454,6 +465,17 @@ export default function Home() {
           <button type="button" role="tab" aria-selected={pane === "rooms"} onClick={() => setPane("rooms")}>Rooms</button>
         </div>
         <span className="dk-who">{settings?.signedIn ? <>Signed in as <b>{settings.account || "your kell account"}</b></> : "Not signed in"}</span>
+        <span className="dk-help">
+          <button type="button" className="dk-icon dk-icon-sm" aria-label="Help" title="Help" aria-expanded={helpOpen} onClick={() => setHelpOpen((o) => !o)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6" /><path d="M12 17h.01" /></svg>
+          </button>
+          {helpOpen && (
+            // Each opens on kell.org.in in the person's browser (the app window never leaves the app).
+            <span className="dk-help-menu" role="menu" onClick={() => setHelpOpen(false)}>
+              {HELP_LINKS.map(([label, href]) => <a key={href} role="menuitem" href={href} target="_blank" rel="noopener">{label}</a>)}
+            </span>
+          )}
+        </span>
       </nav>
       {otherAccount && (
         <div className="dk-err dk-mismatch" role="alert">
@@ -496,15 +518,22 @@ export default function Home() {
           </div>
 
           <h2>Project</h2>
-          <div style={{ margin: "0 6px" }}>
-            <input value={directory} onChange={(e) => setDirectory(e.target.value)} disabled={!!sessionID}
-              placeholder="a folder path to work in" className="dk-field mono" aria-label="Project folder" />
-          </div>
+          {/* One way in: the folder picker (the app), or a typed path where there is no picker (a browser during development). Projects
+              opened before are in the list below. */}
+          {!desktop()?.pickFolder && (
+            <div style={{ margin: "0 6px" }}>
+              <input value={directory} onChange={(e) => setDirectory(e.target.value)} disabled={!!sessionID}
+                placeholder="a folder path to work in" className="dk-field mono" aria-label="Project folder" />
+            </div>
+          )}
+          {desktop()?.pickFolder && directory && <p className="dk-note mono" title={directory} style={{ overflowWrap: "anywhere" }}>{directory}</p>}
           <div className="dk-row">
-            <button type="button" className="btn-ink" onClick={() => void openProject()} disabled={!!sessionID || busy || opening}>{opening ? "Opening…" : "Open project"}</button>
-            {desktop()?.pickFolder && !sessionID && (
-              <button type="button" className="btn-line" disabled={busy || opening}
-                onClick={async () => { const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); void openProject(d) } }}>Choose folder</button>
+            {!sessionID && (
+              <button type="button" className="btn-ink" disabled={busy || opening}
+                onClick={async () => {
+                  if (!desktop()?.pickFolder) { void openProject(); return }
+                  const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); void openProject(d) }
+                }}>{opening ? "Opening…" : "Open folder"}</button>
             )}
             {sessionID && (
               <button type="button" className="btn-line" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>New session</button>
@@ -699,10 +728,16 @@ export default function Home() {
         </section>
 
         <aside className="dk-panel" aria-label="Changes, steps and tools">
-          <h2>Changed by kell</h2>
-          <div className="dk-row">
-            <button type="button" className="btn-line" onClick={() => loadChanges(sessionID)} disabled={!readEngine}>Refresh</button>
-            <button type="button" className="btn-line" onClick={() => undo()} disabled={!directory || busy || (!!sessionID && pending === 0)}>Undo</button>
+          <div className="dk-panel-head">
+            <h2>Changed by kell</h2>
+            <span className="dk-iconrow">
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the changes" title="Refresh" onClick={() => loadChanges(sessionID)} disabled={!readEngine}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+              </button>
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Undo kell's last changes" title="Undo kell's last changes" onClick={() => undo()} disabled={!directory || busy || (!!sessionID && pending === 0)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+              </button>
+            </span>
           </div>
           {confirm && (
             <div className="dk-err">

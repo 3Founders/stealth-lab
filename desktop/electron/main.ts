@@ -76,7 +76,8 @@ if (!app.requestSingleInstanceLock()) {
     say(`next up on ${base}`)
 
     win = new BrowserWindow({ width: 1240, height: 880, title: "kell", backgroundColor: "#F8F6EF", show: false,
-                              webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false } })
+                              webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false,
+                                                               devTools: !app.isPackaged } })   // no inspector in the installed app
     // Links: a tool's sign-in opens in the app's own sign-in window (electron/signin.ts); any other link goes to the
     // system browser. The app window itself never navigates away from the UI.
     const signInDone = (r: { url: string; ok: boolean }) => win?.webContents.send("kell:signin-done", r)
