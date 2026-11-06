@@ -64,7 +64,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "3Founders",
+        "owner": "AnujB05",
         "repo": "kell-desktop",
         "releaseType": "release"
       }
