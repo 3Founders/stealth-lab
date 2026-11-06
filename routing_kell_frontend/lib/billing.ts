@@ -79,7 +79,7 @@ export function anyPlanActive(s: PlanState | null | undefined, now = new Date())
 export type PlanOrderRequest = { plan: PlanName; seats?: number; referralCode?: string };
 
 /** The answer to a code check: a refusal's sentence comes from the server, the same words the order route would use. */
-export type CodeCheck = { kind: "valid" } | { kind: "off" } | { kind: "error"; message: string };
+export type CodeCheck = { kind: "valid" } | { kind: "free"; creditUsd: string; team: boolean; placesLeft: number | null } | { kind: "off" } | { kind: "error"; message: string };
 
 export const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86_400_000);
 export const plainDate = (d: Date | string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
@@ -181,6 +181,10 @@ export function billingApi(deps: BillingDeps) {
      */
     async checkCode(code: string): Promise<CodeCheck> {
       const r = await call("POST", "/codes/check", { code }, { auth: false });
+      if (r.kind === "ok" && r.data.kind === "free") {
+        return { kind: "free", creditUsd: String(r.data.credit_usd ?? "0"), team: r.data.team === true,
+                 placesLeft: typeof r.data.places_left === "number" ? r.data.places_left : null };
+      }
       if (r.kind === "ok") return { kind: "valid" };
       if (r.kind === "off") return { kind: "off" };
       if (r.kind === "signed-out") return { kind: "error", message: "The code could not be checked." };   // cannot happen: no session is asked for

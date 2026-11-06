@@ -9,8 +9,8 @@ type Api = Pick<ReturnType<typeof billingApi>, "redeemCode">;
  * A code that gives free usage credit with no payment (a company trial). It states its effect after it is used, from the server's own
  * answer (the amount and the balance), never from a number typed here. The server decides everything: this only sends the code.
  */
-export default function FreeCodeRedeem({ api, onRedeemed }: { api: Api; onRedeemed?: () => void }) {
-  const [value, setValue] = useState("");
+export default function FreeCodeRedeem({ api, onRedeemed, initialCode = "", bare = false }: { api: Api; onRedeemed?: () => void; initialCode?: string; bare?: boolean }) {
+  const [value, setValue] = useState(initialCode);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [ok, setOk] = useState(false);
@@ -63,9 +63,9 @@ export default function FreeCodeRedeem({ api, onRedeemed }: { api: Api; onRedeem
   }
 
   return (
-    <div className="profile-card" aria-labelledby="free-code-title">
-      <h2 className="h3" id="free-code-title">Have a trial code?</h2>
-      <p className="small dim">A trial code adds a small amount of free usage credit to your account. No payment is taken.</p>
+    <div className={bare ? undefined : "profile-card"} aria-labelledby={bare ? undefined : "free-code-title"}>
+      {bare ? null : <><h2 className="h3" id="free-code-title">Have a trial code?</h2>
+      <p className="small dim">A trial code adds a small amount of free usage credit to your account. No payment is taken.</p></>}
       {step === "phone" ? (
         <form onSubmit={sendCode} style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
           <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" aria-label="Phone number" inputMode="tel" autoComplete="tel"

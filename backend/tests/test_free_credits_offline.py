@@ -116,3 +116,13 @@ async def test_a_team_code_makes_the_person_a_member_and_needs_a_verified_phone_
 def test_a_number_is_read_as_digits_and_a_short_or_empty_one_is_nothing():
     assert free_credits.phone_digits("+91 98765-43210") == "919876543210"
     assert free_credits.phone_digits("") == "" and free_credits.phone_digits("12345") == "" and free_credits.phone_digits(None) == ""
+
+
+@pytest.mark.asyncio
+async def test_the_code_check_describes_a_free_code_and_ignores_a_plan_code(state):
+    state["code_row"] = {"grant_usd": "0.25", "max_uses": 10, "team": True}
+    state["redeemed"].update({"a", "b"})
+    assert await free_credits.describe(object(), " companytrial ") == {"kind": "free", "credit_usd": "0.25", "team": True, "places_left": 8}
+    state["code_row"] = None                                                   # an ordinary referral code, or no such code
+    assert await free_credits.describe(object(), "FIRSTTRIAL") is None
+    assert await free_credits.describe(object(), "ab") is None

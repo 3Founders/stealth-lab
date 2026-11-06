@@ -23,7 +23,7 @@ async function mount(check: (code: string) => Promise<CodeCheck> = async () => (
   host = document.createElement("div"); document.body.appendChild(host);
   await act(async () => {
     root = createRoot(host!);
-    root.render(<ReferralCode api={{ checkCode: vi.fn(check) as never }} pilot={planById("pilot")} onApplied={applied} onCleared={cleared} />);
+    root.render(<ReferralCode api={{ checkCode: vi.fn(check) as never, redeemCode: vi.fn(async () => ({ kind: "signed-out" })) as never }} pilot={planById("pilot")} onApplied={applied} onCleared={cleared} />);
   });
 }
 beforeEach(() => { localStorage.clear(); });
@@ -108,5 +108,25 @@ describe("the referral-code section", () => {
     await type("   ");
     await submit();
     expect(check).not.toHaveBeenCalled();
+  });
+
+  it("a free-trial code shows its own offer, never the paid plan, and is not remembered as a plan code", async () => {
+    await mount(async () => ({ kind: "free", creditUsd: "0.25", team: false, placesLeft: 5 }));
+    await type("friendof");
+    await submit();
+    expect(text()).toContain("a free trial");
+    expect(text()).toContain("$0.25 of free usage credit");
+    expect(text()).toContain("5 places are left");
+    expect(text()).not.toContain("649");
+    expect(applied).not.toHaveBeenCalled();                                // the plans below do not change
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("a team trial code says it joins a team", async () => {
+    await mount(async () => ({ kind: "free", creditUsd: "0.25", team: true, placesLeft: 10 }));
+    await type("companytrial");
+    await submit();
+    expect(text()).toContain("trial team");
+    expect(applied).not.toHaveBeenCalled();
   });
 });

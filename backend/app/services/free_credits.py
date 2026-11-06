@@ -105,5 +105,27 @@ async def redeem(pool: Any, *, user_id: str, code: Any, phone: Any = None) -> di
     return {"code": code, "kind": "credit", "credited_usd": str(amount), "already": already, "places_left": left}
 
 
+async def describe(pool: Any, code: Any) -> dict[str, Any] | None:
+    """What a free-credit code gives, for the code check on the pricing page (no sign-in needed, nothing is changed): None when it is not
+    one. Says whether it is a credit in your own wallet or a place in a team, the amount, and how many places are left."""
+    try:
+        code = referrals.clean(code)
+    except referrals.ReferralError:
+        return None
+    try:
+        async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
+            row = await conn.fetchrow(
+                "SELECT grant_usd, max_uses, grant_org_id IS NOT NULL AS team FROM billing_referral_codes "
+                "WHERE code = $1 AND active AND grant_usd IS NOT NULL", code)
+            used = int(await conn.fetchval("SELECT count(*) FROM free_credit_redemptions WHERE code = $1", code)) if row else 0
+    except Exception:  # noqa: BLE001 -- a check never breaks the page
+        log.exception("free code check failed")
+        return None
+    if row is None:
+        return None
+    left = None if row["max_uses"] is None else max(0, int(row["max_uses"]) - used)
+    return {"kind": "free", "credit_usd": str(Decimal(str(row["grant_usd"]))), "team": bool(row["team"]), "places_left": left}
+
+
 async def balance_after(pool: Any, user_id: str) -> str:
     return (await wallet.balance(pool, user_id))["remaining_usd"]

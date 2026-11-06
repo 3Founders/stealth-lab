@@ -278,11 +278,15 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             data = await request.json()
         except ValueError:
             return _err(request, 400, "the request body must be JSON")
-        why = referrals.failure_sentence(data.get("code") if isinstance(data, dict) else None,
-                                         await referrals.active_codes(pool_getter()))
+        given = data.get("code") if isinstance(data, dict) else None
+        why = referrals.failure_sentence(given, await referrals.active_codes(pool_getter()))
         if why is not None:
+            # not a code for the paid one-person plan: it may be a free-credit code, which has its own offer and never shows that plan
+            free = await free_credits.describe(pool_getter(), given)
+            if free is not None:
+                return _json(request, {"valid": True, **free})
             return _err(request, 400, why)
-        return _json(request, {"valid": True})
+        return _json(request, {"valid": True, "kind": "plan"})
 
     @server.custom_route("/v1/billing/redeem", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def redeem_route(request: Request) -> Response:

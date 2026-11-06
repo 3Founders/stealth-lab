@@ -4,7 +4,9 @@ import type { billingApi } from "@/lib/billing";
 import type { Plan } from "@/lib/plans";
 import { forgetCode, recallCode, rememberCode } from "@/lib/referral";
 
-type Api = Pick<ReturnType<typeof billingApi>, "checkCode">;
+import FreeCodeRedeem from "@/components/billing/FreeCodeRedeem";
+
+type Api = Pick<ReturnType<typeof billingApi>, "checkCode" | "redeemCode">;
 
 /**
  * The referral code, above the plans: a person enters it, the server says whether it is active, and when it is the Plans
@@ -24,6 +26,7 @@ export default function ReferralCode({ api, pilot, onApplied, onCleared }: {
   const [applied, setApplied] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const [free, setFree] = useState<{ code: string; creditUsd: string; team: boolean; placesLeft: number | null } | null>(null);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
@@ -41,7 +44,10 @@ export default function ReferralCode({ api, pilot, onApplied, onCleared }: {
     const r = await api.checkCode(code);
     if (!live.current) return;
     setBusy(false);
-    if (r.kind === "valid") {
+    if (r.kind === "free") {
+      // a free-trial code has its OWN offer: it never shows (or unlocks) the paid plan, and is not remembered as a plan code
+      setFree({ code: code.toUpperCase(), creditUsd: r.creditUsd, team: r.team, placesLeft: r.placesLeft }); setValue("");
+    } else if (r.kind === "valid") {
       const c = code.toUpperCase();
       rememberCode(c); setApplied(c); setValue(""); onApplied(c);
     } else if (r.kind === "off") {
@@ -59,7 +65,19 @@ export default function ReferralCode({ api, pilot, onApplied, onCleared }: {
     <div className="profile-card" aria-labelledby="code-title">
       <h2 className="h3" id="code-title">Have a code?</h2>
 
-      {applied ? (
+      {free ? (
+        <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+          <p className="small" role="status">
+            <b>Code {free.code}: a free trial.</b>{" "}
+            {free.team
+              ? <>It puts you in a trial team, paid from the team&rsquo;s balance with a small daily limit for each person. No payment is taken.</>
+              : <>It adds ${free.creditUsd} of free usage credit to your account. No payment is taken.</>}
+            {free.placesLeft !== null ? <> {free.placesLeft} {free.placesLeft === 1 ? "place is" : "places are"} left.</> : null}
+          </p>
+          <FreeCodeRedeem api={api} initialCode={free.code} bare />
+          <div><button type="button" className="btn-line" onClick={() => setFree(null)}><span>Use a different code</span></button></div>
+        </div>
+      ) : applied ? (
         <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
           <p className="small" role="status">
             <b>Code {applied} applied.</b>{" "}
