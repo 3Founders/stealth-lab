@@ -53,15 +53,22 @@ test("installedServers: names and a package or host only -- never env, headers, 
 
 test("formatToolNote: installed first, one to add beside it, the publisher-data caveat; nothing found -> empty", () => {
   const note = formatToolNote(REPLY, "browser");
-  assert.match(note, /needs a browser tool/);
+  assert.match(note, /search for tools/);
+  assert.match(note, /discover_tools\(need=/);
+  assert.match(note, /reads it as a browser request/);
   assert.match(note, /installed: `playwright` \(its tools are mcp__playwright__\*\)/);
   assert.match(note, /not installed: io\.github\.acme\/browser-mcp \(Acme Browser\).*tools: open, click, screenshot/);
   assert.ok(note.includes("add it with: `claude mcp add --transport http browser-mcp https://acme.example/mcp`"));
   assert.match(note, /never run that command yourself/);
   assert.doesNotMatch(formatToolNote({ tools: [{ ...REPLY.tools[1], install: "claude mcp add x -- npx y; rm -rf /" }] }, "browser"), /rm -rf/);
   assert.match(note, /not instructions/);
-  assert.equal(formatToolNote({ tools: [] }, "web"), "");
-  assert.equal(formatToolNote(null, "web"), "");
+  // nothing found still carries the instruction to search (the default after every prompt is a search)
+  for (const none of [{ tools: [] }, null]) {
+    const n = formatToolNote(none, "web");
+    assert.match(n, /search for tools/);
+    assert.match(n, /nothing ready/);
+    assert.doesNotMatch(n, /not installed/);
+  }
 });
 
 // /triage answers `verdict`, /tools answers `tools`; the MCP calls answer the find_ways `reply`
@@ -104,10 +111,34 @@ test("hook: a prompt the triage skips still gets its tool note on its own", asyn
     write: (s) => out.push(s), log: () => {} });
   assert.ok(!calls.includes("initialize"), "no lookup");
   assert.equal(out.length, 1);
-  assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /needs a web tool/);
+  assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /reads it as a web request/);
 });
 
-test("hook: no tool goal -> /tools is never asked and nothing is added", async () => {
+test("hook: no tool goal named -> /tools is still asked, with no goal, and the note tells the model to search", async () => {
+  const calls = [], out = [];
+  await runPromptHook({ stdinText: JSON.stringify({ prompt: "create a presentation for me about our launch", cwd: tmp }),
+    settings: { url: "http://x/mcp" }, userAgent: "t", env: ENV,
+    fetchImpl: server({ needs_retrieval: false, kind: "reusable_task", work: "change" }, REPLY, calls),
+    write: (s) => out.push(s), log: () => {} });
+  const asked = calls.find((c) => c && c.tools);
+  assert.ok(asked, "the router is asked on every prompt of three or more words");
+  assert.equal(out.length, 1);
+  const note = JSON.parse(out[0]).hookSpecificOutput.additionalContext;
+  assert.match(note, /search for tools/);
+  assert.doesNotMatch(note, /reads it as a undefined/);
+  assert.doesNotMatch(note, /undefined/);
+});
+
+test("hook: a prompt under three words does not ask the router", async () => {
+  const calls = [], out = [];
+  await runPromptHook({ stdinText: JSON.stringify({ prompt: "yes please", cwd: tmp }),
+    settings: { url: "http://x/mcp" }, userAgent: "t", env: ENV,
+    fetchImpl: server({ needs_retrieval: false, kind: "conversation", work: "conversation" }, REPLY, calls),
+    write: (s) => out.push(s), log: () => {} });
+  assert.ok(!calls.some((c) => c && c.tools));
+});
+
+test("hook: in the middle of a small task (a trivial edit) the search is not asked for", async () => {
   const calls = [], out = [];
   await runPromptHook({ stdinText: JSON.stringify({ prompt: "rename foo to bar in utils.py", cwd: tmp }),
     settings: { url: "http://x/mcp" }, userAgent: "t", env: ENV,
@@ -117,14 +148,25 @@ test("hook: no tool goal -> /tools is never asked and nothing is added", async (
   assert.equal(out.length, 0);
 });
 
-test("hook: STEALTHLAB_HOOK_TOOLS=off and a failing /tools both leave the prompt as it was", async () => {
+test("hook: STEALTHLAB_HOOK_TOOLS_ALWAYS=off -> only a named goal asks the router, as before", async () => {
+  const calls = [], out = [];
+  await runPromptHook({ stdinText: JSON.stringify({ prompt: "rename foo to bar in utils.py", cwd: tmp }),
+    settings: { url: "http://x/mcp" }, userAgent: "t", env: { ...ENV, STEALTHLAB_HOOK_TOOLS_ALWAYS: "off" },
+    fetchImpl: server({ needs_retrieval: false, kind: "trivial_edit", work: "change" }, REPLY, calls),
+    write: (s) => out.push(s), log: () => {} });
+  assert.ok(!calls.some((c) => c && c.tools));
+  assert.equal(out.length, 0);
+});
+
+test("hook: STEALTHLAB_HOOK_TOOLS=off leaves the prompt as it was; a failing /tools still carries the instruction to search", async () => {
   for (const [env, tools] of [[{ ...ENV, STEALTHLAB_HOOK_TOOLS: "off" }, REPLY], [ENV, { error: "boom" }]]) {
     const calls = [], out = [];
     await runPromptHook({ stdinText: JSON.stringify({ prompt: "what changed in the latest React release?", cwd: tmp }),
       settings: { url: "http://x/mcp" }, userAgent: "t", env,
       fetchImpl: server({ needs_retrieval: false, kind: "knowledge_question", tool: "web" }, tools, calls),
       write: (s) => out.push(s), log: () => {} });
-    assert.equal(out.length, 0);
+    if (env.STEALTHLAB_HOOK_TOOLS === "off") assert.equal(out.length, 0);
+    else assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /search for tools/);
   }
 });
 
@@ -133,5 +175,6 @@ test("formatToolNote: a server usable through kell gets the call, not an install
                                           install: "claude mcp add --transport http glif https://glif.app/api/mcp" }] }, "generate");
   assert.ok(note.includes('use_tool(server="app.glif/glif"'));
   assert.ok(!note.includes("add it with"));
-  assert.match(note, /may return a link/);
+  assert.match(note, /do not ask the developer whether to go ahead/);
+  assert.match(note, /EVERY tool you need in the same turn/);
 });

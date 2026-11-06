@@ -83,7 +83,7 @@ test("callFindWays: initialize -> initialized -> tools/call over one session", a
 test("runPromptHook: writes additionalContext; fails open on errors", async () => {
   const out = [];
   await runPromptHook({ stdinText: JSON.stringify({ prompt: "add a DOCX export to the report page please", cwd: os.tmpdir() }),
-    settings: { url: "http://x/mcp" }, userAgent: "t", env: {}, fetchImpl: fakeServer(RESOLVED, []),
+    settings: { url: "http://x/mcp" }, userAgent: "t", env: { STEALTHLAB_HOOK_TOOLS_ALWAYS: "off" }, fetchImpl: fakeServer(RESOLVED, []),
     write: (s) => out.push(s), log: () => {} });
   const hso = JSON.parse(out[0]).hookSpecificOutput;
   assert.equal(hso.hookEventName, "UserPromptSubmit");
@@ -91,7 +91,7 @@ test("runPromptHook: writes additionalContext; fails open on errors", async () =
 
   const out2 = [], logs = [];
   await runPromptHook({ stdinText: JSON.stringify({ prompt: "add a DOCX export to the report page please" }),
-    settings: { url: "http://x/mcp" }, userAgent: "t", env: {},
+    settings: { url: "http://x/mcp" }, userAgent: "t", env: { STEALTHLAB_HOOK_TOOLS_ALWAYS: "off" },
     fetchImpl: async () => { throw new Error("down"); }, write: (s) => out2.push(s), log: (m) => logs.push(m) });
   assert.equal(out2.length, 0);
   assert.ok(logs.some((l) => /no knowledge added/.test(l)), logs.join("\n"));
@@ -172,7 +172,7 @@ test("triageUrl: the route sits next to /mcp, keeping origin and base path", () 
 test("triage says no lookup needed (STEALTHLAB_HOOK_TRIAGE_SKIP=on): find_ways is never called and the prompt is left alone", async () => {
   const calls = [], out = [];
   await runPromptHook({ stdinText: JSON.stringify({ prompt: "explain what parse_args does in cli.py please", cwd: os.tmpdir() }),
-    settings: { url: "http://x/mcp", token: "tok" }, userAgent: "t", env: { STEALTHLAB_HOOK_TRIAGE_SKIP: "on" },
+    settings: { url: "http://x/mcp", token: "tok" }, userAgent: "t", env: { STEALTHLAB_HOOK_TRIAGE_SKIP: "on", STEALTHLAB_HOOK_TOOLS_ALWAYS: "off" },
     fetchImpl: triageServer(() => json({ needs_retrieval: false, kind: "knowledge_question" }), RESOLVED, calls),
     write: (s) => out.push(s), log: () => {} });
   assert.equal(out.length, 0);
@@ -184,7 +184,7 @@ test("triage says no lookup needed (STEALTHLAB_HOOK_TRIAGE_SKIP=on): find_ways i
 test("triage says look it up: the lookup runs as before", async () => {
   const calls = [], out = [];
   await runPromptHook({ stdinText: JSON.stringify({ prompt: TASK, cwd: os.tmpdir() }),
-    settings: { url: "http://x/mcp" }, userAgent: "t", env: {},
+    settings: { url: "http://x/mcp" }, userAgent: "t", env: { STEALTHLAB_HOOK_TOOLS_ALWAYS: "off" },
     fetchImpl: triageServer(() => json({ needs_retrieval: true, kind: "reusable_task" }), RESOLVED, calls),
     write: (s) => out.push(s), log: () => {} });
   assert.deepEqual(calls.filter((c) => !c.triage).map((c) => c.rpc).slice(0, 3), ["initialize", "notifications/initialized", "tools/call"]);
@@ -305,7 +305,7 @@ test("fitQuery: short text untouched; long text keeps head and tail, exactly max
 test("triage says no lookup needed, default: the lookup still runs (plan-only), nothing is injected", async () => {
   const calls = [], out = [];
   await runPromptHook({ stdinText: JSON.stringify({ prompt: "explain what parse_args does in cli.py please", cwd: os.tmpdir() }),
-    settings: { url: "http://x/mcp", token: "tok" }, userAgent: "t", env: {},
+    settings: { url: "http://x/mcp", token: "tok" }, userAgent: "t", env: { STEALTHLAB_HOOK_TOOLS_ALWAYS: "off" },
     fetchImpl: triageServer(() => json({ needs_retrieval: false, kind: "knowledge_question" }), RESOLVED, calls),
     write: (s) => out.push(s), log: () => {} });
   assert.ok(calls.some((c) => c.rpc === "tools/call"), "find_ways was called");

@@ -560,6 +560,8 @@ export async function runPromptHook(args) {
 
 // How long routing takes (lib/routing_timing.mjs; off unless STEALTHLAB_ROUTING_TIMING=1): one line per prompt, written
 // whichever way the hook ends. A timing failure never reaches the prompt.
+const UNNAMED_TOOLS_MS = 6000;
+
 async function runPromptHookCore(args) {
   let prompt = "";
   let sessionId = null;
@@ -590,7 +592,7 @@ async function withToolNote(out, tooling, log) {
   if (out.some((s) => { try { return JSON.parse(s)?.decision === "block"; } catch { return false; } })) return;
   const reply = await tooling.pending;
   try { if (tooling.sessionId) noteSuggested(tooling.env, tooling.sessionId, tooling.goal, reply); } catch { /* best-effort */ }
-  const note = reply ? formatToolNote(reply, tooling.goal) : "";
+  const note = formatToolNote(reply || { tools: [] }, tooling.goal);       // the search instruction goes in even when the router had nothing or did not answer
   log?.(`stealthlab hook: tools goal=${tooling.goal} ${reply ? `${reply.tools.length} found` : "no reply"}${note ? "" : " (no note)"}`);
   if (!note) return;
   for (let i = 0; i < out.length; i++) {
@@ -661,11 +663,19 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
     log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"} category=${verdict.category || "-"} tool=${verdict.tool || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
   }
   // the tool question, started now so it runs while the lookup and any dispatch do (lib/tool_note.mjs)
-  if (verdict?.tool && (env.STEALTHLAB_HOOK_TOOLS || "on").toLowerCase() !== "off") {
-    tooling.goal = verdict.tool;
+  // The router is asked on nearly every prompt (three words or more, and not a small task in progress), not only when the triage names a tool goal (a prompt like "remove the dollars
+  // from the frontend" got tool=- and so no recommendation at all). With no goal named, the server picks the goal itself, and the wait is short
+  // (UNNAMED_TOOLS_MS) so a slow router never holds a prompt up. STEALTHLAB_HOOK_TOOLS_ALWAYS=off restores "only when the triage names one".
+  const promptText = String(payload.prompt || "").trim();
+  const always = (env.STEALTHLAB_HOOK_TOOLS_ALWAYS || "on").toLowerCase() !== "off" && promptText.split(/\s+/).filter(Boolean).length >= 3
+    && verdict?.kind !== "trivial_edit";                 // the one time it is not asked: in the middle of a small task (a quick edit, a next step)
+  if ((verdict?.tool || always) && (env.STEALTHLAB_HOOK_TOOLS || "on").toLowerCase() !== "off") {
+    tooling.goal = verdict?.tool || undefined;
+    tooling.named = Boolean(verdict?.tool);
     tooling.pending = callTools({
-      url: settings.url, token: settings.token, userAgent, need: String(payload.prompt).trim(), goal: verdict.tool,
+      url: settings.url, token: settings.token, userAgent, need: promptText, goal: verdict?.tool || undefined,
       installed: installedServers(payload.cwd || process.cwd(), env, { skipUrl: settings.url }), fetchImpl,
+      ...(verdict?.tool ? {} : { timeoutMs: UNNAMED_TOOLS_MS }),
     });
   }
   // a question or conversation: a cheap model answers it, a reviewer checks the reply, and the developer gets it before
@@ -673,7 +683,7 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
   // A question that needs an outside tool is the session's: the answering agent reads the repository and has no tools.
   // Not for code_search: the judge tags questions about this repository's own code with it too ("how does jsonargparse
   // decide ...", kell-try 2026-10-30), and the answering agent is the one that reads this repository.
-  if (dispatchInstalled(env) && override.kind !== "cheap" && (!tooling.pending || tooling.goal === "code_search") &&
+  if (dispatchInstalled(env) && override.kind !== "cheap" && (!tooling.named || tooling.goal === "code_search") &&
       (verdict?.work === "answer" || verdict?.work === "conversation")) {
     try {
       const { answerTurn } = await import("./answer.mjs");
