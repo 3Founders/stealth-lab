@@ -21,6 +21,25 @@ type KellDesktop = {
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
+/** One list of changed files, each opening to its diff. A new file listed by name only says so. */
+function FileList({ files, openOne = false }: { files: FileDiff[]; openOne?: boolean }) {
+  return (
+    <div className="dk-files">
+      {files.map((f) => (
+        <details className="dk-file" key={f.file} open={openOne && files.length === 1}>
+          <summary>
+            <span className="path">{f.file}</span>
+            <span className="stat">{f.status === "added" && !f.patch ? <span className="add">new</span>
+              : <><span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span></>}</span>
+          </summary>
+          {f.patch ? <div className="dk-diff">{patchLines(f.patch).map((p, i) => <div className={p.cls} key={i}>{p.text || " "}</div>)}</div>
+            : <p className="dk-note" style={{ margin: "6px 8px" }}>A new file, not yet added to git.</p>}
+        </details>
+      ))}
+    </div>
+  )
+}
+
 /** A model call refused for want of a website session (lib/websession.ts SIGN_IN_TO_RUN): the page offers the sign-in instead of an error. */
 const needsWebSignIn = (e?: string | null) => !!e && /sign in to run models/i.test(e)
 const desktop = () => (typeof window !== "undefined" ? (window as unknown as { kellDesktop?: KellDesktop }).kellDesktop : undefined)
@@ -115,6 +134,9 @@ export default function Home() {
   const textRef = useRef<HTMLTextAreaElement>(null)
   const [files, setFiles] = useState<FileDiff[]>([])
   const [filesNote, setFilesNote] = useState("")
+  // Everything else uncommitted in the folder (your own edits, another tool's): shown apart from kell's, and never touched by Undo.
+  const [otherFiles, setOtherFiles] = useState<FileDiff[]>([])
+  const [otherMore, setOtherMore] = useState(0)
   const [confirm, setConfirm] = useState("")
   const [pending, setPending] = useState(0)
   const [cards, setCards] = useState<ToolCard[]>([])
@@ -147,11 +169,13 @@ export default function Home() {
     // and the Undo button can never disagree. Without one: the working tree's diff.
     const r = await fetch(sid ? `/api/diff?sessionID=${encodeURIComponent(sid)}` : "/api/diff")
     const j = await r.json()
-    if (!r.ok) { setFiles([]); setPending(0); setFilesNote(j.error || "could not read the changes"); return }
+    if (!r.ok) { setFiles([]); setOtherFiles([]); setOtherMore(0); setPending(0); setFilesNote(j.error || "could not read the changes"); return }
     setFiles(Array.isArray(j.files) ? j.files : [])
+    setOtherFiles(Array.isArray(j.other) ? j.other : [])
+    setOtherMore(typeof j.more === "number" ? j.more : 0)
     setPending(typeof j.pending === "number" ? j.pending : (j.files || []).length)
     setFilesNote(Array.isArray(j.files) && j.files.length === 0
-      ? (sid ? (j.snapshot ? "this session's last turn changed nothing" : "this session has no turn to show yet") : "the working tree is clean")
+      ? (sid ? (j.snapshot ? "kell's last turn changed nothing" : "kell has not changed anything in this session yet") : "kell has not changed anything yet")
       : (typeof j.pending === "number" && j.pending === 0 ? "undone — nothing left to put back" : ""))
   }, [])
 
@@ -675,7 +699,7 @@ export default function Home() {
         </section>
 
         <aside className="dk-panel" aria-label="Changes, steps and tools">
-          <h2>Changes</h2>
+          <h2>Changed by kell</h2>
           <div className="dk-row">
             <button type="button" className="btn-line" onClick={() => loadChanges(sessionID)} disabled={!readEngine}>Refresh</button>
             <button type="button" className="btn-line" onClick={() => undo()} disabled={!directory || busy || (!!sessionID && pending === 0)}>Undo</button>
@@ -690,17 +714,13 @@ export default function Home() {
             </div>
           )}
           {filesNote && !files.length && <p className="dk-note">{filesNote}</p>}
-          <div className="dk-files">
-            {files.map((f) => (
-              <details className="dk-file" key={f.file} open={files.length === 1}>
-                <summary>
-                  <span className="path">{f.file}</span>
-                  <span className="stat"><span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span></span>
-                </summary>
-                <div className="dk-diff">{patchLines(f.patch).map((p, i) => <div className={p.cls} key={i}>{p.text || " "}</div>)}</div>
-              </details>
-            ))}
-          </div>
+          <FileList files={files} openOne />
+
+          <h2>Other changes in this folder</h2>
+          {readEngine && <p className="dk-note">Not committed yet, and not made by kell in this session (your edits, or another tool's). Undo never touches these.</p>}
+          {readEngine && otherFiles.length === 0 && <p className="dk-note">none</p>}
+          <FileList files={otherFiles} />
+          {otherMore > 0 && <p className="dk-note">and {otherMore} more</p>}
 
           <h2>Model steps</h2>
           {ledger.length === 0 ? <p className="dk-note">Each model step shows here with its tokens and cost.</p> : (
