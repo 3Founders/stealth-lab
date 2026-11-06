@@ -34,15 +34,23 @@ const readJson = (file: string): any => {
 const priceOf = (m: Model): number =>
   typeof m.input === "number" && typeof m.output === "number" ? m.input + m.output : Infinity
 
+/** The default operator when the gateway offers it: GLM 5.3 Flash starts fast; the priciest model stays the fallback. */
+export const DEFAULT_MODEL = "glm-5.3-flash"
+
 const home = (env: NodeJS.ProcessEnv) => env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab")
 
 /** The one engine config both lanes share: kell's gateway as an OpenAI-compatible provider, the bearer in the child's
- *  environment (never in this text), the strongest priced model as the default and the cheapest as its fallback. */
+ *  environment (never in this text), GLM 5.3 Flash as the default when the gateway offers it, the priciest model as the
+ *  provider-failure fallback and the cheapest as the cheap rung. */
 function buildConfig(models: Model[], baseUrl: string, token: string, extraHeaders: Record<string, string>,
                      cfg: any, env: NodeJS.ProcessEnv): PooledEngine {
   const sorted = [...models].sort((a, b) => priceOf(a) - priceOf(b))
   const cheap = sorted[0]
-  const strong = [...sorted].reverse().find((m) => Number.isFinite(priceOf(m))) || sorted[sorted.length - 1]
+  const priciest = [...sorted].reverse().find((m) => Number.isFinite(priceOf(m))) || sorted[sorted.length - 1]
+  // GLM 5.3 Flash is the default operator when the gateway offers it; the priciest model is the provider-failure fallback,
+  // so a dead flash endpoint still has a stronger rung to move to. Not plain GLM 5.3.
+  const strong = models.find((m) => m.id === DEFAULT_MODEL) || priciest
+  const fallback = strong.id === priciest.id ? cheap : priciest
 
   const table: Record<string, unknown> = {}
   for (const m of models) {
@@ -64,7 +72,7 @@ function buildConfig(models: Model[], baseUrl: string, token: string, extraHeade
             // refuses it with a message instead of silently widening the policy.
             "x-stealthlab-data-class": env.KELL_OC_DATA_CLASS || "USER_PRIVATE",
             // A dead or out-of-credit provider on the chosen model does not fail the turn: the gateway tries the others.
-            "x-stealthlab-fallback-models": [...new Set([strong.id, cheap.id])].join(","),
+            "x-stealthlab-fallback-models": [...new Set([strong.id, fallback.id, cheap.id])].join(","),
           },
         },
         models: table,
