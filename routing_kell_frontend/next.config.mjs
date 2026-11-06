@@ -23,7 +23,7 @@ export default {
   },
   async headers() {
     return [
-      ...["/install.sh", "/install.ps1"].map((source) => ({
+      ...["/install.sh", "/install.ps1", "/desktop.ps1"].map((source) => ({
         source,
         headers: [
           { key: "Content-Type", value: "text/plain; charset=utf-8" },
