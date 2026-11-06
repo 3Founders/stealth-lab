@@ -1,6 +1,7 @@
 // POST { sessionID?, directory, text }: sends one prompt and streams the session's events as SSE until the turn ends
 // (session.idle for it). Event payloads go through as-is; the UI maps types to bubbles, chips and the model strip.
 import { engineStatus, clientFor } from "@/lib/engine"
+import { pooledEngineConfig, ownKeyLane, walletRemaining, isNeedPlan } from "@/lib/pooled"
 
 export const dynamic = "force-dynamic"
 
@@ -12,6 +13,12 @@ export async function POST(req: Request) {
     const stream = new ReadableStream({
       async start(ctrl) {
         const enc = (obj: any) => ctrl.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(obj)}\n\n`))
+        // The personal lane spends the person's own wallet: with nothing left, say "you need a plan" instead of letting the
+        // gateway's refusal come back as a raw engine error. (A balance that cannot be read is left to the model call.)
+        if (!pooledEngineConfig() && !ownKeyLane()) {
+          const left = await walletRemaining()
+          if (left !== null && left <= 0) { enc({ type: "need_plan" }); enc({ type: "done", outcome: "need_plan" }); ctrl.close(); return }
+        }
         const client = await clientFor(e)                 // async: loads the ESM-only client via import()
         // Subscribe before prompting: otherwise the turn's session.idle can fire before the stream starts.
         const sessionID: string = body.sessionID ||
@@ -29,10 +36,12 @@ export async function POST(req: Request) {
                 enc({ type: "done", outcome: k })
                 break
               }
+              if (k.endsWith("failed") && isNeedPlan(JSON.stringify(d))) { enc({ type: "need_plan" }); enc({ type: "done", outcome: "need_plan" }); break }
               enc({ type: k, data: d })
             }
           } catch (err: any) {
-            enc({ type: "error", error: String(err?.message || err) })
+            const msg = String(err?.message || err)
+            enc(isNeedPlan(msg) ? { type: "need_plan" } : { type: "error", error: msg })
           }
           ctrl.close()
         })()

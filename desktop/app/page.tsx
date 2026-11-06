@@ -34,7 +34,7 @@ const signInFrom = (raw: string): { server: string; link: string } | null => {
   return { server, link }
 }
 
-type Line = { who: "user" | "assistant" | "signin"; text: string; at?: number; server?: string; state?: "ready" | "open" | "done" | "failed" }
+type Line = { who: "user" | "assistant" | "signin" | "plan"; text: string; at?: number; server?: string; state?: "ready" | "open" | "done" | "failed" }
 type Step = { kind: "tool" | "model"; label: string; note?: string }
 // One row per step (one model round trip). The engine splits it across events: session.step.started names the model (keyed
 // by assistantMessageID), session.step.ended carries tokens and cost for the same message. Neither event carries a rung.
@@ -43,7 +43,7 @@ type FileDiff = { file: string; patch: string; additions: number; deletions: num
 type ToolCard = { name: string; source: "installed" | "registry"; url: string | null; needsSignIn: boolean }
 type Settings = {
   signedIn: boolean; account: string | null; subject?: string | null; server: string | null
-  lane?: "organization" | "own-key" | "none"; gateway?: string | null
+  lane?: "organization" | "personal" | "own-key" | "none"; gateway?: string | null
   models: { cheap: string | null; strong: string | null; fallback: string | null; mode: string | null }
   engine: { exe: string | null; directory: string | null }
 }
@@ -213,6 +213,7 @@ export default function Home() {
           if (id) setLedger((rows) => rows.some((r) => r.id === id) ? rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) : [...rows, { id, ...patch }])
           if (d.cost != null) setSpend((c) => c + Number(d.cost))
         }
+        else if (t === "need_plan") { setLines((l) => [...l, { who: "plan", text: "", at: Date.now() }]); setBusy(false) }
         else if (t === "error") { appendAssistant(`\n(error: ${ev.error})`); setBusy(false) }
       }
     }
@@ -249,7 +250,7 @@ export default function Home() {
   // link, and the app opens it in the rooms' own cookie store, so signing in on kell's consent page signs the rooms in too.
   // The page then polls settings until the token is there.
   const signIn = async (again = false) => {
-    setSigninNote("Sign in in the window that opens.")
+    setSigninNote("Your browser opens to sign in. Finish there, then come back here.")
     const started = await fetch("/api/signin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ again }) })
       .then((r) => r.json()).catch(() => ({ error: "could not start kell login" }))
     if (started?.error) { setSigninNote(String(started.error)); return }
@@ -257,11 +258,11 @@ export default function Home() {
     const d = desktop()
     if (d) {
       const ok = await d.openAccount(String(started.url))
-      if (!ok) { setSigninNote("The sign-in window was closed before it finished."); return }
+      if (!ok) { setSigninNote("Could not open your browser. Try again."); return }
     } else {
       window.open(String(started.url), "_blank", "noopener")
     }
-    const until = Date.now() + 120_000
+    const until = Date.now() + 300_000
     const tick = async () => {
       const s = await fetch("/api/settings").then((r) => r.json()).catch(() => null)
       if (s) setSettings(s)
@@ -377,9 +378,8 @@ export default function Home() {
       )}
       {roomsOn && roomsWho === null && (
         <div className="dk-err dk-mismatch" role="status">
-          <p style={{ margin: 0 }}>Your rooms are not signed in yet. Sign in once more with <b>{settings?.account || "your kell account"}</b> and the coding agent and the rooms share it.</p>
-          <div className="dk-row" style={{ margin: 0 }}><button type="button" className="btn-ink" onClick={() => void signIn(true)}>Sign in to the rooms</button></div>
-          {signinNote && <p className="dk-note" style={{ margin: 0 }}>{signinNote}</p>}
+          <p style={{ margin: 0 }}>You are signed in as <b>{settings?.account || "your kell account"}</b> for coding. The rooms keep their own website sign-in, and Google will not sign in inside an app window. Use <b>GitHub</b> in the rooms below, or open the rooms in your browser, where Google works.</p>
+          <div className="dk-row" style={{ margin: 0 }}><a className="btn-ink" href="https://www.kell.org.in/chat" target="_blank" rel="noopener">Open the rooms in my browser</a></div>
         </div>
       )}
       {pane === "rooms" && (
@@ -435,7 +435,8 @@ export default function Home() {
           {settings && (
             <p className="dk-note">
               {settings.lane === "organization" ? <>Paid through your organization ({settings.gateway || "kell"}).</>
-                : settings.lane === "own-key" ? "Your own provider key." : "Not set up: run `kell join` for your organization's keys."}
+                : settings.lane === "personal" ? "Paid from your own kell plan."
+                : settings.lane === "own-key" ? "Your own provider key." : "Sign in to use your kell plan, or run `kell join` for your organization's keys."}
               {settings.models.mode ? <> Mode: {settings.models.mode}.</> : null}
             </p>
           )}
@@ -475,6 +476,22 @@ export default function Home() {
                   <p className="dg-empty">Open a project, then say what to do. A low-cost model starts each task and the stronger one takes over when the tests say so. Tools that need a sign-in open in a small window here.</p>
                 )}
                 {lines.map((l, i) => {
+                  if (l.who === "plan") {
+                    return (
+                      <div className="dg-run" data-agent="true" key={i}>
+                        <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                        <div className="dg-col">
+                          <div className="dg-meta"><b>Kell</b><span className="dg-badge">plan</span><time>{time(l.at)}</time></div>
+                          <div className="dk-signin">
+                            <p>You need a plan to run models. Starter, Pro and Plus include usage, and you can add credit any time.</p>
+                            <div className="dk-row">
+                              <a className="btn-ink" href="https://www.kell.org.in/pricing" target="_blank" rel="noopener">See plans</a>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }
                   if (l.who === "signin") {
                     return (
                       <div className="dg-run" data-agent="true" key={i}>
