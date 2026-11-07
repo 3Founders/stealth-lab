@@ -144,3 +144,16 @@
 /* The Help button keeps the plain icon look: no tab padding, and no lasting highlight once its menu is closed. */
 .dk-help .dk-icon { padding: 0; }
 .dk-help .dk-icon:focus:not(:focus-visible) { outline: none; }
+
+/* 2026-11-07: the chat reads in the light weight, like the rest of the app (it was 400, which Bahnschrift shows as bold). */
+.dk-page .dg-md p, .dk-page .dg-md li, .dk-page .dg-body p { font-weight: 300; }
+/* The right panel's parts fold. */
+.dk-fold { border-bottom: 1px solid var(--rule); padding-bottom: 6px; }
+.dk-fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dk-fold > summary::-webkit-details-marker { display: none; }
+.dk-fold > summary h2::before { content: "\25B8"; display: inline-block; margin-right: 6px; transition: transform .15s; }
+.dk-fold[open] > summary h2::before { transform: rotate(90deg); }
+/* Sessions: a title and when it was last used. */
+.dk-sessions .dk-recent { justify-content: space-between; }
+.dk-sessions .dk-recent .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-sessions .dk-recent .when { flex: none; color: var(--grey); font-size: 11.5px; }
