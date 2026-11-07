@@ -1066,11 +1066,11 @@ from app.mcp_server import room_agent_routes as _room_agent_routes  # noqa: E402
 def _room_agent_model_name() -> str:
     """One model for the room agent whether the answer streams or not (they used to differ: glm-5.3-flash buffered, gemma-4-31b-it
     streamed, so the same question could behave differently). glm-5.3-flash thinks before it answers, which for a streamed reply
-    means a long wait and then everything at once; gemma-4-31b-it starts at once, so it is the default. KELL_ROOM_AGENT_MODEL
-    overrides it."""
+    means a long wait and then everything at once; gemma-4-31b-it started at once, so it was the default until General Compute was
+    dropped (owner, 2026-11-07); glm-5.3-flash is now, as production already set. KELL_ROOM_AGENT_MODEL overrides it."""
     import os as _os
 
-    return _os.environ.get("KELL_ROOM_AGENT_MODEL") or "gemma-4-31b-it"
+    return _os.environ.get("KELL_ROOM_AGENT_MODEL") or "glm-5.3-flash"
 
 
 def _tool_choice(tools: list[dict]) -> Any:
@@ -2913,7 +2913,7 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
     It sends only `prompt`, `system` and `context`. It does not stream; a long agent task returns its current state.
 
     Default model: with model="auto" and no instance_key, the deployment's default runs -- glm-5.3-flash on the hosted
-    kell server (KELL_DEFAULT_MODEL changes it). It and gemma-4-31b-it are open to every signed-in person, for prompts
+    kell server (KELL_DEFAULT_MODEL changes it). It and deepseek-v4.1-flash are open to every signed-in person, for prompts
     with nothing private: pass data_class="PUBLIC_SOURCE". Not sure which models exist? Call with any name: a refusal
     lists the models you can use.
 
@@ -2921,7 +2921,7 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
       call_model(prompt="Summarise this stack trace: …", model="glm-5.3-flash", data_class="PUBLIC_SOURCE")
       call_model(prompt="<the sub-task>", model="auto", instance_key="<goal>.9f2c…")  # next rung of the plan
       call_model(prompt="<the sub-task>", model="gemma-4", scaffold="coder")           # an agent with a harness
-      call_model(prompt="…", model="glm-5.3-flash", fallback_models=["gemma-4-31b-it"])
+      call_model(prompt="…", model="glm-5.3-flash", fallback_models=["deepseek-v4.1-flash"])
     """
     pool = ctx.request_context.lifespan_context["pool"]
     from app.providers import CallRequest, ProviderCallFailed, ProviderError, call_unit, unit_of
@@ -3034,7 +3034,7 @@ async def delegate(ctx: Context, task: str, check: bool = True, max_tokens: int 
     if not str(task or "").strip():
         return "REFUSED: send the task as a self-contained instruction"
     model = os.environ.get("WEB_DELEGATE_MODEL", "glm-5.3-flash")
-    checker = os.environ.get("WEB_CHECK_MODEL", "gemma-4-31b-it")
+    checker = os.environ.get("WEB_CHECK_MODEL", "deepseek-v4.1-flash")   # another family than the answering model; not offered: gemma (2026-11-07)
     raw = await call_model(ctx, prompt=task, model=model, data_class="PUBLIC_SOURCE", fallback_models=[checker],
                            max_tokens=max(1000, min(int(max_tokens or 2000), 8000)), max_latency_ms=120000)
     try:

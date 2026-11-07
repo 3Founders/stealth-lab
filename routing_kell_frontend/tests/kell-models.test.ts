@@ -26,9 +26,8 @@ describe("addresses", () => {
     expect(kellModelsAvailable("https://mcp.example.org", "off")).toBe(false);
   });
   it("only the pilot models are offered", () => {
-    expect(onlyKellModels(["x", "glm-5.3-flash", "gemma-4-31b-it", "other"])).toEqual(["glm-5.3-flash", "gemma-4-31b-it"]);
-    expect([...KELL_MODEL_IDS]).toEqual(["glm-5.3-flash", "gemma-4-31b-it", "glm-5.3", "deepseek-v3.2",
-      "deepseek-v4-pro", "deepseek-v4.1-flash", "kimi-k2", "minimax-m2.5", "qwen3-coder", "gpt-oss-120b"]);
+    expect(onlyKellModels(["x", "glm-5.3-flash", "kimi-k3", "gemma-4-31b-it", "other"])).toEqual(["glm-5.3-flash", "kimi-k3"]);
+    expect([...KELL_MODEL_IDS]).toEqual(["glm-5.3-flash", "deepseek-v4.1-flash", "mimo-v2.6-flash", "deepseek-v4-pro", "kimi-k3"]);
   });
 });
 
@@ -92,7 +91,7 @@ describe("what backs the assistant (no fallback between the two)", () => {
   });
   it("keळ models chosen: uses the session token and ignores the person's keys", async () => {
     const kv = mem();
-    writeChoice(kv, "u", { source: "kell", model: "gemma-4-31b-it" });
+    writeChoice(kv, "u", { source: "kell", model: "deepseek-v4.1-flash" });
     const list = vi.fn(async () => [meta]);
     const r = await makeResolver({ vault: { list, reveal: async () => "sk-own-KEY1234567890" }, token: async () => TOKEN, kv, subject: "u", origin: "https://mcp.example.org" })();
     expect(r?.secrets).toEqual([TOKEN]);
@@ -100,7 +99,7 @@ describe("what backs the assistant (no fallback between the two)", () => {
   });
   it("keळ models chosen but signed out: an error that says so, not a silent switch to a key", async () => {
     const kv = mem();
-    writeChoice(kv, "u", { source: "kell", model: "gemma-4-31b-it" });
+    writeChoice(kv, "u", { source: "kell", model: "deepseek-v4.1-flash" });
     await expect(makeResolver({ vault: vault([meta]), token: async () => null, kv, subject: "u", origin: "https://mcp.example.org" })()).rejects.toThrow(/Sign in again/);
   });
   it("a key with no model chosen tells the person to press Test", async () => {

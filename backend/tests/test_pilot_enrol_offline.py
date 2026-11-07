@@ -83,7 +83,7 @@ def test_the_shipped_connections_file_loads_and_is_platform_owned_with_prices():
 
     path = Path(__file__).resolve().parents[1] / "deploy" / "provider_connections.json"
     conns = {c.connection_id: c for c in load_connections_file(str(path))}
-    assert set(conns) == {"zai-glm", "general-compute"}
+    assert list(conns) == ["deepinfra", "zai-glm"]        # in this order: Z.ai is glm-5.3-flash's fallback (owner, 2026-11-07)
     for c in conns.values():
         assert c.owner == "platform" and c.credential_owner == "platform"
         assert c.credential_ref.startswith("env:")                    # a reference, never the secret
@@ -95,6 +95,8 @@ def test_the_shipped_connections_file_loads_and_is_platform_owned_with_prices():
         assert not {"CONFIDENTIAL_DATA", "PERSONAL_DATA"} & set(c.allowed_data_classes)
         assert all(u.input_per_mtok and u.output_per_mtok for u in c.units)   # priced, so the budget can be held
     assert "glm-5.3-flash|direct" in [u.unit for u in conns["zai-glm"].units]
+    assert {u.unit.split("|")[0] for u in conns["deepinfra"].units} == {
+        "glm-5.3-flash", "deepseek-v4.1-flash", "mimo-v2.6-flash", "deepseek-v4-pro", "kimi-k3"}
     assert "sk-" not in path.read_text(encoding="utf-8")
 
 
