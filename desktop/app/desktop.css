@@ -157,3 +157,40 @@
 .dk-sessions .dk-recent { justify-content: space-between; }
 .dk-sessions .dk-recent .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-sessions .dk-recent .when { flex: none; color: var(--grey); font-size: 11.5px; }
+
+/* What kell is doing while it works (2026-11-07): newest calls stacked, each sliding in; the running one spins, done ones fade by age. */
+.dk-activity { list-style: none; margin: 0; padding: 2px 18px 0 22px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.dk-activity li { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--grey);
+  opacity: calc(1 - var(--age, 0) * .22); animation: dk-act-in .32s cubic-bezier(.2, .8, .2, 1) both; transition: opacity .3s; }
+.dk-activity li b { color: var(--ink); font-weight: 400; flex: none; }
+.dk-act-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 11.5px; }
+.dk-act-mark { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1.6px solid var(--rule-strong, #bbb); }
+.dk-activity li[data-state="running"] .dk-act-mark { border-color: var(--yellow, #f5c400); border-right-color: transparent; animation: dk-spin .7s linear infinite; }
+.dk-activity li[data-state="done"] .dk-act-mark { border-color: transparent; background: var(--grey); transform: scale(.55); transition: transform .2s; }
+.dk-activity li[data-state="failed"] .dk-act-mark { border-color: #b3261e; background: #b3261e; transform: scale(.7); }
+@keyframes dk-act-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes dk-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .dk-activity li, .dk-activity li[data-state="running"] .dk-act-mark { animation: none; } }
+
+/* Sessions under their project. */
+.dk-recents li { grid-template-columns: minmax(0, 1fr) auto; }
+.dk-sess { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 1px; padding: 0 4px 6px 22px; }
+.dk-sess-row { all: unset; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px;
+  border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text-2, var(--ink)); min-width: 0; }
+.dk-sess-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-sess-row .when { flex: none; color: var(--grey); font-size: 11px; }
+.dk-sess-row:hover { background: var(--paper, rgba(0,0,0,.04)); }
+.dk-sess-row[data-here] { background: var(--paper, rgba(0,0,0,.06)); color: var(--ink); }
+.dk-sess-row:disabled { cursor: default; }
+.dk-sess-more > summary { list-style: none; cursor: pointer; padding: 4px 8px; font-size: 12px; color: var(--grey); }
+.dk-sess-more > summary::-webkit-details-marker { display: none; }
+.dk-sess-more > summary::before { content: "\25B8"; display: inline-block; margin-right: 6px; transition: transform .15s; }
+.dk-sess-more[open] > summary::before { transform: rotate(90deg); }
+/* The website's sidebar button lift (chat.css .dg-side button) is not for these rows; the open project's highlight stays on its own row. */
+.dg-page .dg-side .dk-recent, .dg-page .dg-side .dk-recent-x, .dg-page .dg-side .dk-sess-row,
+.dg-page .dg-side .dk-recent:hover, .dg-page .dg-side .dk-recent-x:hover, .dg-page .dg-side .dk-sess-row:hover { box-shadow: none !important;   /* chat.css's rule carries four :not()s, so it outranks a plain override */ }
+.dg-page .dg-side .dk-sess-row { background: transparent; border: 0; }
+.dg-page .dg-side .dk-sess-row:hover { background: rgba(0, 0, 0, .045); }
+.dg-page .dg-side .dk-sess-row[data-here] { background: rgba(0, 0, 0, .07); color: var(--ink); }
+.dk-recents li[data-here] { background: none; }
+.dk-recents li[data-here] > .dk-recent { background: var(--soft, rgba(0,0,0,.05)); border-radius: 8px; }

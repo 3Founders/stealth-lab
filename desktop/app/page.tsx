@@ -21,6 +21,16 @@ type KellDesktop = {
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
+/** A tool call's subject in a few words: the path, pattern, command or query it was given. */
+const hintOf = (input: any): string | undefined => {
+  if (!input || typeof input !== "object") return undefined
+  const v = input.command ?? input.pattern ?? input.query ?? input.path ?? input.filePath ?? input.file ?? input.url ?? input.description
+  if (typeof v !== "string" || !v.trim()) return undefined
+  const one = v.replace(/\s+/g, " ").trim()
+  const short = /[\\/]/.test(one) && !/\s/.test(one) ? one.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : one
+  return short.length > 60 ? short.slice(0, 57) + "…" : short
+}
+
 /** When a session was last used, short: the time today, else the day. */
 const when = (ms: number) => {
   const d = new Date(ms), now = new Date()
@@ -74,7 +84,7 @@ const signInFrom = (raw: string): { server: string; link: string } | null => {
 }
 
 type Line = { who: "user" | "assistant" | "signin" | "plan"; text: string; at?: number; server?: string; state?: "ready" | "open" | "done" | "failed" }
-type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string }
+type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string; state?: "running" | "done" | "failed"; hint?: string }
 // One row per step (one model round trip). The engine splits it across events: session.step.started names the model (keyed
 // by assistantMessageID), session.step.ended carries tokens and cost for the same message. Neither event carries a rung.
 type LedgerRow = { id: string; model?: string; providerID?: string; tokens?: string; cost?: number }
@@ -241,6 +251,14 @@ export default function Home() {
     loadChanges(id)
   }
 
+  const sessionRow = (x: { id: string; title: string; updated: number }) => (
+    <button type="button" key={x.id} className="dk-sess-row" data-here={x.id === sessionID || undefined} title={x.title || "Untitled session"}
+      disabled={busy} onClick={() => void openSession(x.id)}>
+      <span className="nm">{x.title || "Untitled session"}</span>
+      <span className="when">{x.updated ? when(x.updated) : ""}</span>
+    </button>
+  )
+
   const loadTools = async (need: string) => {
     setCardsNote("asking kell's tool router…")
     try {
@@ -295,6 +313,7 @@ export default function Home() {
     }
     const sent = body
     setLines((l) => [...l, { who: "user", text: sent, at: Date.now() }])
+    setSteps([])
     if (again === undefined) setText("")                     // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
@@ -328,13 +347,15 @@ export default function Home() {
         else if (t === "session.tool.input.started") {
           // The tool's name comes only here; the called / success / failed events carry the call's id (2026-11-07: every chip read "tool").
           const id = String(d.id || ""), label = String(d.name || "tool")
-          setSteps((s) => s.some((x) => x.id === id) ? s : [...s, { kind: "tool", label, id }])
+          setSteps((s) => s.some((x) => x.id === id) ? s : [...s, { kind: "tool", label, id, state: "running" }])
         }
         else if (t === "session.tool.called" || t === "session.tool.success" || t === "session.tool.failed") {
           const id = String(d.id || "")
+          const state = t === "session.tool.called" ? "running" : t === "session.tool.success" ? "done" : "failed"
+          const hint = t === "session.tool.called" ? hintOf(d.input) : undefined
           setSteps((s) => s.some((x) => x.id === id)
-            ? s.map((x) => (x.id === id ? { ...x, note: t.endsWith("failed") ? "failed" : x.note } : x))
-            : [...s, { kind: "tool", label: String(d.name || "tool"), id, note: t.endsWith("failed") ? "failed" : undefined }])
+            ? s.map((x) => (x.id === id ? { ...x, state, hint: hint ?? x.hint, note: state === "failed" ? "failed" : x.note } : x))
+            : [...s, { kind: "tool", label: String(d.name || "tool"), id, state, hint, note: state === "failed" ? "failed" : undefined }])
           const need = t === "session.tool.called" ? null : signInFrom(JSON.stringify(d))
           if (need) setLines((l) => l.some((x) => x.who === "signin" && x.text === need.link) ? l
             : [...l, { who: "signin", text: need.link, server: need.server, state: "ready", at: Date.now() }])
@@ -616,25 +637,6 @@ export default function Home() {
           )}
           {engine?.up && !sessionID && <p className="dk-note" role="status">Project open: {project}. Type what you want done below.</p>}
 
-          {engine?.up && (
-            <>
-              <h2>Sessions</h2>
-              {sessions.length === 0 ? <p className="dk-note">Sessions in this project show here.</p> : (
-                <ul className="dk-recents dk-sessions" aria-label="Sessions in this project">
-                  {sessions.map((x) => (
-                    <li key={x.id} data-here={x.id === sessionID || undefined}>
-                      <button type="button" className="dk-recent" title={x.title || "Untitled session"} disabled={busy}
-                        onClick={() => void openSession(x.id)}>
-                        <span className="nm">{x.title || "Untitled session"}</span>
-                        <span className="when">{x.updated ? when(x.updated) : ""}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-
           <h2>Projects</h2>
           {recents.length === 0 ? <p className="dk-note">Projects you open show here.</p> : (
             <ul className="dk-recents" aria-label="Recent projects">
@@ -649,6 +651,18 @@ export default function Home() {
                       <span className="nm">{name}</span>
                     </button>
                     <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>×</button>
+                    {here && engine?.up && sessions.length > 0 && (
+                      // The open project's sessions under it: the latest one, then the earlier ones folded away.
+                      <div className="dk-sess">
+                        {sessionRow(sessions[0])}
+                        {sessions.length > 1 && (
+                          <details className="dk-sess-more" open={sessions.slice(1).some((x) => x.id === sessionID) || undefined}>
+                            <summary>Earlier sessions · {sessions.length - 1}</summary>
+                            {sessions.slice(1).map(sessionRow)}
+                          </details>
+                        )}
+                      </div>
+                    )}
                   </li>
                 )
               })}
@@ -779,10 +793,17 @@ export default function Home() {
             </div>
           </div>
 
-          {steps.length > 0 && (
-            <div className="dk-steps" aria-label="Tool calls">
-              {steps.slice(-10).map((s, i) => <span className="dk-step" data-failed={!!s.note || undefined} key={i}><b>{s.label}</b>{s.note ? ` · ${s.note}` : ""}</span>)}
-            </div>
+          {busy && steps.length > 0 && (
+            // What kell is doing right now: the newest calls, one under the other, each sliding in; the running one spins, done ones fade.
+            <ol className="dk-activity" aria-label="What kell is doing" aria-live="polite">
+              {steps.slice(-4).map((s, i, all) => (
+                <li key={s.id || i} data-state={s.state || "running"} style={{ "--age": all.length - 1 - i } as React.CSSProperties}>
+                  <span className="dk-act-mark" aria-hidden="true" />
+                  <b>{s.label}</b>
+                  {s.hint && <span className="dk-act-hint">{s.hint}</span>}
+                </li>
+              ))}
+            </ol>
           )}
           {queued.map((q, i) => (
             <div key={i} className="dg-queued small" role="status">
