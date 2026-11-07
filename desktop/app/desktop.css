@@ -194,3 +194,10 @@
 .dg-page .dg-side .dk-sess-row[data-here] { background: rgba(0, 0, 0, .07); color: var(--ink); }
 .dk-recents li[data-here] { background: none; }
 .dk-recents li[data-here] > .dk-recent { background: var(--soft, rgba(0,0,0,.05)); border-radius: 8px; }
+
+/* The chevron under the newest session: shows or hides the rest of the same list. */
+.dg-page .dg-side .dk-sess-toggle { all: unset; box-sizing: border-box; align-self: flex-start; display: grid; place-items: center; width: 26px; height: 18px;
+  margin-left: 4px; border-radius: 6px; color: var(--grey); cursor: pointer; box-shadow: none !important; }
+.dg-page .dg-side .dk-sess-toggle:hover { background: rgba(0, 0, 0, .045); color: var(--ink); }
+.dk-sess-toggle svg { transition: transform .18s; }
+.dk-sess-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }

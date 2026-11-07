@@ -197,6 +197,7 @@ export default function Home() {
   const [sessionID, setSessionID] = useState<string | null>(null)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
   const [sessions, setSessions] = useState<{ id: string; title: string; updated: number }[]>([])
+  const [sessOpen, setSessOpen] = useState(false)
   const [spend, setSpend] = useState(0)
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
@@ -244,14 +245,14 @@ export default function Home() {
     // and the Undo button can never disagree. Without one: the working tree's diff.
     const r = await fetch(sid ? `/api/diff?sessionID=${encodeURIComponent(sid)}` : "/api/diff")
     const j = await r.json()
-    if (!r.ok) { setFiles([]); setOtherFiles([]); setOtherMore(0); setPending(0); setFilesNote(j.error || "could not read the changes"); return }
+    if (!r.ok) { setFiles([]); setOtherFiles([]); setOtherMore(0); setPending(0); setFilesNote(j.error || "Could not read changes"); return }
     setFiles(Array.isArray(j.files) ? j.files : [])
     setOtherFiles(Array.isArray(j.other) ? j.other : [])
     setOtherMore(typeof j.more === "number" ? j.more : 0)
     setPending(typeof j.pending === "number" ? j.pending : (j.files || []).length)
     setFilesNote(Array.isArray(j.files) && j.files.length === 0
-      ? (sid ? (j.snapshot ? "kell's last turn changed nothing" : "kell has not changed anything in this session yet") : "kell has not changed anything yet")
-      : (typeof j.pending === "number" && j.pending === 0 ? "undone — nothing left to put back" : ""))
+      ? (sid && j.snapshot ? "No changes in the last turn" : "No changes by kell")
+      : (typeof j.pending === "number" && j.pending === 0 ? "Undone" : ""))
   }, [])
 
   const loadSessions = useCallback(async () => {
@@ -284,13 +285,13 @@ export default function Home() {
   )
 
   const loadTools = async (need: string) => {
-    setCardsNote("asking kell's tool router…")
+    setCardsNote("Finding tools…")
     try {
       const r = await fetch("/api/tools", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ need }) })
       const j = await r.json()
       if (!r.ok) { setCards([]); setCardsNote(j.error || "the tool router did not answer"); return }
       setCards(j.tools || [])
-      setCardsNote((j.tools || []).length ? "" : "no outside tool fits this request")
+      setCardsNote((j.tools || []).length ? "" : "No outside tool needed")
     } catch (err: any) { setCards([]); setCardsNote(String(err?.message || err)) }
   }
 
@@ -659,7 +660,6 @@ export default function Home() {
               {signinNote && <p className="dk-note">{signinNote}</p>}
             </div>
           )}
-          {engine?.up && !sessionID && <p className="dk-note" role="status">Project open: {project}. Type what you want done below.</p>}
 
           <h2>Projects</h2>
           {recents.length === 0 ? <p className="dk-note">Projects you open show here.</p> : (
@@ -676,14 +676,14 @@ export default function Home() {
                     </button>
                     <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>×</button>
                     {here && engine?.up && sessions.length > 0 && (
-                      // The open project's sessions under it: the latest one, then the earlier ones folded away.
+                      // The open project's sessions under it, one list: the newest shows, a chevron shows the rest.
                       <div className="dk-sess">
-                        {sessionRow(sessions[0])}
+                        {(sessOpen || sessions.slice(1).some((x) => x.id === sessionID) ? sessions : sessions.slice(0, 1)).map(sessionRow)}
                         {sessions.length > 1 && (
-                          <details className="dk-sess-more" open={sessions.slice(1).some((x) => x.id === sessionID) || undefined}>
-                            <summary>Earlier sessions · {sessions.length - 1}</summary>
-                            {sessions.slice(1).map(sessionRow)}
-                          </details>
+                          <button type="button" className="dk-sess-toggle" aria-expanded={sessOpen} aria-label={sessOpen ? "Show fewer sessions" : "Show all sessions"}
+                            title={sessOpen ? "Show fewer" : "Show all"} onClick={() => setSessOpen((o) => !o)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                          </button>
                         )}
                       </div>
                     )}
@@ -743,9 +743,6 @@ export default function Home() {
           <div className="dg-scroll">
             <div className="dg-viewport" ref={logRef} aria-label="Messages">
               <div className="dg-content" ref={logContentRef}>
-                {lines.length === 0 && (
-                  <p className="dg-empty">Open a project, then say what to do. A low-cost model starts each task and the stronger one takes over when the tests say so. Tools that need a sign-in open in a small window here.</p>
-                )}
                 {lines.map((l, i) => {
                   if (l.who === "plan") {
                     return (
@@ -884,15 +881,14 @@ export default function Home() {
 
           <details className="dk-fold">
           <summary><h2>Other changes in this folder{otherFiles.length ? ` · ${otherFiles.length + otherMore}` : ""}</h2></summary>
-          {readEngine && <p className="dk-note">Not committed yet, and not made by kell in this session (your edits, or another tool's). Undo never touches these.</p>}
-          {readEngine && otherFiles.length === 0 && <p className="dk-note">none</p>}
+          {readEngine && otherFiles.length === 0 && <p className="dk-note">No other changes</p>}
           <FileList files={otherFiles} />
           {otherMore > 0 && <p className="dk-note">and {otherMore} more</p>}
           </details>
 
           <details className="dk-fold">
           <summary><h2>Model steps{ledger.length ? ` · ${ledger.length}` : ""}</h2></summary>
-          {ledger.length === 0 ? <p className="dk-note">Each model step shows here with its tokens and cost.</p> : (
+          {ledger.length === 0 ? <p className="dk-note">No model steps yet</p> : (
             <div className="dk-ledger">
               {ledger.map((r) => (
                 <div className="row" key={r.id}>
