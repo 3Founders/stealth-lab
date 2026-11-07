@@ -2,6 +2,7 @@
 // (session.idle for it). Event payloads go through as-is; the UI maps types to bubbles, chips and the model strip.
 import { engineStatus, clientFor } from "@/lib/engine"
 import { pooledEngineConfig, ownKeyLane, walletRemaining, isNeedPlan } from "@/lib/pooled"
+import { askRouter, toolInstruction } from "@/lib/tools"
 
 export const dynamic = "force-dynamic"
 
@@ -57,7 +58,14 @@ export async function POST(req: Request) {
           }
           ctrl.close()
         })()
-        await client.session.prompt({ sessionID, text: String(body.text || "") })
+        // The room agent's tool rules and the router's shortlist for this message, as this session's instruction (lib/tools.ts). A slow or
+        // signed-out router only drops the shortlist; an engine that refuses the entry still runs the prompt.
+        const text = String(body.text || "")
+        const shortlist = text.trim() ? await askRouter(text, 6_000).catch(() => []) : []
+        try {
+          await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools", value: toolInstruction(shortlist) } as any)
+        } catch { /* the prompt still runs */ }
+        await client.session.prompt({ sessionID, text })
         await pump
       },
     })
