@@ -27,7 +27,7 @@ describe("addresses", () => {
   });
   it("only the pilot models are offered", () => {
     expect(onlyKellModels(["x", "glm-5.3-flash", "kimi-k3", "gemma-4-31b-it", "other"])).toEqual(["glm-5.3-flash", "kimi-k3"]);
-    expect([...KELL_MODEL_IDS]).toEqual(["glm-5.3-flash", "deepseek-v4.1-flash", "mimo-v2.6-flash", "deepseek-v4-pro", "kimi-k3"]);
+    expect([...KELL_MODEL_IDS]).toEqual(["deepseek-v4.1-flash", "glm-5.3-flash", "mimo-v2.6-flash", "deepseek-v4-pro", "kimi-k3"]);
   });
 });
 

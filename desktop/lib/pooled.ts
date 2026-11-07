@@ -35,23 +35,22 @@ const readJson = (file: string): any => {
 const priceOf = (m: Model): number =>
   typeof m.input === "number" && typeof m.output === "number" ? m.input + m.output : Infinity
 
-/** The default operator when the gateway offers it: GLM 5.3 Flash starts fast; the priciest model stays the fallback. */
-export const DEFAULT_MODEL = "glm-5.3-flash"
+/** The models on kell's credits in the order a turn uses them (owner, 2026-11-07): DeepSeek V4.1 Flash for nearly everything, the
+ *  others only when the one before cannot answer, cheapest first. The server's room agent uses the same ladder (MODEL_LADDER in
+ *  backend/app/mcp_server/server.py). */
+export const MODEL_LADDER = ["deepseek-v4.1-flash", "glm-5.3-flash", "mimo-v2.6-flash", "deepseek-v4-pro", "kimi-k3"]
+export const DEFAULT_MODEL = MODEL_LADDER[0]
 
 const home = (env: NodeJS.ProcessEnv) => env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab")
 
 /** The one engine config both lanes share: kell's gateway as an OpenAI-compatible provider, the bearer in the child's
- *  environment (never in this text), GLM 5.3 Flash as the default when the gateway offers it, the priciest model as the
- *  provider-failure fallback and the cheapest as the cheap rung. */
+ *  environment (never in this text), the first model of MODEL_LADDER the gateway offers as the default and the rest of the
+ *  ladder, in order, as the provider-failure fallbacks (models the ladder does not name go last, cheapest first). */
 function buildConfig(models: Model[], baseUrl: string, token: string, extraHeaders: Record<string, string>,
                      cfg: any, env: NodeJS.ProcessEnv, modelKey?: string): PooledEngine {
-  const sorted = [...models].sort((a, b) => priceOf(a) - priceOf(b))
-  const cheap = sorted[0]
-  const priciest = [...sorted].reverse().find((m) => Number.isFinite(priceOf(m))) || sorted[sorted.length - 1]
-  // GLM 5.3 Flash is the default operator when the gateway offers it; the priciest model is the provider-failure fallback,
-  // so a dead flash endpoint still has a stronger rung to move to. Not plain GLM 5.3.
-  const strong = models.find((m) => m.id === DEFAULT_MODEL) || priciest
-  const fallback = strong.id === priciest.id ? cheap : priciest
+  const rank = (m: Model) => { const i = MODEL_LADDER.indexOf(m.id); return i < 0 ? MODEL_LADDER.length : i }
+  const ladder = [...models].sort((a, b) => rank(a) - rank(b) || priceOf(a) - priceOf(b))
+  const strong = ladder[0]
 
   const table: Record<string, unknown> = {}
   for (const m of models) {
@@ -73,7 +72,7 @@ function buildConfig(models: Model[], baseUrl: string, token: string, extraHeade
             // refuses it with a message instead of silently widening the policy.
             "x-stealthlab-data-class": env.KELL_OC_DATA_CLASS || "USER_PRIVATE",
             // A dead or out-of-credit provider on the chosen model does not fail the turn: the gateway tries the others.
-            "x-stealthlab-fallback-models": [...new Set([strong.id, fallback.id, cheap.id])].join(","),
+            "x-stealthlab-fallback-models": ladder.map((m) => m.id).join(","),
           },
         },
         models: table,

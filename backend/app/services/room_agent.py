@@ -585,9 +585,11 @@ async def _run_call(call: dict[str, Any], *, use_tool: UseTool, discover: "Disco
         # What a model makes goes in the canvas whether or not the agent said so: a long answer, a page or a piece of code is a thing to keep and
         # edit, not something to read in the chat. The title and kind come from the text itself when the agent gave none.
         # A short piece (a function, a paragraph) goes back to the model for the chat answer, where it has a Copy button, unless the person
-        # asked for a canvas, a document or a page (2026-11-05: a ten-line Python function landed in a canvas).
-        if made is not None and (looks_like_html(body) or len(body) > SHORT_PIECE or (wants_canvas and (title or len(body) > 700))):
-            kind = kind if kind in ("document", "code", "html") else guess_kind(body)
+        # asked for a canvas, a document or a page (2026-11-05: a ten-line Python function landed in a canvas). A page or a LaTeX document
+        # always goes in the canvas, however short: the chat cannot render either (2026-11-07: a short LaTeX note came back as raw source).
+        if made is not None and (kind in ("html", "latex") or looks_like_html(body) or len(body) > SHORT_PIECE
+                                 or (wants_canvas and (title or len(body) > 700))):
+            kind = kind if kind in ("document", "code", "html", "latex") else guess_kind(body)
             title = title or guess_title(body, kind)
             made.append(fence_canvas(title, kind, body))
             return f"Done: the model wrote {len(body)} characters and kell is putting them in a canvas named {title!r} for the room. Reply in one or two sentences about what you made; do not repeat it."

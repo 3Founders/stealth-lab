@@ -13,10 +13,10 @@ import { providerById } from "@/lib/byok/providers";
 import type { ProviderTarget } from "@/lib/byok/chat";
 import type { KeyValue } from "@/lib/byok/spend";
 
-/** The pilot models. /v1/models may list more for other callers; only these are offered here. */
+/** The models on kell's credits, the default first (owner, 2026-11-07). /v1/models may list more for other callers; only these are offered here. */
 export const KELL_MODEL_IDS = [
-  "glm-5.3-flash",
   "deepseek-v4.1-flash",
+  "glm-5.3-flash",
   "mimo-v2.6-flash",
   "deepseek-v4-pro",
   "kimi-k3",
