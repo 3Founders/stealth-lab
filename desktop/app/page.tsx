@@ -120,12 +120,34 @@ export default function Home() {
   useEffect(() => { try { const r = JSON.parse(window.localStorage.getItem("kell.projects") || "[]"); if (Array.isArray(r)) setRecents(r.filter((x) => typeof x === "string").slice(0, 12)) } catch { /* none */ } }, [])
   const remember = (dir: string) => setRecents((r) => {
     const next = [dir, ...r.filter((x) => x.toLowerCase() !== dir.toLowerCase())].slice(0, 12)
+    try {
+      window.localStorage.setItem("kell.projects", JSON.stringify(next))
+      const hidden = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]")
+      if (Array.isArray(hidden) && hidden.includes(dir.toLowerCase()))       // opened again: it may come back from the engine's list too
+        window.localStorage.setItem("kell.projects.hidden", JSON.stringify(hidden.filter((x) => x !== dir.toLowerCase())))
+    } catch { /* storage blocked */ }
+    return next
+  })
+  // The folders the engine has worked in fill the list after the ones opened here (2026-11-07: the list started empty after a
+  // restart), except ones taken off it with ×.
+  const mergeProjects = (dirs: string[]) => setRecents((r) => {
+    let hidden: string[] = []
+    try { const h = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]"); if (Array.isArray(h)) hidden = h } catch { /* none */ }
+    const have = new Set(r.map((x) => x.toLowerCase()))
+    const extra = dirs.filter((d) => !have.has(d.toLowerCase()) && !hidden.includes(d.toLowerCase()))
+    if (!extra.length) return r
+    const next = [...r, ...extra].slice(0, 12)
     try { window.localStorage.setItem("kell.projects", JSON.stringify(next)) } catch { /* storage blocked */ }
     return next
   })
+  // × also keeps a project off the list when the engine's own project list is merged in (mergeProjects).
   const forget = (dir: string) => setRecents((r) => {
     const next = r.filter((x) => x !== dir)
-    try { window.localStorage.setItem("kell.projects", JSON.stringify(next)) } catch { /* storage blocked */ }
+    try {
+      window.localStorage.setItem("kell.projects", JSON.stringify(next))
+      const hidden = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]")
+      window.localStorage.setItem("kell.projects.hidden", JSON.stringify([...new Set([dir.toLowerCase(), ...(Array.isArray(hidden) ? hidden : [])])].slice(0, 100)))
+    } catch { /* storage blocked */ }
     return next
   })
   // The two side columns can be dragged wider or narrower; the widths are kept on this device.
@@ -236,7 +258,9 @@ export default function Home() {
     try {
       const j = await (await fetch("/api/sessions")).json()
       setSessions(Array.isArray(j.sessions) ? j.sessions : [])
-    } catch { /* the list stays as it was */ }
+      const p = await (await fetch("/api/sessions?projects=1")).json()
+      if (Array.isArray(p.projects)) mergeProjects(p.projects.map((x: { dir: string }) => x.dir))
+    } catch { /* the lists stay as they were */ }
   }, [])
 
   // A past session: its conversation back on screen, and the next message continues it.

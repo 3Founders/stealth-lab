@@ -1,6 +1,8 @@
 // The open project's past sessions, and one session's conversation to show again (owner, 2026-11-07: the sidebar listed projects but
 // not sessions). Sessions live in the engine's own store, so they are still there after the app is closed and opened again; this only
 // reads them. Sub-agent sessions (a parent session started them) are left out of the list.
+import fs from "node:fs"
+import os from "node:os"
 import { clientFor, engineStatus } from "@/lib/engine"
 
 export const dynamic = "force-dynamic"
@@ -10,9 +12,20 @@ type Line = { who: "user" | "assistant"; text: string; at?: number }
 export async function GET(req: Request) {
   const e = engineStatus()
   if (!e) return Response.json({ sessions: [], lines: [] })
-  const id = new URL(req.url).searchParams.get("id")
+  const q = new URL(req.url).searchParams
+  const id = q.get("id")
   try {
     const client = await clientFor(e)
+    if (q.get("projects")) {
+      // Every folder the engine has worked in, last active first, for the sidebar's recent projects: real folders only (not "/" or the
+      // home folder, which the engine records when it was started outside a project), and only ones that still exist.
+      const home = os.homedir().toLowerCase()
+      const projects = (await client.project.list() as any[])
+        .map((p) => ({ dir: String(p.canonical || ""), active: Number(p.time?.active ?? p.time?.updated ?? 0) }))
+        .filter((p) => p.dir && p.dir !== "/" && p.dir.toLowerCase() !== home && fs.existsSync(p.dir))
+        .sort((a, b) => b.active - a.active)
+      return Response.json({ projects })
+    }
     if (!id) {
       const out = await client.session.list({ directory: e.directory as any, limit: 50, order: "desc" })
       const sessions = (out.data as any[]).filter((s) => !s.parentID).map((s) => ({

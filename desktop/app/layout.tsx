@@ -12,6 +12,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <head>
         {/* a file, not inline text (the website learned that the hard way): sets data-theme before the page paints */}
+        {/* first: the saved settings back into localStorage, which starts empty on every run (the app's port changes) */}
+        <script src="/prefs-init.js" />
         <script src="/theme-init.js" />
       </head>
       <body>{children}</body>
