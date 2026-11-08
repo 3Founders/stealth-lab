@@ -29,7 +29,7 @@ const hintOf = (input: any): string | undefined => {
   if (typeof v !== "string" || !v.trim()) return undefined
   const one = v.replace(/\s+/g, " ").trim()
   const short = /[\\/]/.test(one) && !/\s/.test(one) ? one.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : one
-  return short.length > 60 ? short.slice(0, 57) + "…" : short
+  return short.length > 60 ? short.slice(0, 57) + "â€¦" : short
 }
 
 /** When a session was last used, short: the time today, else the day. */
@@ -59,13 +59,76 @@ function FileList({ files, openOne = false }: { files: FileDiff[]; openOne?: boo
           <summary>
             <span className="path">{f.file}</span>
             <span className="stat">{f.status === "added" && !f.patch ? <span className="add">new</span>
-              : <><span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span></>}</span>
+              : <><span className="add">+{f.additions}</span> <span className="del">âˆ’{f.deletions}</span></>}</span>
           </summary>
           {f.patch ? <div className="dk-diff">{patchLines(f.patch).map((p, i) => <div className={p.cls} key={i}>{p.text || " "}</div>)}</div>
             : <p className="dk-note" style={{ margin: "6px 8px" }}>A new file, not yet added to git.</p>}
         </details>
       ))}
     </div>
+  )
+}
+
+type TreeEntry = { name: string; path: string; dir: boolean }
+
+/** One folder in the sidebar's file tree. Each folder asks the app for its own entries when it is first opened
+ *  (app/api/files), so the tree costs nothing until you look at it; the root opens on mount. */
+function TreeLevel({ directory, rel, depth, onOpen, selected }: {
+  directory: string; rel: string; depth: number; onOpen: (p: string) => void; selected?: string
+}) {
+  const [entries, setEntries] = useState<TreeEntry[] | null>(null)
+  const [more, setMore] = useState(0)
+  const [err, setErr] = useState("")
+  useEffect(() => {
+    let live = true
+    setEntries(null)
+    fetch(`/api/files?directory=${encodeURIComponent(directory)}&dir=${encodeURIComponent(rel)}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (!live) return
+        if (j.error) { setErr(j.error); return }
+        setEntries(Array.isArray(j.entries) ? j.entries : []); setMore(Number(j.more) || 0); setErr("")
+      })
+      .catch((e) => { if (live) setErr(String(e?.message || e)) })
+    return () => { live = false }
+  }, [directory, rel])
+
+  if (err) return <p className="dk-note" style={{ paddingLeft: 8 + depth * 12 }}>{err}</p>
+  if (!entries) return <p className="dk-note" style={{ paddingLeft: 8 + depth * 12 }}>Readingâ€¦</p>
+  if (!entries.length) return depth === 0 ? <p className="dk-note">No files</p> : null
+  return (
+    <ul className="dk-tree-level" role={depth === 0 ? "tree" : "group"} aria-label={depth === 0 ? "Project files" : undefined}>
+      {entries.map((e) => e.dir
+        ? <TreeFolder key={e.path} entry={e} directory={directory} depth={depth} onOpen={onOpen} selected={selected} />
+        : (
+          <li key={e.path} role="treeitem">
+            <button type="button" className="dk-tree-row" data-file data-here={selected === e.path || undefined}
+              style={{ paddingLeft: 8 + depth * 12 }} title={e.path} onClick={() => onOpen(e.path)}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
+              <span className="nm">{e.name}</span>
+            </button>
+          </li>
+        ))}
+      {more > 0 && <li><p className="dk-note" style={{ paddingLeft: 8 + depth * 12 }}>and {more} more</p></li>}
+    </ul>
+  )
+}
+
+/** A folder row: the chevron turns (micro spring) and the children mount only once it is open. */
+function TreeFolder({ entry, directory, depth, onOpen, selected }: {
+  entry: TreeEntry; directory: string; depth: number; onOpen: (p: string) => void; selected?: string
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <li role="treeitem" aria-expanded={open}>
+      <button type="button" className="dk-tree-row" data-dir style={{ paddingLeft: 8 + depth * 12 }}
+        aria-expanded={open} title={entry.path} onClick={() => setOpen((o) => !o)}>
+        <svg className="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+        <span className="nm">{entry.name}</span>
+      </button>
+      {open && <TreeLevel directory={directory} rel={entry.path} depth={depth + 1} onOpen={onOpen} selected={selected} />}
+    </li>
   )
 }
 
@@ -131,7 +194,7 @@ export default function Home() {
     return next
   })
   // The folders the engine has worked in fill the list after the ones opened here (2026-11-07: the list started empty after a
-  // restart), except ones taken off it with ×.
+  // restart), except ones taken off it with Ã—.
   const mergeProjects = (dirs: string[]) => setRecents((r) => {
     let hidden: string[] = []
     try { const h = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]"); if (Array.isArray(h)) hidden = h } catch { /* none */ }
@@ -142,7 +205,7 @@ export default function Home() {
     try { window.localStorage.setItem("kell.projects", JSON.stringify(next)) } catch { /* storage blocked */ }
     return next
   })
-  // × also keeps a project off the list when the engine's own project list is merged in (mergeProjects).
+  // Ã— also keeps a project off the list when the engine's own project list is merged in (mergeProjects).
   const forget = (dir: string) => setRecents((r) => {
     const next = r.filter((x) => x !== dir)
     try {
@@ -168,6 +231,11 @@ export default function Home() {
   }, [])
   const toggleSidebar = (side: "left" | "right") => {
     const next = { left: side === "left" ? !leftOpen : leftOpen, right: side === "right" ? !rightOpen : rightOpen }
+    setLeftOpen(next.left); setRightOpen(next.right)
+    try { window.localStorage.setItem("kell.sidebars", JSON.stringify(next)) } catch { /* storage blocked */ }
+  }
+  const showSidebar = (side: "left" | "right") => {
+    const next = { left: side === "left" ? true : leftOpen, right: side === "right" ? true : rightOpen }
     setLeftOpen(next.left); setRightOpen(next.right)
     try { window.localStorage.setItem("kell.sidebars", JSON.stringify(next)) } catch { /* storage blocked */ }
   }
@@ -231,6 +299,24 @@ export default function Home() {
   const [otherMore, setOtherMore] = useState(0)
   const [confirm, setConfirm] = useState("")
   const [pending, setPending] = useState(0)
+  // The file view: a file picked in the sidebar's tree, its text from app/api/files, and the state of that read.
+  const [filePath, setFilePath] = useState<string | null>(null)
+  const [fileView, setFileView] = useState<{ text: string; bytes: number; lines: number; truncated: boolean; binary: boolean } | null>(null)
+  const [fileErr, setFileErr] = useState("")
+  const [fileBusy, setFileBusy] = useState(false)
+  const [fileCopied, setFileCopied] = useState(false)
+  const [treeEpoch, setTreeEpoch] = useState(0)          // bump: the tree re-reads the folder it was on
+  const openFile = async (rel: string) => {
+    setFilePath(rel); setFileErr(""); setFileView(null); setFileBusy(true)
+    showSidebar("right")                                  // the view lives in the right panel: bring it back if it was hidden
+    try {
+      const r = await fetch(`/api/files?directory=${encodeURIComponent(directory)}&path=${encodeURIComponent(rel)}`)
+      const j = await r.json()
+      if (!r.ok || j.error) { setFileErr(j.error || `Could not read ${rel}`); return }
+      setFileView(j)
+    } catch (e: any) { setFileErr(String(e?.message || e)) }
+    finally { setFileBusy(false) }
+  }
   const [cards, setCards] = useState<ToolCard[]>([])
   const [cardsNote, setCardsNote] = useState("")
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -245,8 +331,15 @@ export default function Home() {
   // The same spring scroll as the website chat: follows new text only while you are at the bottom, rubber-bands at the edges.
   const { follow, scrollToEnd } = useSpringScroll(logRef, logContentRef, sessionID ?? "")
   const busyRef = useRef(false)                       // a late poll must not overwrite a turn that started after it
-  // Messages sent while kell is working wait here and go out one at a time, in order, as each turn ends (× drops one).
+  // Messages sent while kell is working wait here and go out one at a time, in order, as each turn ends (Ã— drops one).
   const [queued, setQueued] = useState<string[]>([])
+  // The command palette (Ctrl/Cmd-K): app actions and "go to file", with the last few choices first.
+  const [palette, setPalette] = useState(false)
+  const [paletteQ, setPaletteQ] = useState("")
+  const [paletteIdx, setPaletteIdx] = useState(0)
+  const [fileHits, setFileHits] = useState<{ name: string; path: string }[]>([])
+  const [stopping, setStopping] = useState(false)
+  const [stopNote, setStopNote] = useState("")
 
   useEffect(() => {
     const last = window.localStorage.getItem("kell.directory") || ""
@@ -307,7 +400,7 @@ export default function Home() {
   )
 
   const loadTools = async (need: string) => {
-    setCardsNote("Finding tools…")
+    setCardsNote("Finding toolsâ€¦")
     try {
       const r = await fetch("/api/tools", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ need }) })
       const j = await r.json()
@@ -363,6 +456,7 @@ export default function Home() {
     setSteps([])
     if (again === undefined) { setText(""); histPos.current = null }   // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
+    setStopNote("")
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
     setCards([]); setCardsNote(""); loadTools(sent)
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID, directory, text: sent }) })
@@ -446,6 +540,20 @@ export default function Home() {
     setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
   }
 
+  /** Stop the turn at its next safe point (reqs Â§5). Work that already ran is not undone, and the note says so. */
+  const stop = async () => {
+    if (!sessionID || stopping) return
+    setStopping(true)
+    try {
+      const r = await fetch("/api/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || `stop failed (${r.status})`)
+      setStopNote("Stopped. Steps that already ran stay; nothing is undone.")
+    } catch (e: any) {
+      setStopNote(`Could not stop the turn: ${String(e?.message || e)}`)
+    } finally { setStopping(false) }
+  }
+
   const answerPermission = async (l: Line, decision: "once" | "always" | "reject") => {
     setLines((all) => all.map((x) => (x.requestID === l.requestID ? { ...x, answer: decision } : x)))
     const r = await fetch("/api/permission", { method: "POST", headers: { "content-type": "application/json" },
@@ -468,7 +576,7 @@ export default function Home() {
   }
 
   const openConsole = async () => {
-    setConsoleNote("starting the console…")
+    setConsoleNote("starting the consoleâ€¦")
     const r = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "open" }) })
     const j = await r.json()
     setConsoleNote(j.output || j.error || "no answer")
@@ -515,7 +623,7 @@ export default function Home() {
   // Sign out of everything: the coding lane's token and the rooms' session (and its cached copies) together, so the app
   // is never half one account and half another.
   const signOut = async () => {
-    setSigninNote("Signing out…")
+    setSigninNote("Signing outâ€¦")
     const r = await fetch("/api/signin", { method: "DELETE" }).then((x) => x.json()).catch(() => ({ error: "could not run kell logout" }))
     await desktop()?.signOutRooms()
     setRoomsWho(null)
@@ -560,6 +668,45 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queued, busy, resume])
 
+  // Ctrl/Cmd-K opens the command palette from anywhere in the app (reqs Â§1: "same shortcut in every context").
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); setPalette((p) => !p); setPaletteQ(""); setPaletteIdx(0) }
+      else if (e.key === "Escape" && palette) { setPalette(false) }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [palette])
+
+  // The draft prompt survives switching projects or sessions (reqs Â§1). The queued prompts already outlive a re-render;
+  // this keeps what was being typed when the person looked at another session.
+  useEffect(() => {
+    if (!directory) return
+    try { setText(window.localStorage.getItem(`kell.draft:${directory}`) || "") } catch { /* storage blocked */ }
+    // only when the project changes: typing must not be overwritten by this effect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [directory])
+  useEffect(() => {
+    if (!directory) return
+    try {
+      if (text) window.localStorage.setItem(`kell.draft:${directory}`, text)
+      else window.localStorage.removeItem(`kell.draft:${directory}`)
+    } catch { /* storage blocked */ }
+  }, [text, directory])
+
+  // "Go to file" in the palette: the app searches the project (bounded walk) once the query has a letter in it.
+  useEffect(() => {
+    if (!palette || !directory || paletteQ.trim().length < 2) { setFileHits([]); return }
+    let live = true
+    const timer = setTimeout(() => {
+      fetch(`/api/files?directory=${encodeURIComponent(directory)}&q=${encodeURIComponent(paletteQ)}`)
+        .then((r) => r.json())
+        .then((j) => { if (live) setFileHits(Array.isArray(j.files) ? j.files : []) })
+        .catch(() => { if (live) setFileHits([]) })
+    }, 140)
+    return () => { live = false; clearTimeout(timer) }
+  }, [palette, directory, paletteQ])
+
   // The rooms view follows the placeholder's rectangle while the Rooms pane shows, and hides on the coding pane.
   const roomsOn = pane === "rooms" && !!settings?.signedIn
   useEffect(() => {
@@ -602,6 +749,68 @@ export default function Home() {
 
   const project = directory ? directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || directory : "No project"
   const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null)
+
+  // The waiting prompts can be reordered or pulled back into the box, not only dropped (reqs Â§2: "edit / reorder / delete").
+  const moveQueued = (i: number, d: number) => setQueued((q) => {
+    const j = i + d
+    if (j < 0 || j >= q.length) return q
+    const next = [...q]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    return next
+  })
+  const editQueued = (i: number) => {
+    const t = queued[i]
+    setQueued((q) => q.filter((_, k) => k !== i))
+    setText(t); histPos.current = null; textRef.current?.focus()
+  }
+
+  // The command palette (Ctrl/Cmd-K): app actions, then files whose path matches (app/api/files?q=). Recent choices come
+  // first on an empty query, so the shortcut is never an empty box (reqs Â§1).
+  const runCommand = (run: () => void, id?: string) => {
+    setPalette(false); setPaletteQ(""); setPaletteIdx(0)
+    if (id) try {
+      const prev = JSON.parse(window.localStorage.getItem("kell.palette.recent") || "[]")
+      const next = [id, ...(Array.isArray(prev) ? prev : []).filter((x) => x !== id)].slice(0, 5)
+      window.localStorage.setItem("kell.palette.recent", JSON.stringify(next))
+    } catch { /* storage blocked */ }
+    run()
+  }
+  const commands = [
+    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
+    { id: "open-folder", title: "Open a folderâ€¦", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); void openProject(d) } }) } },
+    { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
+    { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
+    { id: "left", title: "Show or hide the project sidebar", run: () => toggleSidebar("left") },
+    { id: "right", title: "Show or hide the changes panel", run: () => toggleSidebar("right") },
+    { id: "stop", title: "Stop kell", hint: "end the running turn; nothing is undone", run: () => void stop() },
+    { id: "code", title: "Go to the coding agent", run: () => setPane("code") },
+    { id: "rooms", title: "Go to the team rooms", run: () => setPane("rooms") },
+    { id: "console", title: "Open the console", run: () => void openConsole() },
+    { id: "signin", title: "Sign in", run: () => void signIn() },
+    { id: "signout", title: "Sign out", run: () => void signOut() },
+    { id: "help", title: "Help: how kell works", run: () => window.open("https://www.kell.org.in/docs", "_blank", "noopener") },
+  ]
+  // Subsequence match: "nw s" finds "New session". An empty query matches everything.
+  const fuzzy = (hay: string, needle: string) => {
+    let i = 0
+    for (const ch of hay.toLowerCase()) { if (ch === needle[i]) i++; if (i === needle.length) return true }
+    return needle.length === 0
+  }
+  const recentCommands = (() => {
+    if (typeof window === "undefined") return [] as string[]       // the page is prerendered once, without a window
+    try { const r = JSON.parse(window.localStorage.getItem("kell.palette.recent") || "[]"); return Array.isArray(r) ? r.filter((x) => typeof x === "string") : [] }
+    catch { return [] }
+  })()
+  const paletteQ2 = paletteQ.trim().toLowerCase()
+  const matchedCommands = commands.filter((c) => !paletteQ2 || fuzzy(`${c.title} ${c.hint || ""}`, paletteQ2))
+  const orderedCommands = paletteQ2 ? matchedCommands
+    : [...matchedCommands].sort((a, b) => (recentCommands.indexOf(a.id) + 1 || 99) - (recentCommands.indexOf(b.id) + 1 || 99))
+  const paletteItems = [
+    ...orderedCommands.map((c) => ({ id: c.id, title: c.title, hint: c.hint as string | undefined, kind: "command" as const, run: () => runCommand(c.run, c.id) })),
+    ...(paletteQ2.length >= 2 ? fileHits.map((f) => ({ id: `file:${f.path}`, title: f.path, hint: undefined, kind: "file" as const, run: () => runCommand(() => void openFile(f.path)) })) : []),
+  ].slice(0, 40)
+  const runPaletteItem = (i: number) => { const it = paletteItems[i]; if (it) it.run() }
+  const paletteSelected = Math.min(paletteIdx, Math.max(0, paletteItems.length - 1))
 
   return (
     <section className="dg-page dk-page" style={springVars() as React.CSSProperties}>
@@ -674,7 +883,7 @@ export default function Home() {
         <div className="dk-resize" data-side="right" role="separator" aria-orientation="vertical" aria-label="Drag to resize the changes panel" onPointerDown={dragColumn("right")} />
         <aside className="dg-side" aria-label="Project, models and account">
           <div className="dg-brand">
-            <img className="wm-light" src="/kel-wordmark.png" alt="keळ" style={{ height: 38, width: "auto" }} />
+            <img className="wm-light" src="/kel-wordmark.png" alt="keà¤³" style={{ height: 38, width: "auto" }} />
             <img className="wm-dark" src="/kel-wordmark-dark.png" alt="" aria-hidden="true" style={{ height: 38, width: "auto" }} />
           </div>
           <button type="button" className="dk-icon dk-icon-sm dk-side-close" aria-label="Hide the project sidebar"
@@ -698,7 +907,7 @@ export default function Home() {
                 onClick={async () => {
                   if (!desktop()?.pickFolder) { void openProject(); return }
                   const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); void openProject(d) }
-                }}>{opening ? "Opening…" : "Open folder"}</button>
+                }}>{opening ? "Openingâ€¦" : "Open folder"}</button>
             )}
             {sessionID && (
               <button type="button" className="btn-line" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>New session</button>
@@ -731,7 +940,7 @@ export default function Home() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
                       <span className="nm">{name}</span>
                     </button>
-                    <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>×</button>
+                    <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>Ã—</button>
                     {here && engine?.up && sessions.length > 0 && (
                       // The open project's sessions under it, one list: the newest shows, a chevron shows the rest.
                       <div className="dk-sess">
@@ -748,6 +957,23 @@ export default function Home() {
                 )
               })}
             </ul>
+          )}
+
+          {/* The project's files: a folder opens on click and asks the app for its entries then; a file opens in the
+              right panel's file view. */}
+          {directory && (
+            <>
+              <div className="dk-sec-head">
+                <h2>Files</h2>
+                <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the file list" title="Refresh the file list"
+                  onClick={() => setTreeEpoch((n) => n + 1)}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+                </button>
+              </div>
+              <div className="dk-tree" key={`${directory}:${treeEpoch}`}>
+                <TreeLevel directory={directory} rel="" depth={0} onOpen={openFile} selected={filePath || undefined} />
+              </div>
+            </>
           )}
 
           <div className="dk-foot">
@@ -814,6 +1040,32 @@ export default function Home() {
           <div className="dg-scroll">
             <div className="dg-viewport" ref={logRef} aria-label="Messages">
               <div className="dg-content" ref={logContentRef}>
+                {lines.length === 0 && !busy && (
+                  // The empty state is not a blank box (reqs Â§8): one line states the boundary, and three prompts that
+                  // are known to work here fill the composer rather than a highlight reel.
+                  <div className="dk-empty">
+                    {directory ? (
+                      <>
+                        <p className="dk-empty-line">kell can read and edit this folder and run commands here. It asks before anything destructive, and every change comes back as a diff you can undo.</p>
+                        <div className="dk-empty-prompts">
+                          {["Explain how this project is put together", "Find and fix the bug I describe", "Write tests for a file I name"].map((p) => (
+                            <button key={p} type="button" className="dk-empty-prompt" onClick={() => { setText(p); textRef.current?.focus() }}>{p}</button>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="dk-empty-line">kell works in one folder at a time. Open a folder, then describe the task â€” the changes come back as a diff you can undo.</p>
+                        <div className="dk-row" style={{ margin: 0 }}>
+                          <button type="button" className="btn-ink" onClick={async () => {
+                            if (!desktop()?.pickFolder) { void openProject(); return }
+                            const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); void openProject(d) }
+                          }}>Open a folder</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 {lines.map((l, i) => {
                   if (l.who === "plan") {
                     return (
@@ -920,15 +1172,21 @@ export default function Home() {
           {queued.map((q, i) => (
             <div key={i} className="dg-queued small" role="status">
               <span className="dim">Waiting for kell:</span> <span className="dg-queued-text">{q}</span>
-              <button type="button" aria-label="Don't send this one" title="Don't send this one" onClick={() => setQueued((x) => x.filter((_, k) => k !== i))}>×</button>
+              <span className="dk-queue-tools">
+                {i > 0 && <button type="button" aria-label="Send this sooner" title="Send this sooner" onClick={() => moveQueued(i, -1)}>â†‘</button>}
+                {i < queued.length - 1 && <button type="button" aria-label="Send this later" title="Send this later" onClick={() => moveQueued(i, 1)}>â†“</button>}
+                <button type="button" aria-label="Edit this message" title="Edit this message" onClick={() => editQueued(i)}>âœŽ</button>
+                <button type="button" aria-label="Don't send this one" title="Don't send this one" onClick={() => setQueued((x) => x.filter((_, k) => k !== i))}>Ã—</button>
+              </span>
             </div>))}
+          {stopNote && <div className="dg-queued small" role="status"><span className="dim">{stopNote}</span></div>}
           <div className="dg-typing" role="status" aria-live="polite">
             {busy && <><span className="dg-pulse" aria-hidden="true" /> Kell is working</>}
           </div>
           <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
             <textarea ref={textRef} rows={1} data-big={big || undefined} value={text}
               onChange={(e) => { setText(e.target.value); histPos.current = null }}
-              placeholder={directory ? "Tell kell what to do…" : "Open a project first"}
+              placeholder={directory ? "Tell kell what to doâ€¦" : "Open a project first"}
               disabled={!!engine && !engine.up}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); return }
@@ -955,6 +1213,13 @@ export default function Home() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
               </button>
             </div>
+            {busy && (
+              // Always reachable while a turn runs (reqs Â§5). Stopping does not undo what already ran, and the title says so.
+              <button type="button" className="dk-stop" onClick={() => void stop()} disabled={stopping || !sessionID}
+                aria-label="Stop kell" title="Stop the turn. Steps that already ran stay; nothing is undone.">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+              </button>
+            )}
             <button type="submit" className="dk-send" disabled={!text.trim() || !directory || (engine != null && !engine.up)}
               aria-label={busy ? "Queue this message" : "Send"} title={busy ? "kell is working: this waits and goes out when it finishes" : "Send"}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
@@ -962,10 +1227,45 @@ export default function Home() {
           </form>
         </section>
 
-        <aside className="dk-panel" aria-label="Changes, steps and tools">
+        <aside className="dk-panel" aria-label="File, changes, steps and tools">
+          {/* The file view: the file picked in the sidebar's tree, read-only, with its size and a copy button. */}
+          {filePath && (
+            <section className="dk-viewer" aria-label={`File ${filePath}`}>
+              <div className="dk-panel-head dk-viewer-head">
+                <h2 title={filePath}>{filePath}</h2>
+                <span className="dk-iconrow">
+                  <button type="button" className="dk-icon dk-icon-sm" aria-label="Copy the file's text" title="Copy the file"
+                    disabled={!fileView || fileView.binary}
+                    onClick={async () => {
+                      if (!fileView) return
+                      try {
+                        await navigator.clipboard.writeText(fileView.text)
+                        setFileCopied(true); setTimeout(() => setFileCopied(false), 1400)
+                      } catch { /* the clipboard can be blocked; the text stays selectable */ }
+                    }}>
+                    {fileCopied
+                      ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m4 12 5 5L20 6" /></svg>
+                      : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>}
+                  </button>
+                  <button type="button" className="dk-icon dk-icon-sm" aria-label="Close the file" title="Close the file"
+                    onClick={() => { setFilePath(null); setFileView(null); setFileErr("") }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                  </button>
+                </span>
+              </div>
+              {fileBusy && <p className="dk-note">Readingâ€¦</p>}
+              {fileErr && <p className="dk-err">{fileErr}</p>}
+              {fileView && (fileView.binary
+                ? <p className="dk-note">A binary file ({Math.max(1, Math.round(fileView.bytes / 1024))} KB) â€” nothing to show as text.</p>
+                : <>
+                    <pre className="dk-code" tabIndex={0}>{fileView.text}</pre>
+                    <p className="dk-note">{fileView.lines} lines Â· {Math.max(1, Math.round(fileView.bytes / 1024))} KB{fileView.truncated ? " Â· showing the start of the file" : ""}</p>
+                  </>)}
+            </section>
+          )}
           <details className="dk-fold" open>
           <summary className="dk-panel-head">
-            <h2>Changed by kell{files.length ? ` · ${files.length}` : ""}</h2>
+            <h2>Changed by kell{files.length ? ` Â· ${files.length}` : ""}</h2>
             <span className="dk-iconrow">
               <button type="button" className="dk-icon dk-icon-sm" aria-label="Hide the changes panel" title="Hide the changes panel"
                 onClick={(e) => { e.preventDefault(); toggleSidebar("right") }}>
@@ -993,20 +1293,20 @@ export default function Home() {
           </details>
 
           <details className="dk-fold">
-          <summary><h2>Other changes in this folder{otherFiles.length ? ` · ${otherFiles.length + otherMore}` : ""}</h2></summary>
+          <summary><h2>Other changes in this folder{otherFiles.length ? ` Â· ${otherFiles.length + otherMore}` : ""}</h2></summary>
           {readEngine && otherFiles.length === 0 && <p className="dk-note">No other changes</p>}
           <FileList files={otherFiles} />
           {otherMore > 0 && <p className="dk-note">and {otherMore} more</p>}
           </details>
 
           <details className="dk-fold">
-          <summary><h2>Model steps{ledger.length ? ` · ${ledger.length}` : ""}</h2></summary>
+          <summary><h2>Model steps{ledger.length ? ` Â· ${ledger.length}` : ""}</h2></summary>
           {ledger.length === 0 ? <p className="dk-note">No model steps yet</p> : (
             <div className="dk-ledger">
               {ledger.map((r) => (
                 <div className="row" key={r.id}>
-                  <span title={r.tokens || ""}><span className="dk-rung" data-r={isCheap(r) ? "cheap" : "strong"}>{isCheap(r) ? "cheap" : "strong"}</span><b>{r.model || "picking model…"}</b></span>
-                  <span>{r.cost != null ? `$${r.cost.toFixed(5)}` : "—"}</span>
+                  <span title={r.tokens || ""}><span className="dk-rung" data-r={isCheap(r) ? "cheap" : "strong"}>{isCheap(r) ? "cheap" : "strong"}</span><b>{r.model || "picking modelâ€¦"}</b></span>
+                  <span>{r.cost != null ? `$${r.cost.toFixed(5)}` : "â€”"}</span>
                 </div>
               ))}
             </div>
@@ -1014,20 +1314,49 @@ export default function Home() {
           </details>
 
           <details className="dk-fold">
-          <summary><h2>Tools for this request{cards.length ? ` · ${cards.length}` : ""}</h2></summary>
+          <summary><h2>Tools for this request{cards.length ? ` Â· ${cards.length}` : ""}</h2></summary>
           {cardsNote && <p className="dk-note">{cardsNote}</p>}
           <div className="dk-cards">
             {cards.map((c) => (
               <div className="dk-card" key={c.name}>
-                <span className="name" title={`${c.name}${c.url ? ` — ${c.url}` : ""}`}>{c.name}</span>
+                <span className="name" title={`${c.name}${c.url ? ` â€” ${c.url}` : ""}`}>{c.name}</span>
                 <span className="dg-badge" data-kind="tab">{c.source === "installed" ? "installed" : "available"}</span>
-                <span className="meta">{c.source === "installed" ? "installed here" : "kell can run it for you"}{c.needsSignIn ? " · asks you to sign in once" : ""}</span>
+                <span className="meta">{c.source === "installed" ? "installed here" : "kell can run it for you"}{c.needsSignIn ? " Â· asks you to sign in once" : ""}</span>
               </div>
             ))}
           </div>
           </details>
         </aside>
       </div>
+
+      {palette && (
+        <div className="dk-palette-backdrop" onMouseDown={() => setPalette(false)}>
+          <div className="dk-palette" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(e) => e.stopPropagation()}>
+            <input className="dk-palette-input" autoFocus value={paletteQ} placeholder="Type a command, or a file nameâ€¦"
+              aria-label="Search commands and files" aria-controls="dk-palette-list"
+              aria-activedescendant={paletteItems[paletteSelected] ? `dk-palette-${paletteSelected}` : undefined}
+              onChange={(e) => { setPaletteQ(e.target.value); setPaletteIdx(0) }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") { e.preventDefault(); setPaletteIdx((i) => Math.min(Math.max(0, paletteItems.length - 1), i + 1)) }
+                else if (e.key === "ArrowUp") { e.preventDefault(); setPaletteIdx((i) => Math.max(0, i - 1)) }
+                else if (e.key === "Enter") { e.preventDefault(); runPaletteItem(paletteSelected) }
+              }} />
+            <ul id="dk-palette-list" role="listbox" aria-label="Commands and files" className="dk-palette-list">
+              {paletteItems.map((it, i) => (
+                <li key={it.id} id={`dk-palette-${i}`} role="option" aria-selected={i === paletteSelected}>
+                  <button type="button" className="dk-palette-row" onMouseEnter={() => setPaletteIdx(i)} onClick={() => it.run()}>
+                    <span className="t">{it.title}</span>
+                    {it.hint && <span className="h">{it.hint}</span>}
+                    <span className="k">{it.kind === "file" ? "file" : ""}</span>
+                  </button>
+                </li>
+              ))}
+              {!paletteItems.length && <li className="dk-note" style={{ padding: "10px 14px" }}>Nothing matches.</li>}
+            </ul>
+            <div className="dk-palette-foot"><kbd>â†‘</kbd><kbd>â†“</kbd> move <kbd>â†µ</kbd> run <kbd>esc</kbd> close</div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

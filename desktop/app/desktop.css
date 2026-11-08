@@ -3,23 +3,46 @@
    (copied here as chat.css) -- no new palette. */
 
 .dk-page { padding: 0; }
-.dk-page .dg-shell { grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr) var(--dk-right, 340px); height: 100dvh; position: relative; }
-/* Either side column can be collapsed from its own button; the same button appears in the chat header to bring it back.
-   The width vars stay at the reader's chosen size, so reopening restores it. */
+/* Three columns, each placed by name. Hiding one used to `display: none` its element, which took it out of the grid
+   flow: the chat then auto-placed into the 0-width column and the window collapsed (found 2026-11-08). With explicit
+   grid-column the placement never depends on what is visible, and the column itself animates to 0 on the smooth spring. */
+.dk-page .dg-shell {
+  grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr) var(--dk-right, 340px);
+  height: 100dvh; position: relative;
+  transition: grid-template-columns var(--dg-smooth-d, 300ms) var(--dg-smooth, cubic-bezier(.32, .72, 0, 1));
+}
+.dk-page .dg-side { grid-column: 1; }
+.dk-page .dg-main { grid-column: 2; }
+.dk-page .dk-panel { grid-column: 3; }
+/* A grid item's min-width is auto: without this the 0-width column still grows to the content's smallest width. */
+.dk-page .dg-side, .dk-page .dk-panel { min-width: 0; }
 .dk-page .dg-shell[data-left="closed"] { grid-template-columns: 0 minmax(0, 1fr) var(--dk-right, 340px); }
-.dk-page .dg-shell[data-left="closed"] .dg-side,
-.dk-page .dg-shell[data-left="closed"] .dk-resize[data-side="left"] { display: none; }
 .dk-page .dg-shell[data-right="closed"] { grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr) 0; }
-.dk-page .dg-shell[data-right="closed"] .dk-panel,
-.dk-page .dg-shell[data-right="closed"] .dk-resize[data-side="right"] { display: none; }
 .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: 0 minmax(0, 1fr) 0; }
+/* Closed: the column narrows on the spring and its contents fade; padding and the divider go at once so the fade does
+   not look like a squeeze. `visibility` flips at the end (0s delay) so the panel leaves the tab order with it. */
+.dk-page .dg-shell[data-left="closed"] .dg-side {
+  opacity: 0; visibility: hidden; pointer-events: none; padding-left: 0; padding-right: 0; border-right-width: 0; overflow: hidden;
+  transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), visibility 0s linear var(--dg-smooth-d, 300ms);
+}
+.dk-page .dg-shell[data-right="closed"] .dk-panel {
+  opacity: 0; visibility: hidden; pointer-events: none; padding-left: 0; padding-right: 0; border-left-width: 0; overflow: hidden;
+  transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), visibility 0s linear var(--dg-smooth-d, 300ms);
+}
+.dk-page .dg-shell[data-left="open"] .dg-side,
+.dk-page .dg-shell[data-right="open"] .dk-panel { transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), visibility 0s; }
+.dk-page .dg-shell[data-left="closed"] .dk-resize[data-side="left"],
+.dk-page .dg-shell[data-right="closed"] .dk-resize[data-side="right"] { opacity: 0; pointer-events: none; }
 .dk-page .dk-side-close { position: absolute; top: 10px; right: 10px; z-index: 6; }
 .dk-page .dg-brand { padding-right: 36px; }
 .dk-head-tools { display: inline-flex; align-items: center; gap: 4px; }
+/* The buttons that bring a closed panel back appear on the bouncy spring, like a pop-in. */
+.dk-head-tools .dk-icon { animation: dg-pop var(--dg-bouncy-d, 360ms) var(--dg-bouncy, ease) both; transform-origin: center; }
 @media (max-width: 1100px) {
   .dk-page .dg-shell { grid-template-columns: 240px minmax(0, 1fr); }
-  .dk-panel { display: none; }
   .dk-page .dg-shell[data-left="closed"] { grid-template-columns: 0 minmax(0, 1fr); }
+  .dk-page .dg-shell[data-right="closed"] { grid-template-columns: 240px minmax(0, 1fr); }
+  .dk-page .dk-panel { display: none; }
 }
 
 /* sidebar fields */
@@ -107,8 +130,11 @@
 .dk-switch button, .dk-switch a, .dk-switch .dk-help-menu { -webkit-app-region: no-drag; }
 .dk-winbtns { display: flex; align-items: center; gap: 2px; margin-left: 2px; }
 .dk-winbtn { all: unset; box-sizing: border-box; width: 34px; height: 30px; display: grid; place-items: center; border-radius: 8px; cursor: pointer;
-  color: var(--grey); -webkit-app-region: no-drag; }
+  color: var(--grey); -webkit-app-region: no-drag;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-winbtn:hover { background: var(--soft, rgba(0,0,0,.06)); color: var(--ink); }
+.dk-winbtn:active { transform: scale(.94); }
 .dk-winbtn-x:hover { background: #c42b1c; color: #fff; }
 .dk-winbtn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
 .dk-switch [role="tablist"] { display: flex; gap: 4px; }
@@ -147,10 +173,14 @@
 .dk-foot { margin-top: auto; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; position: relative; }
 .dk-iconrow { display: flex; gap: 6px; padding: 0 4px; }
 .dk-icon { all: unset; box-sizing: border-box; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; cursor: pointer; color: var(--ink);
-  border: 1px solid var(--rule); background: var(--surface, transparent); transition: background-color .15s, border-color .15s; }
+  border: 1px solid var(--rule); background: var(--surface, transparent);
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-icon:hover, .dk-icon[aria-expanded="true"] { border-color: var(--rule-strong); background: var(--soft, rgba(0,0,0,.05)); }
+.dk-icon:active { transform: scale(.94); }
 .dk-icon:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
-.dk-account { border: 1px solid var(--rule); border-radius: 12px; padding: 10px 12px; background: var(--surface, var(--paper)); box-shadow: 0 6px 24px rgba(0,0,0,.08); }
+.dk-account { border: 1px solid var(--rule); border-radius: 12px; padding: 10px 12px; background: var(--surface, var(--paper)); box-shadow: 0 6px 24px rgba(0,0,0,.08);
+  animation: dg-pop var(--dg-bouncy-d, 360ms) var(--dg-bouncy, ease) both; transform-origin: bottom left; }
 .dk-account p { margin: 0 0 4px; overflow-wrap: anywhere; }
 
 /* Icon-only Refresh / Undo beside the panel heading, and the Help menu in the top bar (2026-11-06). */
@@ -160,8 +190,10 @@
 .dk-icon:disabled { opacity: .4; cursor: default; }
 .dk-help { position: relative; margin-left: 10px; display: inline-flex; }
 .dk-help-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; min-width: 220px; display: flex; flex-direction: column; padding: 6px;
-  border: 1px solid var(--rule); border-radius: 12px; background: var(--surface, var(--paper)); box-shadow: 0 10px 30px rgba(0,0,0,.12); }
-.dk-help-menu a { padding: 8px 10px; border-radius: 8px; color: var(--ink); text-decoration: none; font-size: 14px; }
+  border: 1px solid var(--rule); border-radius: 12px; background: var(--surface, var(--paper)); box-shadow: 0 10px 30px rgba(0,0,0,.12);
+  animation: dg-drop var(--dg-micro-d, 160ms) var(--dg-micro, ease) both; transform-origin: top right; }
+.dk-help-menu a { padding: 8px 10px; border-radius: 8px; color: var(--ink); text-decoration: none; font-size: 14px;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-help-menu a:hover, .dk-help-menu a:focus-visible { background: var(--soft, rgba(0,0,0,.05)); }
 
 /* Send as an up arrow (2026-11-07): a square button with the arrow centred. */
@@ -176,8 +208,19 @@
 .dk-fold { border-bottom: 1px solid var(--rule); padding-bottom: 6px; }
 .dk-fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .dk-fold > summary::-webkit-details-marker { display: none; }
-.dk-fold > summary h2::before { content: "\25B8"; display: inline-block; margin-right: 6px; transition: transform .15s; }
+.dk-fold > summary h2::before { content: "\25B8"; display: inline-block; margin-right: 6px; transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-fold[open] > summary h2::before { transform: rotate(90deg); }
+/* The folds open and close like a disclosure on iOS: the content's block size animates (`interpolate-size: allow-keywords`
+   is set on .dg-page), instead of the panel jumping. Chromium without ::details-content simply opens at once. */
+.dk-page .dk-fold::details-content,
+.dk-page .dk-file::details-content,
+.dk-page .dk-sess-more::details-content {
+  block-size: 0; overflow: hidden;
+  transition: block-size var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), content-visibility var(--dg-smooth-d, 300ms) allow-discrete;
+}
+.dk-page .dk-fold[open]::details-content,
+.dk-page .dk-file[open]::details-content,
+.dk-page .dk-sess-more[open]::details-content { block-size: auto; }
 /* Sessions: a title and when it was last used. */
 .dk-sessions .dk-recent { justify-content: space-between; }
 .dk-sessions .dk-recent .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -186,12 +229,17 @@
 /* What kell is doing while it works (2026-11-07): newest calls stacked, each sliding in; the running one spins, done ones fade by age. */
 .dk-activity { list-style: none; margin: 0; padding: 2px 18px 0 22px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
 .dk-activity li { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--grey);
-  opacity: calc(1 - var(--age, 0) * .22); animation: dk-act-in .32s cubic-bezier(.2, .8, .2, 1) both; transition: opacity .3s; }
+  /* `backwards`, not `both`: with `both` the finished keyframe's opacity: 1 overrode the age fade below, so older calls
+     never dimmed (2026-11-08). */
+  opacity: calc(1 - var(--age, 0) * .22); animation: dk-act-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards;
+  transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
 .dk-activity li b { color: var(--ink); font-weight: 400; flex: none; }
 .dk-act-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 11.5px; }
-.dk-act-mark { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1.6px solid var(--rule-strong, #bbb); }
+.dk-act-mark { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1.6px solid var(--rule-strong, #bbb);
+  transition: border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-activity li[data-state="running"] .dk-act-mark { border-color: var(--yellow, #f5c400); border-right-color: transparent; animation: dk-spin .7s linear infinite; }
-.dk-activity li[data-state="done"] .dk-act-mark { border-color: transparent; background: var(--grey); transform: scale(.55); transition: transform .2s; }
+.dk-activity li[data-state="done"] .dk-act-mark { border-color: transparent; background: var(--grey); transform: scale(.55); }
 .dk-activity li[data-state="failed"] .dk-act-mark { border-color: #b3261e; background: #b3261e; transform: scale(.7); }
 @keyframes dk-act-in { from { opacity: 0; transform: translateY(8px); } }
 @keyframes dk-spin { to { transform: rotate(360deg); } }
@@ -209,7 +257,7 @@
 .dk-sess-row:disabled { cursor: default; }
 .dk-sess-more > summary { list-style: none; cursor: pointer; padding: 4px 8px; font-size: 12px; color: var(--grey); }
 .dk-sess-more > summary::-webkit-details-marker { display: none; }
-.dk-sess-more > summary::before { content: "\25B8"; display: inline-block; margin-right: 6px; transition: transform .15s; }
+.dk-sess-more > summary::before { content: "\25B8"; display: inline-block; margin-right: 6px; transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-sess-more[open] > summary::before { transform: rotate(90deg); }
 /* The website's sidebar button lift (chat.css .dg-side button) is not for these rows; the open project's highlight stays on its own row. */
 .dg-page .dg-side .dk-recent, .dg-page .dg-side .dk-recent-x, .dg-page .dg-side .dk-sess-row,
@@ -224,5 +272,92 @@
 .dg-page .dg-side .dk-sess-toggle { all: unset; box-sizing: border-box; align-self: flex-start; display: grid; place-items: center; width: 26px; height: 18px;
   margin-left: 4px; border-radius: 6px; color: var(--grey); cursor: pointer; box-shadow: none !important; }
 .dg-page .dg-side .dk-sess-toggle:hover { background: rgba(0, 0, 0, .045); color: var(--ink); }
-.dk-sess-toggle svg { transition: transform .18s; }
+.dk-sess-toggle svg { transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-sess-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+
+/* The sidebar's file tree (app/api/files). A folder's children mount only when it opens; the row is a plain button, so
+   the whole tree is keyboard-walkable. */
+.dk-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 10px 6px 4px; }
+.dk-sec-head h2 { margin: 0; }
+.dk-tree { margin: 0 2px; max-height: min(46vh, 420px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.dk-tree-level { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.dk-tree-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px;
+  border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--ink); min-width: 0;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-tree-row:hover { background: var(--soft, rgba(0,0,0,.05)); }
+.dk-tree-row:focus-visible { outline: 2px solid var(--cobalt); outline-offset: -2px; }
+.dk-tree-row[data-here] { background: var(--soft, rgba(0,0,0,.07)); font-weight: 500; }
+.dk-tree-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-tree-row svg { flex: none; color: var(--grey); }
+.dk-tree-row .chev { transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-tree-row[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.dk-tree-row[data-dir] .nm { color: var(--ink); }
+
+/* The file view in the right panel: the path, copy and close, then the text. It slides in like a sheet, on the smooth
+   spring, the same entrance the website's canvas panel uses (dg-canvas-in). */
+.dk-viewer { border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); overflow: hidden; margin-bottom: 10px;
+  animation: dg-canvas-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; }
+.dk-viewer-head { padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--rule); }
+.dk-viewer-head h2 { margin: 0; font-size: 11.5px; letter-spacing: .02em; text-transform: none; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-code { margin: 0; padding: 10px 12px; max-height: 58vh; overflow: auto; font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.5; white-space: pre; tab-size: 2; }
+.dk-code:focus-visible { outline: 2px solid var(--cobalt); outline-offset: -2px; }
+
+/* The command palette (Ctrl/Cmd-K, reqs §1): a sheet over the app, the same glass recipe as the chat's menus. */
+.dk-palette-backdrop { position: fixed; inset: 0; z-index: 80; background: rgba(23,23,23,.28); display: flex; justify-content: center; align-items: flex-start;
+  padding: min(14vh, 120px) 16px 16px; animation: dg-fade var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both;
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.dk-palette { width: min(620px, 100%); max-height: min(70vh, 560px); display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--rule-strong); border-radius: 16px; background: var(--surface);
+  box-shadow: 0 24px 70px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.12);
+  animation: dg-glass-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; transform-origin: top center; }
+.dk-palette-input { font: inherit; font-size: 16px; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--rule); background: transparent; color: var(--ink); outline: none; }
+.dk-palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; overscroll-behavior: contain; }
+.dk-palette-row { all: unset; box-sizing: border-box; display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 9px 10px; border-radius: 9px; cursor: pointer; color: var(--ink); font-size: 14px;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-palette-row .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-palette-row .h { margin-left: auto; color: var(--grey); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-palette-row .k { flex: none; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
+.dk-palette-list li[aria-selected="true"] .dk-palette-row { background: var(--soft, rgba(0,0,0,.06)); }
+.dk-palette-foot { padding: 8px 14px; border-top: 1px solid var(--rule); color: var(--grey); font-size: 11.5px; display: flex; gap: 6px; align-items: center; }
+.dk-palette-foot kbd { font-family: inherit; font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--rule-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--paper); }
+
+/* Stop, while a turn runs. */
+.dk-stop { all: unset; box-sizing: border-box; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink);
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-stop:hover { border-color: #b3261e; color: #b3261e; }
+.dk-stop:active { transform: scale(.94); }
+.dk-stop:disabled { opacity: .45; cursor: default; }
+.dk-stop:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+
+/* The queued prompts: reorder, edit, or drop each one (reqs §2). */
+.dk-queue-tools { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; }
+.dk-queue-tools button { all: unset; cursor: pointer; padding: 0 5px; border-radius: 5px; color: var(--grey); line-height: 1.4;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-queue-tools button:hover { background: var(--soft, rgba(0,0,0,.07)); color: var(--ink); }
+.dk-queue-tools button:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+
+/* The empty state: one line of boundary and three prompts, not a blank box (reqs §8). */
+.dk-empty { margin: auto; max-width: 560px; display: grid; gap: 14px; padding: 20px 8px; text-align: left; }
+.dk-empty-line { margin: 0; color: var(--ink); font-size: 15px; line-height: 1.5; font-weight: 300; }
+.dk-empty-prompts { display: flex; flex-wrap: wrap; gap: 8px; }
+.dk-empty-prompt { font: inherit; font-size: 13px; padding: 7px 12px; border: 1px solid var(--rule-strong); border-radius: 999px; background: var(--surface); color: var(--ink); cursor: pointer;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-empty-prompt:hover { background: var(--soft, rgba(0,0,0,.05)); border-color: var(--ink); }
+.dk-empty-prompt:active { transform: scale(.97); }
+
+/* One reduced-motion switch for everything this file adds: the rule in chat.css covers the chat's own selectors, not
+   these. Nothing here may keep moving when the reader asked it not to. */
+@media (prefers-reduced-motion: reduce) {
+  .dk-page .dk-step, .dk-page .dk-viewer, .dk-page .dk-account, .dk-page .dk-help-menu,
+  .dk-page .dk-activity li, .dk-page .dk-activity li[data-state="running"] .dk-act-mark,
+  .dk-page .dk-head-tools .dk-icon, .dk-palette-backdrop, .dk-palette { animation: none !important; }
+  .dk-page .dk-icon, .dk-page .dk-winbtn, .dk-page .dk-tree-row, .dk-page .dk-tree-row .chev,
+  .dk-page .dk-sess-toggle svg, .dk-page .dk-fold > summary h2::before, .dk-page .dk-sess-more > summary::before,
+  .dk-page .dk-resize::after, .dk-page .dk-act-mark, .dk-page .dk-activity li, .dk-page .dk-help-menu a,
+  .dk-palette-row, .dk-stop, .dk-queue-tools button, .dk-empty-prompt { transition: none !important; }
+  .dk-page .dg-shell, .dk-page .dg-side, .dk-page .dk-panel { transition: none !important; }
+  .dk-page .dk-fold::details-content, .dk-page .dk-file::details-content, .dk-page .dk-sess-more::details-content { transition: none !important; }
+}

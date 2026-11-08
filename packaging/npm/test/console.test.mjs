@@ -302,3 +302,47 @@ test("/health says when a browser page last polled it; kell's own check (no Sec-
     assert.equal((await t.call("GET", "/health")).json().page_seen_s, 0);
   } finally { t.close(); }
 });
+
+test("a kell plan shows its own models and no keys: kell's provider keys stay invisible and cannot be removed", async () => {
+  // 2026-11-08: the console listed the machine's provider profiles (our own keys) and offered to remove them, on a
+  // machine that is signed in to a kell plan. A plan runs through the gateway: no key exists here to show or delete.
+  const exec = {
+    executors: { stealth: { models: ["plan-model", "own-key-model"] } },
+    profiles: {
+      "plan-model": { model_id: "glm-5.3", key_from: "stealthlab", openai_base_url: "https://mcp.kell.org.in/v1" },
+      "own-key-model": { model_id: "m", key_env: "Z_AI_KEY", openai_base_url: "https://api.z.ai/api/paas/v4" },
+    },
+  };
+  const config = JSON.stringify({ url: "https://mcp.example.test/mcp", token: "kell-token" });
+  const t = await boot({ files: { "config.json": config, "exec.json": JSON.stringify(exec) } });
+  try {
+    const lane = (await t.call("GET", "/lane")).json();
+    assert.equal(lane.lane, "kell");
+    assert.equal(lane.plan, true);
+    const models = (await t.call("GET", "/models")).json();
+    assert.deepEqual(models.map((m) => m.name), ["plan-model"]);     // the own-key profile is not shown at all
+    assert.equal(models[0].platform, true);
+    assert.equal(models[0].key_env, null);                           // never the provider key's name
+    assert.equal(models[0].key_set, true);
+    assert.deepEqual((await t.call("GET", "/keys")).json(), []);     // no key names on a plan
+    assert.equal((await t.call("DELETE", "/keys/Z_AI_KEY")).status, 403);
+    assert.equal((await t.call("PUT", "/keys/Z_AI_KEY", { value: SECRET })).status, 403);
+    assert.equal((await t.call("GET", "/models")).text.includes("Z_AI_KEY"), false);
+    assert.equal((await t.call("GET", "/keys")).text.includes("Z_AI_KEY"), false);
+  } finally { await t.close(); }
+});
+
+test("without a plan the person's own key is shown, replaceable, and the lane says own-key", async () => {
+  const exec = { executors: { stealth: { models: ["m"] } },
+                 profiles: { m: { model_id: "m", key_env: "TEST_PROVIDER_KEY", openai_base_url: "https://api.example.com/v1" } } };
+  const t = await boot({ files: { "exec.json": JSON.stringify(exec) } });
+  try {
+    const lane = (await t.call("GET", "/lane")).json();
+    assert.equal(lane.lane, "own-key");
+    assert.equal(lane.plan, false);
+    const models = (await t.call("GET", "/models")).json();
+    assert.equal(models[0].key_env, "TEST_PROVIDER_KEY");
+    assert.equal(models[0].platform, false);
+    assert.deepEqual((await t.call("GET", "/keys")).json().map((k) => k.name), ["TEST_PROVIDER_KEY"]);
+  } finally { await t.close(); }
+});

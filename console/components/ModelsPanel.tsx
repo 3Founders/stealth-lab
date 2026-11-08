@@ -3,7 +3,7 @@ import { useCallback, useEffect, useId, useState } from "react";
 import KeyField from "@/components/KeyField";
 import { formatMs, formatPrices } from "@/lib/format";
 import type { HelperClient } from "@/lib/helper";
-import type { ModelInfo, NewModel } from "@/lib/types";
+import type { Lane, ModelInfo, NewModel } from "@/lib/types";
 import { HelperError, isLoopbackAddress, KEY_NAME, MODEL_NAME, scrub, suggestKeyName } from "@/lib/words";
 
 interface Preset { id: string; label: string; base: string; keyEnv: string; local: boolean; model: string }
@@ -36,8 +36,20 @@ export function draftProblem(d: DraftModel): string | null {
   return null;
 }
 
+/**
+ * Keys & models. Two shapes, decided by the helper's GET /lane (2026-11-08):
+ *
+ *  - a kell plan ("kell"): the models run through kell's gateway and are paid by the plan. There is no provider key on
+ *    this machine, so there is nothing to type, save, show or remove -- the panel is a read-only list with Test.
+ *  - the person's own provider keys ("own-key" / "local"): the models and their keys, as before. A key can be replaced
+ *    but never removed: the console must not offer deletion of a key at all.
+ *
+ * kell's own provider keys (the ones the service uses) are never part of either view: the helper only returns the plan's
+ * key_from "stealthlab" models on a plan, and no key names at all.
+ */
 export default function ModelsPanel({ client }: { client: HelperClient }) {
   const uid = useId();
+  const [lane, setLane] = useState<Lane | null>(null);
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftModel>(emptyDraft());
@@ -49,7 +61,10 @@ export default function ModelsPanel({ client }: { client: HelperClient }) {
 
   const load = useCallback(async () => {
     setLoadError(null);
-    try { setModels(await client.models()); }
+    try {
+      const [l, m] = await Promise.all([client.lane(), client.models()]);
+      setLane(l); setModels(m);
+    }
     catch (e) { setLoadError(e instanceof HelperError ? e.message : "The model list could not be read."); setModels([]); }
   }, [client]);
   useEffect(() => { void load(); }, [load]);
@@ -105,11 +120,56 @@ export default function ModelsPanel({ client }: { client: HelperClient }) {
 
   const local = draft.preset === "local";
 
+  // A kell plan: no key exists here, so none of the key UI is rendered at all.
+  if (lane?.plan) {
+    return (
+      <div className="panel" role="tabpanel" aria-labelledby="tab-models" id="panel-models">
+        <section className="card" aria-labelledby={`${uid}-plan`}>
+          <h2 id={`${uid}-plan`}>Models on your plan</h2>
+          <p className="small dim">Your plan runs these models through kell. No provider key is kept on this machine, and none is shown here. Sign in with <code>kell login</code> if a model asks for one.</p>
+          <div role="status" aria-live="polite">{notice && <p className="notice" style={{ marginTop: 12 }}>{notice}</p>}</div>
+          {loadError && <p className="notice" role="alert" data-tone="bad" style={{ marginTop: 12 }}>{loadError}</p>}
+          {models === null && <p className="small dim" style={{ marginTop: 12 }}>Loading…</p>}
+          {models && models.length === 0 && !loadError && (
+            <div className="empty" style={{ marginTop: 14 }}>
+              <b>No plan models on this machine yet.</b>
+              <p>Run <code>kell join</code> (or open the kell app and sign in) to fetch the models your plan runs. They will be listed here; there is never a provider key to add.</p>
+            </div>
+          )}
+          {models && models.length > 0 && (
+            <div className="rows" style={{ marginTop: 14 }}>
+              {models.map((m) => (
+                <div className="row" key={m.name} data-model={m.name}>
+                  <div>
+                    <div className="name">{m.name}</div>
+                    <div className="small dim">{m.model_id}{m.tier ? ` · ${m.tier}` : ""}</div>
+                    <div className="cluster" style={{ marginTop: 6 }}>
+                      <span className="status" data-s="successful">kell plan</span>
+                      <span className="small dim">{formatPrices(m.input_per_mtok, m.output_per_mtok)}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="small dim">Paid by your plan. There is no key here to change.</p>
+                    <div role="status" aria-live="polite" className="small" style={{ marginTop: 8 }}>{tests[m.name]}</div>
+                    {rowError[m.name] && <p className="notice" role="alert" data-tone="bad" style={{ marginTop: 8 }}>{rowError[m.name]}</p>}
+                  </div>
+                  <div className="stack">
+                    <button type="button" className="btn-line" onClick={() => test(m)}>Test</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="panel" role="tabpanel" aria-labelledby="tab-models" id="panel-models">
       <section className="card" aria-labelledby={`${uid}-list`}>
         <h2 id={`${uid}-list`}>Models and keys</h2>
-        <p className="small dim">These are the models kell can send routine tasks to. A key is kept on this machine, in a file only you can read; it is never shown again after you save it.</p>
+        <p className="small dim">These are the models kell can send routine tasks to. A key is kept on this machine, in a file only you can read; it is never shown again after you save it, and it cannot be removed from this page.</p>
         <div role="status" aria-live="polite">{notice && <p className="notice" style={{ marginTop: 12 }}>{notice}</p>}</div>
         {loadError && <p className="notice" role="alert" data-tone="bad" style={{ marginTop: 12 }}>{loadError}</p>}
         {models === null && <p className="small dim" style={{ marginTop: 12 }}>Loading…</p>}
@@ -137,8 +197,7 @@ export default function ModelsPanel({ client }: { client: HelperClient }) {
                     <p className="small dim">No key needed.{m.local ? " This model runs on this machine." : ""}</p>
                   ) : (
                     <KeyField key={`${m.name}-${m.key_set}`} envName={m.key_env} isSet={m.key_set} last4={m.key_last4}
-                              onSave={async (v) => { const r = await client.saveKey(m.key_env!, v); await load(); return r; }}
-                              onRemove={async () => { await client.removeKey(m.key_env!); await load(); }} />
+                              onSave={async (v) => { const r = await client.saveKey(m.key_env!, v); await load(); return r; }} />
                   )}
                   <div role="status" aria-live="polite" className="small" style={{ marginTop: 8 }}>{tests[m.name]}</div>
                   {rowError[m.name] && <p className="notice" role="alert" data-tone="bad" style={{ marginTop: 8 }}>{rowError[m.name]}</p>}

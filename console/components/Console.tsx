@@ -7,7 +7,7 @@ import StatusBar from "@/components/StatusBar";
 import PlaygroundPanel from "@/components/PlaygroundPanel";
 import ActivityPanel from "@/components/ActivityPanel";
 import { HelperClient, connectFromLocation } from "@/lib/helper";
-import type { ClientInfo } from "@/lib/types";
+import type { ClientInfo, Lane } from "@/lib/types";
 import { HelperError } from "@/lib/words";
 
 type Gate =
@@ -34,6 +34,8 @@ export const HELPER_COMMANDS = {
 export default function Console() {
   const [gate, setGate] = useState<Gate>({ kind: "checking" });
   const [tab, setTab] = useState<TabId>("connect");
+  // A kell plan has no keys on this machine: the tab and the heading say so instead of promising "your keys".
+  const [lane, setLane] = useState<Lane | null>(null);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const connect = useCallback(async () => {
@@ -41,7 +43,9 @@ export default function Console() {
     const client = new HelperClient(connectFromLocation());
     if (!(await client.health())) { setGate({ kind: "no-helper" }); return; }
     try {
-      setGate({ kind: "ready", client, clients: await client.clients() });
+      const [clients, l] = await Promise.all([client.clients(), client.lane().catch(() => null)]);
+      setLane(l);
+      setGate({ kind: "ready", client, clients });
     } catch (e) {
       if (e instanceof HelperError && (e.kind === "unauthorized" || e.kind === "forbidden")) setGate({ kind: e.kind === "unauthorized" ? "no-token" : "forbidden", message: e.message });
       else setGate({ kind: "no-helper" });
@@ -70,8 +74,10 @@ export default function Console() {
     <div className="frame grid console-main">
       <header className="console-head">
         <div className="marker caption"><b>CONSOLE</b><span>/ on this machine</span></div>
-        <h1>Set up kell, keep your keys, try a model.</h1>
-        <p className="lead dim">This page talks to a small helper running on your computer. It installs kell into your tools, keeps your model keys in a file only you can read, and streams replies from the models you add.</p>
+        <h1>{lane?.plan ? "Set up kell, run the models on your plan." : "Set up kell, keep your keys, try a model."}</h1>
+        <p className="lead dim">{lane?.plan
+          ? "This page talks to a small helper running on your computer. It installs kell into your tools, shows the models on your kell plan, and streams replies from them. There is no provider key on this machine to keep."
+          : "This page talks to a small helper running on your computer. It installs kell into your tools, keeps your model keys in a file only you can read, and streams replies from the models you add."}</p>
       </header>
 
       {gate.kind === "checking" && <p className="panel small dim" role="status">Looking for the helper…</p>}
@@ -114,7 +120,7 @@ export default function Console() {
               <button key={t.id} id={`tab-${t.id}`} role="tab" type="button" aria-selected={tab === t.id} aria-controls={`panel-${t.id}`}
                       tabIndex={tab === t.id ? 0 : -1} ref={(el) => { tabRefs.current[t.id] = el; }}
                       onClick={() => choose(t.id)} onKeyDown={(e) => onTabKey(e, i)}>
-                {t.label}
+                {t.id === "models" && lane?.plan ? "Models" : t.label}
               </button>
             ))}
           </div>
