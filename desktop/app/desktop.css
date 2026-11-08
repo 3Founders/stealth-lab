@@ -62,9 +62,9 @@
   /* The right panel is not a column at this width, so the shell must have two tracks even when data-right says
      "closed" (the state rule above is more specific than this media query and would otherwise keep a 0 track). */
   .dk-page .dg-shell,
-  .dk-page .dg-shell[data-right="closed"],
-  .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr); }
-  .dk-page .dg-shell[data-left="closed"] { grid-template-columns: 0 minmax(0, 1fr); }
+  .dk-page .dg-shell[data-right="closed"] { grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr); }
+  .dk-page .dg-shell[data-left="closed"],
+  .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: 0 minmax(0, 1fr); }
   /* The changes panel becomes a drawer over the chat instead of disappearing: File, Changes, Steps and Tools stay
      reachable through the header toggle at every width. */
   .dk-page .dk-panel {
