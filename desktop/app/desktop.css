@@ -63,10 +63,63 @@
      "closed" (the state rule above is more specific than this media query and would otherwise keep a 0 track). */
   .dk-page .dg-shell,
   .dk-page .dg-shell[data-right="closed"],
-  .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: 240px minmax(0, 1fr); }
+  .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr); }
   .dk-page .dg-shell[data-left="closed"] { grid-template-columns: 0 minmax(0, 1fr); }
-  .dk-page .dk-panel { display: none; }
-  .dk-page .dk-show-right { display: none; }
+  /* The changes panel becomes a drawer over the chat instead of disappearing: File, Changes, Steps and Tools stay
+     reachable through the header toggle at every width. */
+  .dk-page .dk-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(92vw, 380px); z-index: 60;
+    display: flex; padding: 14px 12px; border-left: 1px solid var(--rule); overflow-y: auto;
+    background: var(--paper); box-shadow: -18px 0 48px rgba(0, 0, 0, .18);
+    transform: translateX(100%); opacity: 1; visibility: hidden; pointer-events: none;
+    transition: transform var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth), visibility 0s linear var(--dg-smooth-d);
+  }
+  .dk-page .dg-shell[data-right="open"] .dk-panel {
+    transform: none; opacity: 1; visibility: visible; pointer-events: auto;
+    transition: transform var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth), visibility 0s;
+  }
+  .dk-page .dg-shell[data-right="closed"] .dk-panel {
+    transform: translateX(100%); opacity: 1; visibility: hidden; pointer-events: none;
+    padding: 14px 12px; border-left-width: 1px; overflow-y: auto; box-shadow: -18px 0 48px rgba(0, 0, 0, .18);
+  }
+  .dk-page .dk-show-right { display: inline-flex; }
+  .dk-scrim-right {
+    display: block; position: fixed; inset: 0; z-index: 55; background: rgba(0, 0, 0, .35);
+    opacity: 0; pointer-events: none; transition: opacity var(--dg-smooth-d) var(--dg-smooth);
+  }
+  .dk-page .dg-shell[data-right="open"] .dk-scrim-right { opacity: 1; pointer-events: auto; }
+}
+@media (max-width: 760px) {
+  .dk-page .dg-shell,
+  .dk-page .dg-shell[data-left="closed"],
+  .dk-page .dg-shell[data-right="closed"],
+  .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: minmax(0, 1fr); }
+  /* The project sidebar becomes the drawer the chat.css mobile rules describe, driven by data-left. */
+  .dk-page .dg-side {
+    position: fixed; inset: 0 auto 0 0; width: min(88vw, 340px); z-index: 40;
+    padding: 14px 12px calc(14px + env(safe-area-inset-bottom));
+    border-right: 1px solid var(--rule); box-shadow: 12px 0 40px rgba(0, 0, 0, .25);
+    transform: translateX(-100%); opacity: 1; visibility: hidden; pointer-events: none;
+    transition: transform var(--dg-smooth-d) var(--dg-smooth), visibility 0s linear var(--dg-smooth-d);
+  }
+  .dk-page .dg-shell[data-left="open"] .dg-side {
+    transform: none; opacity: 1; visibility: visible; pointer-events: auto;
+    transition: transform var(--dg-smooth-d) var(--dg-smooth), visibility 0s;
+  }
+  .dk-page .dg-shell[data-left="closed"] .dg-side {
+    transform: translateX(-100%); opacity: 1; visibility: hidden; pointer-events: none;
+    padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); border-right-width: 1px; box-shadow: 12px 0 40px rgba(0, 0, 0, .25);
+  }
+  .dk-page .dk-resize { display: none; }
+  .dk-page .dg-scrim {
+    display: block; position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, .4);
+    opacity: 0; pointer-events: none; transition: opacity var(--dg-smooth-d) var(--dg-smooth);
+  }
+  .dk-page .dg-shell[data-menu="open"] .dg-scrim { opacity: 1; pointer-events: auto; }
+  .dk-page .dg-head { padding: 6px 12px; gap: 8px; }
+  .dk-page .dk-chips { display: none; }
+  .dk-page .dk-switch { padding: 0 4px; gap: 4px; }
+  .dk-page .dk-who { display: none; }
 }
 
 /* sidebar fields */

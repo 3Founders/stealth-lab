@@ -229,6 +229,21 @@ export default function Home() {
       if (s && typeof s.right === "boolean") setRightOpen(s.right)
     } catch { /* default */ }
   }, [])
+  // Narrow windows: the side columns become drawers, so start them closed rather than covering the chat. Only when
+  // the window crosses into the narrow range, not on every resize (opening a drawer must stay open).
+  const wasNarrow = useRef({ right: false, left: false })
+  useEffect(() => {
+    const apply = () => {
+      const narrowRight = window.innerWidth <= 1100
+      const narrowLeft = window.innerWidth <= 760
+      if (narrowRight && !wasNarrow.current.right) setRightOpen(false)
+      if (narrowLeft && !wasNarrow.current.left) setLeftOpen(false)
+      wasNarrow.current = { right: narrowRight, left: narrowLeft }
+    }
+    apply()
+    window.addEventListener("resize", apply)
+    return () => window.removeEventListener("resize", apply)
+  }, [])
   const toggleSidebar = (side: "left" | "right") => {
     const next = { left: side === "left" ? !leftOpen : leftOpen, right: side === "right" ? !rightOpen : rightOpen }
     setLeftOpen(next.left); setRightOpen(next.right)
@@ -928,8 +943,9 @@ export default function Home() {
           )}
         </div>
       )}
-      <div className="dg-shell" hidden={pane !== "code"} data-left={leftOpen ? "open" : "closed"} data-right={rightOpen ? "open" : "closed"}
+      <div className="dg-shell" hidden={pane !== "code"} data-left={leftOpen ? "open" : "closed"} data-right={rightOpen ? "open" : "closed"} data-menu={leftOpen ? "open" : "closed"}
         style={{ "--dk-left": `${widths.left}px`, "--dk-right": `${widths.right}px` } as React.CSSProperties}>
+        <div className="dg-scrim" onClick={() => setLeftOpen(false)} aria-hidden="true" />
         <div className="dk-resize" data-side="left" role="separator" aria-orientation="vertical" aria-label="Drag to resize the project list" onPointerDown={dragColumn("left")} />
         <div className="dk-resize" data-side="right" role="separator" aria-orientation="vertical" aria-label="Drag to resize the changes panel" onPointerDown={dragColumn("right")} />
         <aside className="dg-side" aria-label="Project, models and account">
@@ -1385,6 +1401,7 @@ export default function Home() {
           </div>
           </details>
         </aside>
+        <div className="dk-scrim-right" onClick={() => setRightOpen(false)} aria-hidden="true" />
       </div>
 
       {palette && (

@@ -82,7 +82,7 @@ if (!app.requestSingleInstanceLock()) {
     // before the window exists (electron/memory.ts). Only localStorage and index DB: the rooms, sign-in and cookie jars are other
     // partitions and keep their sign-ins.
     await session.defaultSession.clearStorageData({ storages: ["localstorage", "indexdb"] }).catch(() => undefined)
-    win = new BrowserWindow({ width: 1240, height: 880, minWidth: 960, minHeight: 600, title: "kell", backgroundColor: "#F8F6EF", show: false,
+    win = new BrowserWindow({ width: 1240, height: 880, minWidth: 360, minHeight: 360, title: "kell", backgroundColor: "#F8F6EF", show: false,
                               // The app draws its own window: no Windows title bar or frame, no File / Edit / View strip
                               // (the page's top bar carries the tabs, the account and Help; drag it to move the window).
                               // Electron's frame on Windows cannot take the app's rounded corners and shadow.
