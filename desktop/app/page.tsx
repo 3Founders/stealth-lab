@@ -284,6 +284,12 @@ export default function Home() {
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
   const [sessions, setSessions] = useState<{ id: string; title: string; updated: number }[]>([])
   const [sessOpen, setSessOpen] = useState(false)
+  // Import OpenCode CLI chats into this project: the sessions the sidebar deliberately hides.
+  const [importOpen, setImportOpen] = useState(false)
+  const [importable, setImportable] = useState<{ id: string; title: string; updated: number }[]>([])
+  const [importPick, setImportPick] = useState<Set<string>>(new Set())
+  const [importBusy, setImportBusy] = useState(false)
+  const [importNote, setImportNote] = useState("")
   const [spend, setSpend] = useState(0)
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
@@ -378,6 +384,30 @@ export default function Home() {
       if (Array.isArray(p.projects)) mergeProjects(p.projects.map((x: { dir: string }) => x.dir))
     } catch { /* the lists stay as they were */ }
   }, [])
+
+  // The OpenCode CLI chats in this folder, with a checkbox each. Importing marks them as kell sessions; they then
+  // appear in the sidebar like any other and can be continued here.
+  const openImport = async () => {
+    setImportOpen(true); setImportNote(""); setImportPick(new Set()); setImportable([])
+    try {
+      const j = await (await fetch("/api/sessions?opencode=1")).json()
+      if (j.error) setImportNote(String(j.error))
+      setImportable(Array.isArray(j.sessions) ? j.sessions : [])
+    } catch { setImportNote("Could not read the OpenCode chats.") }
+  }
+  const doImport = async () => {
+    const ids = [...importPick]
+    if (!ids.length || importBusy) return
+    setImportBusy(true); setImportNote("")
+    try {
+      const r = await fetch("/api/sessions/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionIDs: ids }) })
+      const j = await r.json()
+      if (!r.ok) { setImportNote(String(j.error || "Could not import these chats.")); return }
+      setImportOpen(false)
+      await loadSessions()
+    } catch { setImportNote("Could not import these chats.") }
+    finally { setImportBusy(false) }
+  }
 
   // A past session: its conversation back on screen, and the next message continues it.
   const openSession = async (id: string) => {
@@ -962,16 +992,17 @@ export default function Home() {
                       <span className="nm">{name}</span>
                     </button>
                     <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>×</button>
-                    {here && engine?.up && sessions.length > 0 && (
+                    {here && engine?.up && (
                       // The open project's sessions under it, one list: the newest shows, a chevron shows the rest.
                       <div className="dk-sess">
-                        {(sessOpen || sessions.slice(1).some((x) => x.id === sessionID) ? sessions : sessions.slice(0, 1)).map(sessionRow)}
+                        {sessions.length > 0 && (sessOpen || sessions.slice(1).some((x) => x.id === sessionID) ? sessions : sessions.slice(0, 1)).map(sessionRow)}
                         {sessions.length > 1 && (
                           <button type="button" className="dk-sess-toggle" aria-expanded={sessOpen} aria-label={sessOpen ? "Show fewer sessions" : "Show all sessions"}
                             title={sessOpen ? "Show fewer" : "Show all"} onClick={() => setSessOpen((o) => !o)}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
                           </button>
                         )}
+                        <button type="button" className="dk-sess-import" onClick={() => void openImport()}>Import OpenCode chats</button>
                       </div>
                     )}
                   </li>
@@ -1381,6 +1412,45 @@ export default function Home() {
               {!paletteItems.length && <li className="dk-note" style={{ padding: "10px 14px" }}>Nothing matches.</li>}
             </ul>
             <div className="dk-palette-foot"><kbd>↑</kbd><kbd>↓</kbd> move <kbd>↵</kbd> run <kbd>esc</kbd> close</div>
+          </div>
+        </div>
+      )}
+
+      {importOpen && (
+        <div className="dk-import-backdrop" onMouseDown={() => { if (!importBusy) setImportOpen(false) }}>
+          <div className="dk-import" role="dialog" aria-modal="true" aria-label="Import OpenCode chats" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="dk-import-head">
+              <h2>Import OpenCode chats</h2>
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Close" title="Close" disabled={importBusy} onClick={() => setImportOpen(false)}>×</button>
+            </div>
+            <p className="dk-note">Chats started with the <code>opencode</code> CLI in this folder. Imported chats appear in kell&apos;s session list and can be continued here.</p>
+            {importNote && <p className="dk-err" role="status">{importNote}</p>}
+            {importable.length > 0 && (
+              <div className="dk-import-tools">
+                <button type="button" className="btn-line dg-mini" onClick={() => setImportPick(new Set(importable.map((s) => s.id)))}>Select all</button>
+                <button type="button" className="btn-line dg-mini" onClick={() => setImportPick(new Set())}>Clear</button>
+              </div>
+            )}
+            {importable.length === 0 ? <p className="dk-note">No OpenCode chats in this folder.</p> : (
+              <ul className="dk-import-list">
+                {importable.map((s) => (
+                  <li key={s.id}>
+                    <label>
+                      <input type="checkbox" checked={importPick.has(s.id)}
+                        onChange={(e) => setImportPick((p) => { const n = new Set(p); if (e.target.checked) n.add(s.id); else n.delete(s.id); return n })} />
+                      <span>{s.title || "Untitled chat"}</span>
+                      <time>{s.updated ? when(s.updated) : ""}</time>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="dk-import-actions">
+              <button type="button" className="btn-line" disabled={importBusy} onClick={() => setImportOpen(false)}>Cancel</button>
+              <button type="button" className="btn-ink" disabled={importBusy || importPick.size === 0} onClick={() => void doImport()}>
+                {importBusy ? "Importing…" : importPick.size ? `Import ${importPick.size}` : "Import"}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -46,10 +46,11 @@ export async function GET(req: Request) {
       return Response.json({ projects })
     }
     if (!id) {
-      const out = await client.session.list({ directory: e.directory as any, limit: 50, order: "desc" })
+      const wantOpenCode = q.get("opencode") === "1"
+      const out = await client.session.list({ directory: e.directory as any, limit: wantOpenCode ? 100 : 50, order: "desc" })
       const rows = (out.data as any[]).filter((s) => !s.parentID)
       const flags = await Promise.all(rows.map((s) => isKellSession(client, String(s.id), s.metadata)))
-      const sessions = rows.filter((_, i) => flags[i]).map((s) => ({
+      const sessions = rows.filter((_, i) => (wantOpenCode ? !flags[i] : flags[i])).map((s) => ({
         id: String(s.id), title: typeof s.title === "string" ? s.title : "", updated: Number(s.time?.updated ?? s.time?.created ?? 0),
       }))
       return Response.json({ sessions })

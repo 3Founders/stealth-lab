@@ -355,6 +355,29 @@
 .dk-palette-foot { padding: 8px 14px; border-top: 1px solid var(--rule); color: var(--grey); font-size: 11.5px; display: flex; gap: 6px; align-items: center; }
 .dk-palette-foot kbd { font-family: inherit; font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--rule-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--paper); }
 
+/* Import OpenCode CLI chats: the button under the project's sessions, and the small picker over the app. */
+.dk-sess-import { all: unset; box-sizing: border-box; align-self: flex-start; margin: 4px 4px 0; padding: 4px 8px; border-radius: 6px; color: var(--grey); font-size: 12px; cursor: pointer;
+  transition: background-color var(--dg-micro-d) var(--dg-micro), color var(--dg-micro-d) var(--dg-micro); }
+.dk-sess-import:hover { background: rgba(0,0,0,.045); color: var(--ink); }
+.dk-sess-import:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-import-backdrop { position: fixed; inset: 0; z-index: 85; background: rgba(23,23,23,.28); display: grid; place-items: center; padding: 16px;
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: dg-fade var(--dg-smooth-d) var(--dg-smooth) both; }
+.dk-import { width: min(560px, 100%); max-height: min(72vh, 600px); display: flex; flex-direction: column; gap: 10px; padding: 16px;
+  border: 1px solid var(--rule-strong); border-radius: 16px; background: var(--surface);
+  box-shadow: 0 24px 70px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.12);
+  animation: dg-glass-in var(--dg-smooth-d) var(--dg-smooth) both; }
+.dk-import-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dk-import-head h2 { margin: 0; font-size: 18px; }
+.dk-import-tools { display: flex; gap: 6px; }
+.dk-import-list { list-style: none; margin: 0; padding: 4px; overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 2px; }
+.dk-import-list label { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+.dk-import-list label:hover { background: rgba(0,0,0,.045); }
+.dk-import-list input { accent-color: var(--ink); }
+.dk-import-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-import-list time { color: var(--grey); font-size: 11.5px; white-space: nowrap; }
+.dk-import-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
+@media (prefers-reduced-motion: reduce) { .dk-import-backdrop, .dk-import { animation: none !important; } .dk-sess-import { transition: none; } }
+
 /* Stop, while a turn runs. */
 .dk-stop { all: unset; box-sizing: border-box; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; cursor: pointer;
   border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink);
