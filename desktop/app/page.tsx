@@ -802,7 +802,7 @@ export default function Home() {
     catch { return [] }
   })()
   const paletteQ2 = paletteQ.trim().toLowerCase()
-  const matchedCommands = commands.filter((c) => !paletteQ2 || fuzzy(`${c.title} ${c.hint || ""}`, paletteQ2))
+  const matchedCommands = commands.filter((c) => !paletteQ2 || fuzzy(c.title, paletteQ2))
   const orderedCommands = paletteQ2 ? matchedCommands
     : [...matchedCommands].sort((a, b) => (recentCommands.indexOf(a.id) + 1 || 99) - (recentCommands.indexOf(b.id) + 1 || 99))
   const paletteItems = [
@@ -1016,25 +1016,26 @@ export default function Home() {
 
         <section className="dg-main" aria-label={`Chat in ${project}`}>
           <header className="dg-head">
+            {/* The two panel toggles live on their own sides of the project bar: the project sidebar on the left,
+                the changes panel on the right. They used to sit together in one cluster after the title, which put
+                both in the middle of the bar. */}
+            {!leftOpen && (
+              <button type="button" className="dk-icon dk-icon-sm dk-head-toggle" aria-label="Show the project sidebar" title="Show the project sidebar"
+                onClick={() => toggleSidebar("left")}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>
+              </button>
+            )}
             <h1>{project}</h1>
-            <span className="dk-head-tools">
-              {!leftOpen && (
-                <button type="button" className="dk-icon dk-icon-sm" aria-label="Show the project sidebar" title="Show the project sidebar"
-                  onClick={() => toggleSidebar("left")}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>
-                </button>
-              )}
-              {!rightOpen && (
-                <button type="button" className="dk-icon dk-icon-sm" aria-label="Show the changes panel" title="Show the changes panel"
-                  onClick={() => toggleSidebar("right")}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
-                </button>
-              )}
-            </span>
             <div className="dk-chips">
               {spend > 0 && <span className="dk-spend">${spend.toFixed(4)} this session</span>}
             </div>
             <ThemeToggle className="dg-theme" />
+            {!rightOpen && (
+              <button type="button" className="dk-icon dk-icon-sm dk-head-toggle dk-show-right" aria-label="Show the changes panel" title="Show the changes panel"
+                onClick={() => toggleSidebar("right")}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+              </button>
+            )}
           </header>
 
           <div className="dg-scroll">
@@ -1049,7 +1050,7 @@ export default function Home() {
                         <p className="dk-empty-line">kell can read and edit this folder and run commands here. It asks before anything destructive, and every change comes back as a diff you can undo.</p>
                         <div className="dk-empty-prompts">
                           {["Explain how this project is put together", "Find and fix the bug I describe", "Write tests for a file I name"].map((p) => (
-                            <button key={p} type="button" className="dk-empty-prompt" onClick={() => { setText(p); textRef.current?.focus() }}>{p}</button>
+                            <button key={p} type="button" className="btn-line dg-mini dk-empty-prompt" onClick={() => { setText(p); textRef.current?.focus() }}>{p}</button>
                           ))}
                         </div>
                       </>
@@ -1189,7 +1190,11 @@ export default function Home() {
               placeholder={directory ? "Tell kell what to do…" : "Open a project first"}
               disabled={!!engine && !engine.up}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); return }
+                // IME-safe: Enter during a CJK composition selects a candidate, it must not send the prompt.
+                if (e.key === "Enter" && !e.shiftKey) {
+                  if (e.nativeEvent.isComposing) return
+                  e.preventDefault(); send(); return
+                }
                 if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return
                 // Only when the caret is at the very start: inside a multi-line draft Up/Down still moves the caret.
                 if (e.currentTarget.selectionStart !== 0 || e.currentTarget.selectionEnd !== 0) return
@@ -1339,7 +1344,7 @@ export default function Home() {
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown") { e.preventDefault(); setPaletteIdx((i) => Math.min(Math.max(0, paletteItems.length - 1), i + 1)) }
                 else if (e.key === "ArrowUp") { e.preventDefault(); setPaletteIdx((i) => Math.max(0, i - 1)) }
-                else if (e.key === "Enter") { e.preventDefault(); runPaletteItem(paletteSelected) }
+                else if (e.key === "Enter") { if (e.nativeEvent.isComposing) return; e.preventDefault(); runPaletteItem(paletteSelected) }
               }} />
             <ul id="dk-palette-list" role="listbox" aria-label="Commands and files" className="dk-palette-list">
               {paletteItems.map((it, i) => (

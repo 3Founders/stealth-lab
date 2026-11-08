@@ -230,17 +230,23 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
     let models = [], execOk = true, execDetail = "", profiles = {};
     try { const cfg = readExecConfig(env); profiles = cfg.profiles; models = Object.values(cfg.executors).flatMap((e) => (Array.isArray(e?.models) ? e.models : []).map(String)); if (!models.length) { execOk = false; execDetail = "no models listed"; } }
     catch (err) { execOk = false; execDetail = err.message; }
-    const keyNames = [...new Set(Object.values(profiles).map((p) => p.key_env).filter(Boolean))];
-    const first = keyNames[0] || "GENERAL_COMPUTE_API_KEY";
+    // On a kell plan the checklist must not name any provider key either: the plan's models run through the gateway.
+    const lane = laneOf(env);
+    const shown = lane.plan ? Object.values(profiles).filter((p) => p.key_from === KEY_FROM_STEALTHLAB) : Object.values(profiles);
+    if (lane.plan) { models = shown.map((p) => p.model_id); execOk = models.length > 0; execDetail = models.length ? "" : "no plan models on this machine: run `kell join`"; }
+    const keyNames = lane.plan ? [] : [...new Set(shown.map((p) => p.key_env).filter(Boolean))];
+    const first = keyNames[0] || (lane.plan ? "" : "GENERAL_COMPUTE_API_KEY");
     const cfg = readConfig(env);
     const wantsCursor = isInstalled("cursor", env);
-    const res = checklist({ server, hasToken: Boolean(settings.token), execOk, execDetail, models, keyEnv: first,
-                            key: { set: Boolean(keyValue(first, env)) || keyIsSet(first, { env }).set, where: "" }, dispatch: cfg.dispatch !== false,
-                            cursorModel: cfg.cursor_model, wantsCursor });
+    const res = checklist({ server, hasToken: Boolean(settings.token), execOk, execDetail, models, keyEnv: first || "",
+                            key: lane.plan ? { set: true, where: "" } : { set: Boolean(keyValue(first, env)) || keyIsSet(first, { env }).set, where: "" },
+                            dispatch: cfg.dispatch !== false, cursorModel: cfg.cursor_model, wantsCursor, central: lane.plan });
     for (const k of keyNames.slice(1)) {
       const set = Boolean(keyValue(k, env)) || keyIsSet(k, { env }).set;
       res.items.push({ name: `key ${k}`, ok: set, detail: set ? "found" : "not set", fix: set ? undefined : "add it under Keys" });
     }
+    // A plan with no joined models is fixed by joining, not by deleting exec.json.
+    if (lane.plan && !execOk) { const item = res.items.find((i) => i.name === "exec.json"); if (item) item.fix = "kell join   (or open the kell app and sign in)"; }
     return res.items.map((i) => ({ name: i.name, ok: i.ok, detail: i.detail, ...(i.fix ? { fix: i.fix } : {}) }));
   }
 
@@ -256,6 +262,9 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
     await Promise.all(names.map(async (name) => {
       const p = cfg.profiles[name];
       if (!p?.openai_base_url) return emit({ model: name, error: "That model is not set up for chat (it needs an OpenAI-compatible address)." });
+      // On a kell plan the provider profiles on this machine are not this person's to run (and their keys are never shown):
+      // only the plan's own models may answer.
+      if (laneOf(env).plan && p.key_from !== KEY_FROM_STEALTHLAB) return emit({ model: name, error: "Your plan runs models through kell; this machine's provider models are not used here." });
       const t0 = Date.now(); let first = null, usage = null;
       try {
         const r = await fetchImpl(`${p.openai_base_url}/chat/completions`, {
