@@ -152,9 +152,25 @@ export default function Home() {
     } catch { /* storage blocked */ }
     return next
   })
-  // The two side columns can be dragged wider or narrower; the widths are kept on this device.
+  // The two side columns can be dragged wider or narrower, and either one can be collapsed; the widths and which
+  // sidebars are open are kept on this device (kell.layout / kell.sidebars).
   const [widths, setWidths] = useState({ left: 260, right: 340 })
-  useEffect(() => { try { const w = JSON.parse(window.localStorage.getItem("kell.layout") || "null"); if (w && typeof w.left === "number" && typeof w.right === "number") setWidths(w) } catch { /* default */ } }, [])
+  const [leftOpen, setLeftOpen] = useState(true)
+  const [rightOpen, setRightOpen] = useState(true)
+  useEffect(() => {
+    try {
+      const w = JSON.parse(window.localStorage.getItem("kell.layout") || "null")
+      if (w && typeof w.left === "number" && typeof w.right === "number") setWidths(w)
+      const s = JSON.parse(window.localStorage.getItem("kell.sidebars") || "null")
+      if (s && typeof s.left === "boolean") setLeftOpen(s.left)
+      if (s && typeof s.right === "boolean") setRightOpen(s.right)
+    } catch { /* default */ }
+  }, [])
+  const toggleSidebar = (side: "left" | "right") => {
+    const next = { left: side === "left" ? !leftOpen : leftOpen, right: side === "right" ? !rightOpen : rightOpen }
+    setLeftOpen(next.left); setRightOpen(next.right)
+    try { window.localStorage.setItem("kell.sidebars", JSON.stringify(next)) } catch { /* storage blocked */ }
+  }
   const dragColumn = (side: "left" | "right") => (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     const el = e.currentTarget
@@ -652,7 +668,7 @@ export default function Home() {
           )}
         </div>
       )}
-      <div className="dg-shell" hidden={pane !== "code"}
+      <div className="dg-shell" hidden={pane !== "code"} data-left={leftOpen ? "open" : "closed"} data-right={rightOpen ? "open" : "closed"}
         style={{ "--dk-left": `${widths.left}px`, "--dk-right": `${widths.right}px` } as React.CSSProperties}>
         <div className="dk-resize" data-side="left" role="separator" aria-orientation="vertical" aria-label="Drag to resize the project list" onPointerDown={dragColumn("left")} />
         <div className="dk-resize" data-side="right" role="separator" aria-orientation="vertical" aria-label="Drag to resize the changes panel" onPointerDown={dragColumn("right")} />
@@ -661,6 +677,10 @@ export default function Home() {
             <img className="wm-light" src="/kel-wordmark.png" alt="keळ" style={{ height: 38, width: "auto" }} />
             <img className="wm-dark" src="/kel-wordmark-dark.png" alt="" aria-hidden="true" style={{ height: 38, width: "auto" }} />
           </div>
+          <button type="button" className="dk-icon dk-icon-sm dk-side-close" aria-label="Hide the project sidebar"
+            title="Hide the project sidebar" onClick={() => toggleSidebar("left")}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
+          </button>
 
           <h2>Project</h2>
           {/* One way in: the folder picker (the app), or a typed path where there is no picker (a browser during development). Projects
@@ -771,6 +791,20 @@ export default function Home() {
         <section className="dg-main" aria-label={`Chat in ${project}`}>
           <header className="dg-head">
             <h1>{project}</h1>
+            <span className="dk-head-tools">
+              {!leftOpen && (
+                <button type="button" className="dk-icon dk-icon-sm" aria-label="Show the project sidebar" title="Show the project sidebar"
+                  onClick={() => toggleSidebar("left")}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>
+                </button>
+              )}
+              {!rightOpen && (
+                <button type="button" className="dk-icon dk-icon-sm" aria-label="Show the changes panel" title="Show the changes panel"
+                  onClick={() => toggleSidebar("right")}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+                </button>
+              )}
+            </span>
             <div className="dk-chips">
               {spend > 0 && <span className="dk-spend">${spend.toFixed(4)} this session</span>}
             </div>
@@ -933,6 +967,10 @@ export default function Home() {
           <summary className="dk-panel-head">
             <h2>Changed by kell{files.length ? ` · ${files.length}` : ""}</h2>
             <span className="dk-iconrow">
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Hide the changes panel" title="Hide the changes panel"
+                onClick={(e) => { e.preventDefault(); toggleSidebar("right") }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg>
+              </button>
               <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the changes" title="Refresh" onClick={(e) => { e.preventDefault(); loadChanges(sessionID) }} disabled={!readEngine}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
               </button>
