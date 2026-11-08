@@ -29,7 +29,7 @@ const hintOf = (input: any): string | undefined => {
   if (typeof v !== "string" || !v.trim()) return undefined
   const one = v.replace(/\s+/g, " ").trim()
   const short = /[\\/]/.test(one) && !/\s/.test(one) ? one.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : one
-  return short.length > 60 ? short.slice(0, 57) + "â€¦" : short
+  return short.length > 60 ? short.slice(0, 57) + "…" : short
 }
 
 /** When a session was last used, short: the time today, else the day. */
@@ -59,7 +59,7 @@ function FileList({ files, openOne = false }: { files: FileDiff[]; openOne?: boo
           <summary>
             <span className="path">{f.file}</span>
             <span className="stat">{f.status === "added" && !f.patch ? <span className="add">new</span>
-              : <><span className="add">+{f.additions}</span> <span className="del">âˆ’{f.deletions}</span></>}</span>
+              : <><span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span></>}</span>
           </summary>
           {f.patch ? <div className="dk-diff">{patchLines(f.patch).map((p, i) => <div className={p.cls} key={i}>{p.text || " "}</div>)}</div>
             : <p className="dk-note" style={{ margin: "6px 8px" }}>A new file, not yet added to git.</p>}
@@ -94,7 +94,7 @@ function TreeLevel({ directory, rel, depth, onOpen, selected }: {
   }, [directory, rel])
 
   if (err) return <p className="dk-note" style={{ paddingLeft: 8 + depth * 12 }}>{err}</p>
-  if (!entries) return <p className="dk-note" style={{ paddingLeft: 8 + depth * 12 }}>Readingâ€¦</p>
+  if (!entries) return <p className="dk-note" style={{ paddingLeft: 8 + depth * 12 }}>Reading…</p>
   if (!entries.length) return depth === 0 ? <p className="dk-note">No files</p> : null
   return (
     <ul className="dk-tree-level" role={depth === 0 ? "tree" : "group"} aria-label={depth === 0 ? "Project files" : undefined}>
@@ -194,7 +194,7 @@ export default function Home() {
     return next
   })
   // The folders the engine has worked in fill the list after the ones opened here (2026-11-07: the list started empty after a
-  // restart), except ones taken off it with Ã—.
+  // restart), except ones taken off it with ×.
   const mergeProjects = (dirs: string[]) => setRecents((r) => {
     let hidden: string[] = []
     try { const h = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]"); if (Array.isArray(h)) hidden = h } catch { /* none */ }
@@ -205,7 +205,7 @@ export default function Home() {
     try { window.localStorage.setItem("kell.projects", JSON.stringify(next)) } catch { /* storage blocked */ }
     return next
   })
-  // Ã— also keeps a project off the list when the engine's own project list is merged in (mergeProjects).
+  // × also keeps a project off the list when the engine's own project list is merged in (mergeProjects).
   const forget = (dir: string) => setRecents((r) => {
     const next = r.filter((x) => x !== dir)
     try {
@@ -331,7 +331,7 @@ export default function Home() {
   // The same spring scroll as the website chat: follows new text only while you are at the bottom, rubber-bands at the edges.
   const { follow, scrollToEnd } = useSpringScroll(logRef, logContentRef, sessionID ?? "")
   const busyRef = useRef(false)                       // a late poll must not overwrite a turn that started after it
-  // Messages sent while kell is working wait here and go out one at a time, in order, as each turn ends (Ã— drops one).
+  // Messages sent while kell is working wait here and go out one at a time, in order, as each turn ends (× drops one).
   const [queued, setQueued] = useState<string[]>([])
   // The command palette (Ctrl/Cmd-K): app actions and "go to file", with the last few choices first.
   const [palette, setPalette] = useState(false)
@@ -400,7 +400,7 @@ export default function Home() {
   )
 
   const loadTools = async (need: string) => {
-    setCardsNote("Finding toolsâ€¦")
+    setCardsNote("Finding tools…")
     try {
       const r = await fetch("/api/tools", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ need }) })
       const j = await r.json()
@@ -540,7 +540,7 @@ export default function Home() {
     setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
   }
 
-  /** Stop the turn at its next safe point (reqs Â§5). Work that already ran is not undone, and the note says so. */
+  /** Stop the turn at its next safe point (reqs §5). Work that already ran is not undone, and the note says so. */
   const stop = async () => {
     if (!sessionID || stopping) return
     setStopping(true)
@@ -576,7 +576,7 @@ export default function Home() {
   }
 
   const openConsole = async () => {
-    setConsoleNote("starting the consoleâ€¦")
+    setConsoleNote("starting the console…")
     const r = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "open" }) })
     const j = await r.json()
     setConsoleNote(j.output || j.error || "no answer")
@@ -623,7 +623,7 @@ export default function Home() {
   // Sign out of everything: the coding lane's token and the rooms' session (and its cached copies) together, so the app
   // is never half one account and half another.
   const signOut = async () => {
-    setSigninNote("Signing outâ€¦")
+    setSigninNote("Signing out…")
     const r = await fetch("/api/signin", { method: "DELETE" }).then((x) => x.json()).catch(() => ({ error: "could not run kell logout" }))
     await desktop()?.signOutRooms()
     setRoomsWho(null)
@@ -668,7 +668,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queued, busy, resume])
 
-  // Ctrl/Cmd-K opens the command palette from anywhere in the app (reqs Â§1: "same shortcut in every context").
+  // Ctrl/Cmd-K opens the command palette from anywhere in the app (reqs §1: "same shortcut in every context").
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); setPalette((p) => !p); setPaletteQ(""); setPaletteIdx(0) }
@@ -678,7 +678,7 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey)
   }, [palette])
 
-  // The draft prompt survives switching projects or sessions (reqs Â§1). The queued prompts already outlive a re-render;
+  // The draft prompt survives switching projects or sessions (reqs §1). The queued prompts already outlive a re-render;
   // this keeps what was being typed when the person looked at another session.
   useEffect(() => {
     if (!directory) return
@@ -750,7 +750,7 @@ export default function Home() {
   const project = directory ? directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || directory : "No project"
   const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null)
 
-  // The waiting prompts can be reordered or pulled back into the box, not only dropped (reqs Â§2: "edit / reorder / delete").
+  // The waiting prompts can be reordered or pulled back into the box, not only dropped (reqs §2: "edit / reorder / delete").
   const moveQueued = (i: number, d: number) => setQueued((q) => {
     const j = i + d
     if (j < 0 || j >= q.length) return q
@@ -765,7 +765,7 @@ export default function Home() {
   }
 
   // The command palette (Ctrl/Cmd-K): app actions, then files whose path matches (app/api/files?q=). Recent choices come
-  // first on an empty query, so the shortcut is never an empty box (reqs Â§1).
+  // first on an empty query, so the shortcut is never an empty box (reqs §1).
   const runCommand = (run: () => void, id?: string) => {
     setPalette(false); setPaletteQ(""); setPaletteIdx(0)
     if (id) try {
@@ -777,7 +777,7 @@ export default function Home() {
   }
   const commands = [
     { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
-    { id: "open-folder", title: "Open a folderâ€¦", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); void openProject(d) } }) } },
+    { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); void openProject(d) } }) } },
     { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
     { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
     { id: "left", title: "Show or hide the project sidebar", run: () => toggleSidebar("left") },
@@ -883,7 +883,7 @@ export default function Home() {
         <div className="dk-resize" data-side="right" role="separator" aria-orientation="vertical" aria-label="Drag to resize the changes panel" onPointerDown={dragColumn("right")} />
         <aside className="dg-side" aria-label="Project, models and account">
           <div className="dg-brand">
-            <img className="wm-light" src="/kel-wordmark.png" alt="keà¤³" style={{ height: 38, width: "auto" }} />
+            <img className="wm-light" src="/kel-wordmark.png" alt="keळ" style={{ height: 38, width: "auto" }} />
             <img className="wm-dark" src="/kel-wordmark-dark.png" alt="" aria-hidden="true" style={{ height: 38, width: "auto" }} />
           </div>
           <button type="button" className="dk-icon dk-icon-sm dk-side-close" aria-label="Hide the project sidebar"
@@ -907,7 +907,7 @@ export default function Home() {
                 onClick={async () => {
                   if (!desktop()?.pickFolder) { void openProject(); return }
                   const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); void openProject(d) }
-                }}>{opening ? "Openingâ€¦" : "Open folder"}</button>
+                }}>{opening ? "Opening…" : "Open folder"}</button>
             )}
             {sessionID && (
               <button type="button" className="btn-line" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>New session</button>
@@ -940,7 +940,7 @@ export default function Home() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
                       <span className="nm">{name}</span>
                     </button>
-                    <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>Ã—</button>
+                    <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>×</button>
                     {here && engine?.up && sessions.length > 0 && (
                       // The open project's sessions under it, one list: the newest shows, a chevron shows the rest.
                       <div className="dk-sess">
@@ -1041,7 +1041,7 @@ export default function Home() {
             <div className="dg-viewport" ref={logRef} aria-label="Messages">
               <div className="dg-content" ref={logContentRef}>
                 {lines.length === 0 && !busy && (
-                  // The empty state is not a blank box (reqs Â§8): one line states the boundary, and three prompts that
+                  // The empty state is not a blank box (reqs §8): one line states the boundary, and three prompts that
                   // are known to work here fill the composer rather than a highlight reel.
                   <div className="dk-empty">
                     {directory ? (
@@ -1055,7 +1055,7 @@ export default function Home() {
                       </>
                     ) : (
                       <>
-                        <p className="dk-empty-line">kell works in one folder at a time. Open a folder, then describe the task â€” the changes come back as a diff you can undo.</p>
+                        <p className="dk-empty-line">kell works in one folder at a time. Open a folder, then describe the task — the changes come back as a diff you can undo.</p>
                         <div className="dk-row" style={{ margin: 0 }}>
                           <button type="button" className="btn-ink" onClick={async () => {
                             if (!desktop()?.pickFolder) { void openProject(); return }
@@ -1173,10 +1173,10 @@ export default function Home() {
             <div key={i} className="dg-queued small" role="status">
               <span className="dim">Waiting for kell:</span> <span className="dg-queued-text">{q}</span>
               <span className="dk-queue-tools">
-                {i > 0 && <button type="button" aria-label="Send this sooner" title="Send this sooner" onClick={() => moveQueued(i, -1)}>â†‘</button>}
-                {i < queued.length - 1 && <button type="button" aria-label="Send this later" title="Send this later" onClick={() => moveQueued(i, 1)}>â†“</button>}
-                <button type="button" aria-label="Edit this message" title="Edit this message" onClick={() => editQueued(i)}>âœŽ</button>
-                <button type="button" aria-label="Don't send this one" title="Don't send this one" onClick={() => setQueued((x) => x.filter((_, k) => k !== i))}>Ã—</button>
+                {i > 0 && <button type="button" aria-label="Send this sooner" title="Send this sooner" onClick={() => moveQueued(i, -1)}>↑</button>}
+                {i < queued.length - 1 && <button type="button" aria-label="Send this later" title="Send this later" onClick={() => moveQueued(i, 1)}>↓</button>}
+                <button type="button" aria-label="Edit this message" title="Edit this message" onClick={() => editQueued(i)}>✎</button>
+                <button type="button" aria-label="Don't send this one" title="Don't send this one" onClick={() => setQueued((x) => x.filter((_, k) => k !== i))}>×</button>
               </span>
             </div>))}
           {stopNote && <div className="dg-queued small" role="status"><span className="dim">{stopNote}</span></div>}
@@ -1186,7 +1186,7 @@ export default function Home() {
           <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
             <textarea ref={textRef} rows={1} data-big={big || undefined} value={text}
               onChange={(e) => { setText(e.target.value); histPos.current = null }}
-              placeholder={directory ? "Tell kell what to doâ€¦" : "Open a project first"}
+              placeholder={directory ? "Tell kell what to do…" : "Open a project first"}
               disabled={!!engine && !engine.up}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); return }
@@ -1214,7 +1214,7 @@ export default function Home() {
               </button>
             </div>
             {busy && (
-              // Always reachable while a turn runs (reqs Â§5). Stopping does not undo what already ran, and the title says so.
+              // Always reachable while a turn runs (reqs §5). Stopping does not undo what already ran, and the title says so.
               <button type="button" className="dk-stop" onClick={() => void stop()} disabled={stopping || !sessionID}
                 aria-label="Stop kell" title="Stop the turn. Steps that already ran stay; nothing is undone.">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
@@ -1253,19 +1253,19 @@ export default function Home() {
                   </button>
                 </span>
               </div>
-              {fileBusy && <p className="dk-note">Readingâ€¦</p>}
+              {fileBusy && <p className="dk-note">Reading…</p>}
               {fileErr && <p className="dk-err">{fileErr}</p>}
               {fileView && (fileView.binary
-                ? <p className="dk-note">A binary file ({Math.max(1, Math.round(fileView.bytes / 1024))} KB) â€” nothing to show as text.</p>
+                ? <p className="dk-note">A binary file ({Math.max(1, Math.round(fileView.bytes / 1024))} KB) — nothing to show as text.</p>
                 : <>
                     <pre className="dk-code" tabIndex={0}>{fileView.text}</pre>
-                    <p className="dk-note">{fileView.lines} lines Â· {Math.max(1, Math.round(fileView.bytes / 1024))} KB{fileView.truncated ? " Â· showing the start of the file" : ""}</p>
+                    <p className="dk-note">{fileView.lines} lines · {Math.max(1, Math.round(fileView.bytes / 1024))} KB{fileView.truncated ? " · showing the start of the file" : ""}</p>
                   </>)}
             </section>
           )}
           <details className="dk-fold" open>
           <summary className="dk-panel-head">
-            <h2>Changed by kell{files.length ? ` Â· ${files.length}` : ""}</h2>
+            <h2>Changed by kell{files.length ? ` · ${files.length}` : ""}</h2>
             <span className="dk-iconrow">
               <button type="button" className="dk-icon dk-icon-sm" aria-label="Hide the changes panel" title="Hide the changes panel"
                 onClick={(e) => { e.preventDefault(); toggleSidebar("right") }}>
@@ -1293,20 +1293,20 @@ export default function Home() {
           </details>
 
           <details className="dk-fold">
-          <summary><h2>Other changes in this folder{otherFiles.length ? ` Â· ${otherFiles.length + otherMore}` : ""}</h2></summary>
+          <summary><h2>Other changes in this folder{otherFiles.length ? ` · ${otherFiles.length + otherMore}` : ""}</h2></summary>
           {readEngine && otherFiles.length === 0 && <p className="dk-note">No other changes</p>}
           <FileList files={otherFiles} />
           {otherMore > 0 && <p className="dk-note">and {otherMore} more</p>}
           </details>
 
           <details className="dk-fold">
-          <summary><h2>Model steps{ledger.length ? ` Â· ${ledger.length}` : ""}</h2></summary>
+          <summary><h2>Model steps{ledger.length ? ` · ${ledger.length}` : ""}</h2></summary>
           {ledger.length === 0 ? <p className="dk-note">No model steps yet</p> : (
             <div className="dk-ledger">
               {ledger.map((r) => (
                 <div className="row" key={r.id}>
-                  <span title={r.tokens || ""}><span className="dk-rung" data-r={isCheap(r) ? "cheap" : "strong"}>{isCheap(r) ? "cheap" : "strong"}</span><b>{r.model || "picking modelâ€¦"}</b></span>
-                  <span>{r.cost != null ? `$${r.cost.toFixed(5)}` : "â€”"}</span>
+                  <span title={r.tokens || ""}><span className="dk-rung" data-r={isCheap(r) ? "cheap" : "strong"}>{isCheap(r) ? "cheap" : "strong"}</span><b>{r.model || "picking model…"}</b></span>
+                  <span>{r.cost != null ? `$${r.cost.toFixed(5)}` : "—"}</span>
                 </div>
               ))}
             </div>
@@ -1314,14 +1314,14 @@ export default function Home() {
           </details>
 
           <details className="dk-fold">
-          <summary><h2>Tools for this request{cards.length ? ` Â· ${cards.length}` : ""}</h2></summary>
+          <summary><h2>Tools for this request{cards.length ? ` · ${cards.length}` : ""}</h2></summary>
           {cardsNote && <p className="dk-note">{cardsNote}</p>}
           <div className="dk-cards">
             {cards.map((c) => (
               <div className="dk-card" key={c.name}>
-                <span className="name" title={`${c.name}${c.url ? ` â€” ${c.url}` : ""}`}>{c.name}</span>
+                <span className="name" title={`${c.name}${c.url ? ` — ${c.url}` : ""}`}>{c.name}</span>
                 <span className="dg-badge" data-kind="tab">{c.source === "installed" ? "installed" : "available"}</span>
-                <span className="meta">{c.source === "installed" ? "installed here" : "kell can run it for you"}{c.needsSignIn ? " Â· asks you to sign in once" : ""}</span>
+                <span className="meta">{c.source === "installed" ? "installed here" : "kell can run it for you"}{c.needsSignIn ? " · asks you to sign in once" : ""}</span>
               </div>
             ))}
           </div>
@@ -1332,7 +1332,7 @@ export default function Home() {
       {palette && (
         <div className="dk-palette-backdrop" onMouseDown={() => setPalette(false)}>
           <div className="dk-palette" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(e) => e.stopPropagation()}>
-            <input className="dk-palette-input" autoFocus value={paletteQ} placeholder="Type a command, or a file nameâ€¦"
+            <input className="dk-palette-input" autoFocus value={paletteQ} placeholder="Type a command, or a file name…"
               aria-label="Search commands and files" aria-controls="dk-palette-list"
               aria-activedescendant={paletteItems[paletteSelected] ? `dk-palette-${paletteSelected}` : undefined}
               onChange={(e) => { setPaletteQ(e.target.value); setPaletteIdx(0) }}
@@ -1353,7 +1353,7 @@ export default function Home() {
               ))}
               {!paletteItems.length && <li className="dk-note" style={{ padding: "10px 14px" }}>Nothing matches.</li>}
             </ul>
-            <div className="dk-palette-foot"><kbd>â†‘</kbd><kbd>â†“</kbd> move <kbd>â†µ</kbd> run <kbd>esc</kbd> close</div>
+            <div className="dk-palette-foot"><kbd>↑</kbd><kbd>↓</kbd> move <kbd>↵</kbd> run <kbd>esc</kbd> close</div>
           </div>
         </div>
       )}
