@@ -114,7 +114,9 @@ export function addableRemote(reply, installed = []) {
 }
 
 export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: strongCfg, fallback: fallbackCfg } = {}) {
-  const cfg = readKellConfig()
+  // read on each call, not once: the saved sign-in is refreshed about hourly (the hooks and the desktop app do it), and a session
+  // that kept the first one sent every triage and outcome with an expired token (2026-11-08)
+  const cfg = { get url() { return readKellConfig().url }, get token() { return readKellConfig().token } }
   const cheap = process.env.KELL_OC_CHEAP_MODEL || cheapCfg || "gc/minimax-m2.7"
   const strong = process.env.KELL_OC_STRONG_MODEL || process.env.KELL_OC_DEFAULT_MODEL || strongCfg || null
   const fallback = process.env.KELL_OC_FALLBACK_MODEL || fallbackCfg || "gc/minimax-m2.7"
@@ -194,7 +196,8 @@ export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: 
     let tokens, cost
     try {
       const ctxInfo = await ctx.session.context({ sessionID: e.sessionID })
-      const last = [...(ctxInfo?.messages || [])].reverse().find((m) => m && m.tokens)
+      // opencode 2.2.5 returns the messages array itself; older builds returned { messages } (index.mjs reads it the same way)
+      const last = [...(Array.isArray(ctxInfo) ? ctxInfo : ctxInfo?.messages || [])].reverse().find((m) => m && m.tokens)
       tokens = last?.tokens; cost = last?.cost
     } catch { /* the message API is optional here */ }
     const record = { tool_goal: t.goal || null, suggested: [], used: [...t.tools], outcome: t.lastTest === "pass" ? "accepted" : t.lastTest === "fail" ? "rejected" : "unknown", check_kind: t.lastTest ? "tests" : null }
