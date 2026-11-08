@@ -5,7 +5,7 @@
 .dk-page { padding: 0; }
 /* Three columns, each placed by name. Hiding one used to `display: none` its element, which took it out of the grid
    flow: the chat then auto-placed into the 0-width column and the window collapsed (found 2026-11-08). With explicit
-   grid-column the placement never depends on what is visible, and the column itself animates to 0 on the smooth spring. */
+   grid-column the placement never depends on what is visible, and the column itself animates on the smooth spring. */
 .dk-page .dg-shell {
   grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr) var(--dk-right, 340px);
   height: 100dvh; position: relative;
@@ -19,30 +19,54 @@
 .dk-page .dg-shell[data-left="closed"] { grid-template-columns: 0 minmax(0, 1fr) var(--dk-right, 340px); }
 .dk-page .dg-shell[data-right="closed"] { grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr) 0; }
 .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: 0 minmax(0, 1fr) 0; }
-/* Closed: the column narrows on the spring and its contents fade; padding and the divider go at once so the fade does
-   not look like a squeeze. `visibility` flips at the end (0s delay) so the panel leaves the tab order with it. */
+
+/* Open and closed share one transition list, so the left sidebar and the right panel move together. The closed
+   state fades and slides a few pixels toward its edge, then leaves the tab order at the end. Padding and the
+   divider go at once so the fade never reads as a squeeze. */
+.dk-page .dg-shell[data-left="open"] .dg-side,
+.dk-page .dg-shell[data-right="open"] .dk-panel {
+  opacity: 1; transform: none; visibility: visible; pointer-events: auto;
+  transition:
+    opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    box-shadow var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    visibility 0s;
+}
 .dk-page .dg-shell[data-left="closed"] .dg-side {
-  opacity: 0; visibility: hidden; pointer-events: none; padding-left: 0; padding-right: 0; border-right-width: 0; overflow: hidden;
-  transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), visibility 0s linear var(--dg-smooth-d, 300ms);
+  opacity: 0; transform: translateX(-16px); visibility: hidden; pointer-events: none;
+  padding-left: 0; padding-right: 0; border-right-width: 0; overflow: hidden; box-shadow: none;
+  transition:
+    opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    box-shadow var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    visibility 0s linear var(--dg-smooth-d, 300ms);
 }
 .dk-page .dg-shell[data-right="closed"] .dk-panel {
-  opacity: 0; visibility: hidden; pointer-events: none; padding-left: 0; padding-right: 0; border-left-width: 0; overflow: hidden;
-  transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), visibility 0s linear var(--dg-smooth-d, 300ms);
+  opacity: 0; transform: translateX(16px); visibility: hidden; pointer-events: none;
+  padding-left: 0; padding-right: 0; border-left-width: 0; overflow: hidden; box-shadow: none;
+  transition:
+    opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    box-shadow var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    visibility 0s linear var(--dg-smooth-d, 300ms);
 }
-.dk-page .dg-shell[data-left="open"] .dg-side,
-.dk-page .dg-shell[data-right="open"] .dk-panel { transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), visibility 0s; }
 .dk-page .dg-shell[data-left="closed"] .dk-resize[data-side="left"],
 .dk-page .dg-shell[data-right="closed"] .dk-resize[data-side="right"] { opacity: 0; pointer-events: none; }
 .dk-page .dk-side-close { position: absolute; top: 10px; right: 10px; z-index: 6; }
 .dk-page .dg-brand { padding-right: 36px; }
-.dk-head-tools { display: inline-flex; align-items: center; gap: 4px; }
-/* The buttons that bring a closed panel back appear on the bouncy spring, like a pop-in. */
-.dk-head-tools .dk-icon { animation: dg-pop var(--dg-bouncy-d, 360ms) var(--dg-bouncy, ease) both; transform-origin: center; }
+.dk-head-toggle { animation: dg-tok-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; transform-origin: center; }
+/* The app's icon buttons and Send enter with the same motion as the chat's buttons and text. */
+.dk-page :is(.dk-icon, .dk-stop, .dk-send):not(:disabled) { animation: dg-tok-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
+@media (prefers-reduced-motion: reduce) { .dk-page :is(.dk-icon, .dk-stop, .dk-send):not(:disabled) { animation: none !important; } }
 @media (max-width: 1100px) {
-  .dk-page .dg-shell { grid-template-columns: 240px minmax(0, 1fr); }
+  /* The right panel is not a column at this width, so the shell must have two tracks even when data-right says
+     "closed" (the state rule above is more specific than this media query and would otherwise keep a 0 track). */
+  .dk-page .dg-shell,
+  .dk-page .dg-shell[data-right="closed"],
+  .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: 240px minmax(0, 1fr); }
   .dk-page .dg-shell[data-left="closed"] { grid-template-columns: 0 minmax(0, 1fr); }
-  .dk-page .dg-shell[data-right="closed"] { grid-template-columns: 240px minmax(0, 1fr); }
   .dk-page .dk-panel { display: none; }
+  .dk-page .dk-show-right { display: none; }
 }
 
 /* sidebar fields */
@@ -60,7 +84,7 @@
 .dk-kv .mono { font-size: 11.5px; }
 
 /* header chips: engine, spend */
-.dk-chips { display: flex; gap: 8px; align-items: center; margin-left: auto; font-size: 12px; color: var(--grey); }
+.dk-chips { display: flex; gap: 8px; align-items: center; margin-left: 0; font-size: 12px; color: var(--grey); }
 .dk-chip { border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
 .dk-chip[data-on="true"] { border-color: var(--ink); color: var(--ink); }
 .dk-spend { color: var(--ink); border-bottom: 2px solid var(--yellow); }
@@ -84,9 +108,13 @@
 
 /* right panel: changes, steps, tools */
 .dk-panel { border-left: 1px solid var(--rule); background: var(--paper); overflow-y: auto; padding: 14px 12px; display: flex;
-  flex-direction: column; gap: 6px; min-height: 0; }
+  flex-direction: column; gap: 6px; min-height: 0; box-shadow: -8px 0 28px rgba(0, 0, 0, .08); }
 .dk-panel h2 { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--grey); font-weight: 400; margin: 10px 6px 4px; }
 .dk-panel h2:first-child { margin-top: 0; }
+/* The right panel enters the way the left sidebar's children do, mirrored: a short slide from its edge, not a
+   hard cut. It runs on mount (and on a newly added fold), never on every re-render. */
+@keyframes dk-panel-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+.dk-page .dk-panel > * { animation: dk-panel-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; }
 
 .dk-ledger { display: grid; gap: 2px; font-size: 12px; margin: 0 6px; }
 .dk-ledger .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; color: var(--grey); }
@@ -150,9 +178,12 @@
 .dk-rooms-in p { margin: 0; color: var(--grey); font-size: 14px; line-height: 1.5; }
 
 /* Drag handles on the inner edges of the two side columns (2026-11-06). */
-.dk-resize { position: absolute; top: 0; bottom: 0; width: 7px; z-index: 5; cursor: col-resize; touch-action: none; }
+.dk-resize { position: absolute; top: 0; bottom: 0; width: 7px; z-index: 5; cursor: col-resize; touch-action: none;
+  transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), left var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), right var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
 .dk-resize[data-side="left"] { left: calc(var(--dk-left, 260px) - 4px); }
 .dk-resize[data-side="right"] { right: calc(var(--dk-right, 340px) - 4px); }
+.dk-page .dg-shell[data-left="closed"] .dk-resize[data-side="left"] { left: 0; }
+.dk-page .dg-shell[data-right="closed"] .dk-resize[data-side="right"] { right: 0; }
 .dk-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; transition: background-color .15s; }
 .dk-resize:hover::after, .dk-resize:active::after { background: var(--rule-strong); }
 @media (max-width: 1100px) { .dk-resize[data-side="right"] { display: none; } }
@@ -175,7 +206,8 @@
 .dk-icon { all: unset; box-sizing: border-box; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; cursor: pointer; color: var(--ink);
   border: 1px solid var(--rule); background: var(--surface, transparent);
   transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
-              color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+              color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              box-shadow var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-icon:hover, .dk-icon[aria-expanded="true"] { border-color: var(--rule-strong); background: var(--soft, rgba(0,0,0,.05)); }
 .dk-icon:active { transform: scale(.94); }
 .dk-icon:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
@@ -326,11 +358,23 @@
 /* Stop, while a turn runs. */
 .dk-stop { all: unset; box-sizing: border-box; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; cursor: pointer;
   border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink);
-  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), box-shadow var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-stop:hover { border-color: #b3261e; color: #b3261e; }
 .dk-stop:active { transform: scale(.94); }
 .dk-stop:disabled { opacity: .45; cursor: default; }
 .dk-stop:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+
+/* The icon buttons and Stop use the same glass and lift as the website's buttons, so the app has one button
+   language rather than a flat control row beside glassy CTAs. */
+.dk-page .dk-icon, .dk-page .dk-stop {
+  background: var(--dg-glass);
+  border-color: var(--dg-edge);
+  box-shadow: var(--dg-lift);
+}
+.dk-page .dk-icon:hover, .dk-page .dk-stop:hover {
+  background: var(--dg-glass-strong);
+  box-shadow: var(--dg-lift-hover);
+}
 
 /* The queued prompts: reorder, edit, or drop each one (reqs §2). */
 .dk-queue-tools { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; }
@@ -339,21 +383,21 @@
 .dk-queue-tools button:hover { background: var(--soft, rgba(0,0,0,.07)); color: var(--ink); }
 .dk-queue-tools button:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
 
-/* The empty state: one line of boundary and three prompts, not a blank box (reqs §8). */
+/* The empty state: one line of boundary and three prompts, not a blank box (reqs §8). The prompts use the
+   canonical button recipe (`btn-line dg-mini`) so the first thing a new session shows matches every other
+   button in the app. This class only handles wrapping. */
 .dk-empty { margin: auto; max-width: 560px; display: grid; gap: 14px; padding: 20px 8px; text-align: left; }
 .dk-empty-line { margin: 0; color: var(--ink); font-size: 15px; line-height: 1.5; font-weight: 300; }
 .dk-empty-prompts { display: flex; flex-wrap: wrap; gap: 8px; }
-.dk-empty-prompt { font: inherit; font-size: 13px; padding: 7px 12px; border: 1px solid var(--rule-strong); border-radius: 999px; background: var(--surface); color: var(--ink); cursor: pointer;
-  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
-.dk-empty-prompt:hover { background: var(--soft, rgba(0,0,0,.05)); border-color: var(--ink); }
-.dk-empty-prompt:active { transform: scale(.97); }
+.dk-empty-prompt { white-space: normal; text-align: left; justify-content: flex-start; padding: 7px 12px; }
+.dk-empty-prompt:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
 
 /* One reduced-motion switch for everything this file adds: the rule in chat.css covers the chat's own selectors, not
    these. Nothing here may keep moving when the reader asked it not to. */
 @media (prefers-reduced-motion: reduce) {
   .dk-page .dk-step, .dk-page .dk-viewer, .dk-page .dk-account, .dk-page .dk-help-menu,
-  .dk-page .dk-activity li, .dk-page .dk-activity li[data-state="running"] .dk-act-mark,
-  .dk-page .dk-head-tools .dk-icon, .dk-palette-backdrop, .dk-palette { animation: none !important; }
+  .dk-page .dk-panel > *, .dk-page .dk-activity li, .dk-page .dk-activity li[data-state="running"] .dk-act-mark,
+  .dk-page .dk-head-toggle, .dk-palette-backdrop, .dk-palette { animation: none !important; }
   .dk-page .dk-icon, .dk-page .dk-winbtn, .dk-page .dk-tree-row, .dk-page .dk-tree-row .chev,
   .dk-page .dk-sess-toggle svg, .dk-page .dk-fold > summary h2::before, .dk-page .dk-sess-more > summary::before,
   .dk-page .dk-resize::after, .dk-page .dk-act-mark, .dk-page .dk-activity li, .dk-page .dk-help-menu a,

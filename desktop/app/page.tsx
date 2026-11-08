@@ -812,6 +812,27 @@ export default function Home() {
   const runPaletteItem = (i: number) => { const it = paletteItems[i]; if (it) it.run() }
   const paletteSelected = Math.min(paletteIdx, Math.max(0, paletteItems.length - 1))
 
+  /** Drag the pill at the top of the composer to set its height. The native corner grip still works; this one is
+   *  visible and resizes upward the way a bottom-anchored composer should. */
+  const startComposerResize = (e: React.PointerEvent<HTMLSpanElement>) => {
+    e.preventDefault()
+    const el = textRef.current
+    if (!el) return
+    const startY = e.clientY
+    const startH = el.getBoundingClientRect().height
+    const max = Math.max(120, window.innerHeight * 0.5)
+    const move = (ev: PointerEvent) => {
+      const h = Math.max(44, Math.min(max, startH + (startY - ev.clientY)))
+      el.style.height = `${h}px`
+    }
+    const up = () => {
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+    }
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", up, { once: true })
+  }
+
   return (
     <section className="dg-page dk-page" style={springVars() as React.CSSProperties}>
       <ThemeWatcher />
@@ -1185,6 +1206,7 @@ export default function Home() {
             {busy && <><span className="dg-pulse" aria-hidden="true" /> Kell is working</>}
           </div>
           <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
+            <span className="dg-composer-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the message box" onPointerDown={startComposerResize} />
             <textarea ref={textRef} rows={1} data-big={big || undefined} value={text}
               onChange={(e) => { setText(e.target.value); histPos.current = null }}
               placeholder={directory ? "Tell kell what to do…" : "Open a project first"}
@@ -1213,7 +1235,7 @@ export default function Home() {
               }} />
             <div className="dg-composer-meta">
               {text.trim() && <span className="dg-count" aria-live="off">{words} {words === 1 ? "word" : "words"}</span>}
-              <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); textRef.current?.focus() }} aria-pressed={big}
+              <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); if (textRef.current) textRef.current.style.height = ""; textRef.current?.focus() }} aria-pressed={big}
                 aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
               </button>

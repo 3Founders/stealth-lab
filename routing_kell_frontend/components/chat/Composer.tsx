@@ -93,6 +93,26 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
     if (docs.length) onSend(t, pics.length ? pics : undefined, docs); else if (pics.length) onSend(t, pics); else onSend(t);
     setText(""); setCaret(0); setActive(0); setDismissed(false); setPics([]); setDocs([]); setPicError("");
   };
+  /** Drag the small pill at the top of the box to set its height. The native corner grip still works; this is the
+   *  obvious one, and it resizes upward the way a bottom-anchored composer should. */
+  const startResize = (e: React.PointerEvent<HTMLSpanElement>) => {
+    e.preventDefault();
+    const el = ref.current;
+    if (!el) return;
+    const startY = e.clientY;
+    const startH = el.getBoundingClientRect().height;
+    const max = Math.max(120, window.innerHeight * 0.5);
+    const move = (ev: PointerEvent) => {
+      const h = Math.max(44, Math.min(max, startH + (startY - ev.clientY)));
+      el.style.height = `${h}px`;
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+  };
   /** Files from the picker or a drop: all of them, so one that is not a picture is reported instead of silently ignored. */
   const imageFiles = (files: FileList | null | undefined): File[] => Array.from(files ?? []);
   const pastedImages = (items: DataTransferItemList): File[] => {
@@ -119,6 +139,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
       onDragLeave={() => setOver(false)}
       onDrop={(e) => { setOver(false); const f = imageFiles(e.dataTransfer.files); if (f.length) { e.preventDefault(); void addFiles(f); } }}
     >
+      <span className="dg-composer-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the message box" onPointerDown={startResize} />
       {(pics.length > 0 || docs.length > 0 || picError) && (
         <div className="dg-pics">
           {docs.map((f, i) => (
@@ -171,7 +192,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
       />
       <div className="dg-composer-meta">
       {text.trim() && <span className="dg-count" aria-live="off">{wordCount(text)} {wordCount(text) === 1 ? "word" : "words"}{text.length >= MAX_MESSAGE - 1000 ? ` · ${text.length} / ${MAX_MESSAGE}` : ""}</span>}
-        <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); ref.current?.focus(); }} aria-pressed={big} aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
+        <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); if (ref.current) ref.current.style.height = ""; ref.current?.focus(); }} aria-pressed={big} aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
       </button>
       </div>
