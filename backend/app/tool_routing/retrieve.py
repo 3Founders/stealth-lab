@@ -190,6 +190,11 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
     # "check the page renders after login" read as web, not browser (2026-10-30)
     if goal not in TOOL_GOALS:
         goal = (await _goal_by_meaning(qvec, embedder) if qvec is not None else None) or best_goal(qw)
+        # the reranker reads a goal found here the way it reads the triage's: asked as "which server", not as the request's topic.
+        # Asked as the raw request, a slugify task scored string-utility servers 1.0 and production errors ranked Sentry below
+        # four log tools (2026-11-08, the desktop's e2e test)
+        if goal in TOOL_GOALS:
+            need = need_text(query, goal)
     info["goal"] = goal
     if outcomes is None and outcomes_for is not None and goal:
         try:

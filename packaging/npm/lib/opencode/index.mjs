@@ -148,6 +148,12 @@ ${merged.reason}`
       watchdog.arm(e.sessionID)                 // a finished tool call is progress, however it ended
       if (e.status !== "completed") return
       const name = claudeName(e.tool, await servers())
+      // an edit goes into the transcript as Claude Code writes it (a tool_use with file_path): capture-stop reads the turn's edited files
+      // from there, and with only prompt and model lines it saw none, so a passing task never became a .kell/library.md entry (2026-11-08)
+      if (/^(Edit|Write)$/.test(name)) {
+        const input = claudeInput(e.tool, e.input)
+        if (input?.file_path) note(e.sessionID, { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: e.id, name, input: { file_path: input.file_path } }] } })
+      }
       const merged = await fire("PostToolUse", name, {
         ...base(e.sessionID, "PostToolUse"), tool_name: name, tool_input: claudeInput(e.tool, e.input), tool_use_id: e.id,
         tool_response: claudeResponse(e.tool, e.result),

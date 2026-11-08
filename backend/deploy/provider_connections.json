@@ -1,6 +1,60 @@
 {
   "connections": [
     {
+      "connection_id": "deepinfra",
+      "kind": "openai_compatible",
+      "base_url": "https://api.deepinfra.com/v1/openai",
+      "provider": "deepinfra",
+      "credential_ref": "env:DEEPINFRA_KEY",
+      "credential_owner": "platform",
+      "allowed_data_classes": [
+        "PUBLIC_SOURCE",
+        "PUBLIC_DERIVED",
+        "GLOBAL_PROCEDURE",
+        "USER_PRIVATE",
+        "ORG_PRIVATE"
+      ],
+      "zdr": true,
+      "no_training": true,
+      "units": [
+        {
+          "model": "glm-5.3-flash",
+          "provider_model": "zai-org/GLM-5.3-Flash",
+          "input_per_mtok": 0.15,
+          "output_per_mtok": 0.5,
+          "cached_input_per_mtok": 0.03
+        },
+        {
+          "model": "deepseek-v4.1-flash",
+          "provider_model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+          "input_per_mtok": 0.2,
+          "output_per_mtok": 0.6,
+          "cached_input_per_mtok": 0.006
+        },
+        {
+          "model": "mimo-v2.6-flash",
+          "provider_model": "XiaomiMiMo/MiMo-V2.6-Flash",
+          "input_per_mtok": 0.14,
+          "output_per_mtok": 0.28,
+          "cached_input_per_mtok": 0.0028
+        },
+        {
+          "model": "deepseek-v4-pro",
+          "provider_model": "deepseek-ai/DeepSeek-V4-Pro",
+          "input_per_mtok": 1.3,
+          "output_per_mtok": 2.6,
+          "cached_input_per_mtok": 0.1
+        },
+        {
+          "model": "kimi-k3",
+          "provider_model": "moonshotai/Kimi-K3",
+          "input_per_mtok": 2.85,
+          "output_per_mtok": 14.25,
+          "cached_input_per_mtok": 0.285
+        }
+      ]
+    },
+    {
       "connection_id": "zai-glm",
       "kind": "openai_compatible",
       "base_url": "https://api.z.ai/api/paas/v4",
@@ -28,30 +82,6 @@
       "request_extras": {
         "reasoning_effort": "low"
       }
-    },
-    {
-      "connection_id": "general-compute",
-      "kind": "openai_compatible",
-      "base_url": "https://api.generalcompute.com/v1",
-      "provider": "general_compute",
-      "credential_ref": "env:GENERAL_COMPUTE_API_KEY",
-      "credential_owner": "platform",
-      "allowed_data_classes": [
-        "PUBLIC_SOURCE",
-        "PUBLIC_DERIVED",
-        "GLOBAL_PROCEDURE",
-        "USER_PRIVATE",
-        "ORG_PRIVATE"
-      ],
-      "zdr": true,
-      "units": [
-        {
-          "model": "gemma-4-31b-it",
-          "provider_model": "gemma-4-31B-it",
-          "input_per_mtok": 1.0,
-          "output_per_mtok": 3.0
-        }
-      ]
     }
   ]
 }

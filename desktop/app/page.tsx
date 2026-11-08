@@ -21,6 +21,24 @@ type KellDesktop = {
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
+/** A tool call's subject in a few words: the path, pattern, command or query it was given. */
+const hintOf = (input: any): string | undefined => {
+  if (!input || typeof input !== "object") return undefined
+  const v = input.command ?? input.pattern ?? input.query ?? input.path ?? input.filePath ?? input.file ?? input.url ?? input.description
+  if (typeof v !== "string" || !v.trim()) return undefined
+  const one = v.replace(/\s+/g, " ").trim()
+  const short = /[\\/]/.test(one) && !/\s/.test(one) ? one.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : one
+  return short.length > 60 ? short.slice(0, 57) + "…" : short
+}
+
+/** When a session was last used, short: the time today, else the day. */
+const when = (ms: number) => {
+  const d = new Date(ms), now = new Date()
+  return d.toDateString() === now.toDateString()
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { day: "numeric", month: "short" })
+}
+
 /** The Help menu: the site's pages that answer what people ask in the app. */
 const HELP_LINKS: [string, string][] = [
   ["How kell works", "https://www.kell.org.in/docs"],
@@ -65,8 +83,9 @@ const signInFrom = (raw: string): { server: string; link: string } | null => {
   return { server, link }
 }
 
-type Line = { who: "user" | "assistant" | "signin" | "plan"; text: string; at?: number; server?: string; state?: "ready" | "open" | "done" | "failed" }
-type Step = { kind: "tool" | "model"; label: string; note?: string }
+type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission"; text: string; at?: number; server?: string
+              state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string }
+type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string; state?: "running" | "done" | "failed"; hint?: string }
 // One row per step (one model round trip). The engine splits it across events: session.step.started names the model (keyed
 // by assistantMessageID), session.step.ended carries tokens and cost for the same message. Neither event carries a rung.
 type LedgerRow = { id: string; model?: string; providerID?: string; tokens?: string; cost?: number }
@@ -102,12 +121,34 @@ export default function Home() {
   useEffect(() => { try { const r = JSON.parse(window.localStorage.getItem("kell.projects") || "[]"); if (Array.isArray(r)) setRecents(r.filter((x) => typeof x === "string").slice(0, 12)) } catch { /* none */ } }, [])
   const remember = (dir: string) => setRecents((r) => {
     const next = [dir, ...r.filter((x) => x.toLowerCase() !== dir.toLowerCase())].slice(0, 12)
+    try {
+      window.localStorage.setItem("kell.projects", JSON.stringify(next))
+      const hidden = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]")
+      if (Array.isArray(hidden) && hidden.includes(dir.toLowerCase()))       // opened again: it may come back from the engine's list too
+        window.localStorage.setItem("kell.projects.hidden", JSON.stringify(hidden.filter((x) => x !== dir.toLowerCase())))
+    } catch { /* storage blocked */ }
+    return next
+  })
+  // The folders the engine has worked in fill the list after the ones opened here (2026-11-07: the list started empty after a
+  // restart), except ones taken off it with ×.
+  const mergeProjects = (dirs: string[]) => setRecents((r) => {
+    let hidden: string[] = []
+    try { const h = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]"); if (Array.isArray(h)) hidden = h } catch { /* none */ }
+    const have = new Set(r.map((x) => x.toLowerCase()))
+    const extra = dirs.filter((d) => !have.has(d.toLowerCase()) && !hidden.includes(d.toLowerCase()))
+    if (!extra.length) return r
+    const next = [...r, ...extra].slice(0, 12)
     try { window.localStorage.setItem("kell.projects", JSON.stringify(next)) } catch { /* storage blocked */ }
     return next
   })
+  // × also keeps a project off the list when the engine's own project list is merged in (mergeProjects).
   const forget = (dir: string) => setRecents((r) => {
     const next = r.filter((x) => x !== dir)
-    try { window.localStorage.setItem("kell.projects", JSON.stringify(next)) } catch { /* storage blocked */ }
+    try {
+      window.localStorage.setItem("kell.projects", JSON.stringify(next))
+      const hidden = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]")
+      window.localStorage.setItem("kell.projects.hidden", JSON.stringify([...new Set([dir.toLowerCase(), ...(Array.isArray(hidden) ? hidden : [])])].slice(0, 100)))
+    } catch { /* storage blocked */ }
     return next
   })
   // The two side columns can be dragged wider or narrower; the widths are kept on this device.
@@ -155,6 +196,9 @@ export default function Home() {
   const [steps, setSteps] = useState<Step[]>([])
   const [ledger, setLedger] = useState<LedgerRow[]>([])
   const [sessionID, setSessionID] = useState<string | null>(null)
+  // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
+  const [sessions, setSessions] = useState<{ id: string; title: string; updated: number }[]>([])
+  const [sessOpen, setSessOpen] = useState(false)
   const [spend, setSpend] = useState(0)
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
@@ -185,8 +229,13 @@ export default function Home() {
   const [queued, setQueued] = useState<string[]>([])
 
   useEffect(() => {
-    setDirectory(window.localStorage.getItem("kell.directory") || "")
-    fetch("/api/engine").then((r) => r.json()).then((j) => setEngine({ up: !!j.up }))
+    const last = window.localStorage.getItem("kell.directory") || ""
+    setDirectory(last)
+    fetch("/api/engine").then((r) => r.json()).then((j) => {
+      setEngine({ up: !!j.up })
+      if (j.up) loadSessions()
+      else if (last && desktop()) void openProject(last)    // the app reopens the project you had open, with its sessions
+    })
     fetch("/api/settings").then((r) => r.json()).then(setSettings).catch(() => undefined)
   }, [])
   useEffect(() => { scrollToEnd({ instant: true }) }, [scrollToEnd, sessionID])
@@ -197,24 +246,53 @@ export default function Home() {
     // and the Undo button can never disagree. Without one: the working tree's diff.
     const r = await fetch(sid ? `/api/diff?sessionID=${encodeURIComponent(sid)}` : "/api/diff")
     const j = await r.json()
-    if (!r.ok) { setFiles([]); setOtherFiles([]); setOtherMore(0); setPending(0); setFilesNote(j.error || "could not read the changes"); return }
+    if (!r.ok) { setFiles([]); setOtherFiles([]); setOtherMore(0); setPending(0); setFilesNote(j.error || "Could not read changes"); return }
     setFiles(Array.isArray(j.files) ? j.files : [])
     setOtherFiles(Array.isArray(j.other) ? j.other : [])
     setOtherMore(typeof j.more === "number" ? j.more : 0)
     setPending(typeof j.pending === "number" ? j.pending : (j.files || []).length)
     setFilesNote(Array.isArray(j.files) && j.files.length === 0
-      ? (sid ? (j.snapshot ? "kell's last turn changed nothing" : "kell has not changed anything in this session yet") : "kell has not changed anything yet")
-      : (typeof j.pending === "number" && j.pending === 0 ? "undone — nothing left to put back" : ""))
+      ? (sid && j.snapshot ? "No changes in the last turn" : "No changes by kell")
+      : (typeof j.pending === "number" && j.pending === 0 ? "Undone" : ""))
   }, [])
 
+  const loadSessions = useCallback(async () => {
+    try {
+      const j = await (await fetch("/api/sessions")).json()
+      setSessions(Array.isArray(j.sessions) ? j.sessions : [])
+      const p = await (await fetch("/api/sessions?projects=1")).json()
+      if (Array.isArray(p.projects)) mergeProjects(p.projects.map((x: { dir: string }) => x.dir))
+    } catch { /* the lists stay as they were */ }
+  }, [])
+
+  // A past session: its conversation back on screen, and the next message continues it.
+  const openSession = async (id: string) => {
+    if (busy || id === sessionID) return
+    setQueued([]); setSteps([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
+    setSessionID(id); setLines([])
+    try {
+      const j = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`)).json()
+      setLines(Array.isArray(j.lines) ? j.lines : [])
+    } catch { setLines([{ who: "assistant", text: "kell could not read this session.", at: Date.now() }]) }
+    loadChanges(id)
+  }
+
+  const sessionRow = (x: { id: string; title: string; updated: number }) => (
+    <button type="button" key={x.id} className="dk-sess-row" data-here={x.id === sessionID || undefined} title={x.title || "Untitled session"}
+      disabled={busy} onClick={() => void openSession(x.id)}>
+      <span className="nm">{x.title || "Untitled session"}</span>
+      <span className="when">{x.updated ? when(x.updated) : ""}</span>
+    </button>
+  )
+
   const loadTools = async (need: string) => {
-    setCardsNote("asking kell's tool router…")
+    setCardsNote("Finding tools…")
     try {
       const r = await fetch("/api/tools", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ need }) })
       const j = await r.json()
       if (!r.ok) { setCards([]); setCardsNote(j.error || "the tool router did not answer"); return }
       setCards(j.tools || [])
-      setCardsNote((j.tools || []).length ? "" : "no outside tool fits this request")
+      setCardsNote((j.tools || []).length ? "" : "No outside tool needed")
     } catch (err: any) { setCards([]); setCardsNote(String(err?.message || err)) }
   }
 
@@ -237,7 +315,8 @@ export default function Home() {
     finally { setOpening(false) }
     setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
     if (j.up) remember(dir)
-    if (j.up) { setQueued([]); setLines([]); setSteps([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null) }
+    if (j.up) { setQueued([]); setLines([]); setSteps([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null); loadSessions() }
+    else setSessions([])
   }
 
   const appendAssistant = (delta: string) => setLines((l) => {
@@ -260,6 +339,7 @@ export default function Home() {
     }
     const sent = body
     setLines((l) => [...l, { who: "user", text: sent, at: Date.now() }])
+    setSteps([])
     if (again === undefined) setText("")                     // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
@@ -290,8 +370,18 @@ export default function Home() {
         const d = ev.data || {}
         if (t === "session") { sid = ev.sessionID; setSessionID(ev.sessionID) }
         else if (t === "session.text.delta") appendAssistant(d.delta ?? d.text ?? "")
+        else if (t === "session.tool.input.started") {
+          // The tool's name comes only here; the called / success / failed events carry the call's id (2026-11-07: every chip read "tool").
+          const id = String(d.id || ""), label = String(d.name || "tool")
+          setSteps((s) => s.some((x) => x.id === id) ? s : [...s, { kind: "tool", label, id, state: "running" }])
+        }
         else if (t === "session.tool.called" || t === "session.tool.success" || t === "session.tool.failed") {
-          setSteps((s) => [...s, { kind: "tool", label: d.tool || d.name || "tool", note: t.endsWith("failed") ? "failed" : undefined }])
+          const id = String(d.id || "")
+          const state = t === "session.tool.called" ? "running" : t === "session.tool.success" ? "done" : "failed"
+          const hint = t === "session.tool.called" ? hintOf(d.input) : undefined
+          setSteps((s) => s.some((x) => x.id === id)
+            ? s.map((x) => (x.id === id ? { ...x, state, hint: hint ?? x.hint, note: state === "failed" ? "failed" : x.note } : x))
+            : [...s, { kind: "tool", label: String(d.name || "tool"), id, state, hint, note: state === "failed" ? "failed" : undefined }])
           const need = t === "session.tool.called" ? null : signInFrom(JSON.stringify(d))
           if (need) setLines((l) => l.some((x) => x.who === "signin" && x.text === need.link) ? l
             : [...l, { who: "signin", text: need.link, server: need.server, state: "ready", at: Date.now() }])
@@ -305,6 +395,12 @@ export default function Home() {
           const patch = { tokens: tokensOf(d), cost: d.cost != null ? Number(d.cost) : undefined }
           if (id) setLedger((rows) => rows.some((r) => r.id === id) ? rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) : [...rows, { id, ...patch }])
           if (d.cost != null) setSpend((c) => c + Number(d.cost))
+        }
+        else if (t === "permission.asked") {
+          // the engine waits for this answer (reading a .env file asks first); without it the turn hung (2026-11-08, the e2e test)
+          const what = [d.action, ...(Array.isArray(d.resources) ? d.resources.slice(0, 3) : [])].filter(Boolean).join(" ")
+          setLines((l) => l.some((x) => x.requestID === d.id) ? l
+            : [...l, { who: "permission", text: String(d.message || what || "a tool call"), sessionID: d.sessionID, requestID: String(d.id), at: Date.now() }])
         }
         else if (t === "need_plan") { setLines((l) => [...l, { who: "plan", text: "", at: Date.now() }]); setBusy(false) }
         else if (t === "error") {
@@ -325,6 +421,15 @@ export default function Home() {
     // poll a few times, so the panel fills itself instead of waiting for a Refresh click.
     loadChanges(sid)
     for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (!busyRef.current) loadChanges(sid) }, ms)
+    loadSessions()
+    setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
+  }
+
+  const answerPermission = async (l: Line, decision: "once" | "always" | "reject") => {
+    setLines((all) => all.map((x) => (x.requestID === l.requestID ? { ...x, answer: decision } : x)))
+    const r = await fetch("/api/permission", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionID: l.sessionID, requestID: l.requestID, decision }) }).catch(() => null)
+    if (!r?.ok) setLines((all) => all.map((x) => (x.requestID === l.requestID ? { ...x, answer: undefined } : x)))
   }
 
   const appendNote = (text: string) => setLines((l) => [...l, { who: "assistant", text, at: Date.now() }])
@@ -569,7 +674,6 @@ export default function Home() {
               {signinNote && <p className="dk-note">{signinNote}</p>}
             </div>
           )}
-          {engine?.up && !sessionID && <p className="dk-note" role="status">Project open: {project}. Type what you want done below.</p>}
 
           <h2>Projects</h2>
           {recents.length === 0 ? <p className="dk-note">Projects you open show here.</p> : (
@@ -585,6 +689,18 @@ export default function Home() {
                       <span className="nm">{name}</span>
                     </button>
                     <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>×</button>
+                    {here && engine?.up && sessions.length > 0 && (
+                      // The open project's sessions under it, one list: the newest shows, a chevron shows the rest.
+                      <div className="dk-sess">
+                        {(sessOpen || sessions.slice(1).some((x) => x.id === sessionID) ? sessions : sessions.slice(0, 1)).map(sessionRow)}
+                        {sessions.length > 1 && (
+                          <button type="button" className="dk-sess-toggle" aria-expanded={sessOpen} aria-label={sessOpen ? "Show fewer sessions" : "Show all sessions"}
+                            title={sessOpen ? "Show fewer" : "Show all"} onClick={() => setSessOpen((o) => !o)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </li>
                 )
               })}
@@ -641,9 +757,6 @@ export default function Home() {
           <div className="dg-scroll">
             <div className="dg-viewport" ref={logRef} aria-label="Messages">
               <div className="dg-content" ref={logContentRef}>
-                {lines.length === 0 && (
-                  <p className="dg-empty">Open a project, then say what to do. A low-cost model starts each task and the stronger one takes over when the tests say so. Tools that need a sign-in open in a small window here.</p>
-                )}
                 {lines.map((l, i) => {
                   if (l.who === "plan") {
                     return (
@@ -656,6 +769,26 @@ export default function Home() {
                             <div className="dk-row">
                               <a className="btn-ink" href="https://www.kell.org.in/pricing" target="_blank" rel="noopener">See plans</a>
                             </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }
+                  if (l.who === "permission") {
+                    return (
+                      <div className="dg-run" data-agent="true" key={i}>
+                        <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                        <div className="dg-col">
+                          <div className="dg-meta"><b>Kell</b><span className="dg-badge">permission</span><time>{time(l.at)}</time></div>
+                          <div className="dk-signin" data-state={l.answer ? "done" : "ready"}>
+                            <p>{l.answer ? <>{l.answer === "reject" ? "Not allowed" : "Allowed"}: <code>{l.text}</code></> : <>Allow <code>{l.text}</code>?</>}</p>
+                            {!l.answer && (
+                              <div className="dk-row">
+                                <button type="button" className="btn-ink" onClick={() => answerPermission(l, "once")}>Allow once</button>
+                                <button type="button" className="btn-line" onClick={() => answerPermission(l, "always")}>Always</button>
+                                <button type="button" className="btn-line" onClick={() => answerPermission(l, "reject")}>Don&apos;t allow</button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -715,10 +848,17 @@ export default function Home() {
             </div>
           </div>
 
-          {steps.length > 0 && (
-            <div className="dk-steps" aria-label="Tool calls">
-              {steps.slice(-10).map((s, i) => <span className="dk-step" data-failed={!!s.note || undefined} key={i}><b>{s.label}</b>{s.note ? ` · ${s.note}` : ""}</span>)}
-            </div>
+          {busy && steps.length > 0 && (
+            // What kell is doing right now: the newest calls, one under the other, each sliding in; the running one spins, done ones fade.
+            <ol className="dk-activity" aria-label="What kell is doing" aria-live="polite">
+              {steps.slice(-4).map((s, i, all) => (
+                <li key={s.id || i} data-state={s.state || "running"} style={{ "--age": all.length - 1 - i } as React.CSSProperties}>
+                  <span className="dk-act-mark" aria-hidden="true" />
+                  <b>{s.label}</b>
+                  {s.hint && <span className="dk-act-hint">{s.hint}</span>}
+                </li>
+              ))}
+            </ol>
           )}
           {queued.map((q, i) => (
             <div key={i} className="dg-queued small" role="status">
@@ -748,17 +888,18 @@ export default function Home() {
         </section>
 
         <aside className="dk-panel" aria-label="Changes, steps and tools">
-          <div className="dk-panel-head">
-            <h2>Changed by kell</h2>
+          <details className="dk-fold" open>
+          <summary className="dk-panel-head">
+            <h2>Changed by kell{files.length ? ` · ${files.length}` : ""}</h2>
             <span className="dk-iconrow">
-              <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the changes" title="Refresh" onClick={() => loadChanges(sessionID)} disabled={!readEngine}>
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the changes" title="Refresh" onClick={(e) => { e.preventDefault(); loadChanges(sessionID) }} disabled={!readEngine}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
               </button>
-              <button type="button" className="dk-icon dk-icon-sm" aria-label="Undo kell's last changes" title="Undo kell's last changes" onClick={() => undo()} disabled={!directory || busy || (!!sessionID && pending === 0)}>
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Undo kell's last changes" title="Undo kell's last changes" onClick={(e) => { e.preventDefault(); undo() }} disabled={!directory || busy || (!!sessionID && pending === 0)}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
               </button>
             </span>
-          </div>
+          </summary>
           {confirm && (
             <div className="dk-err">
               <p style={{ margin: "0 0 6px" }}>{confirm}. Undo would drop that.</p>
@@ -770,15 +911,18 @@ export default function Home() {
           )}
           {filesNote && !files.length && <p className="dk-note">{filesNote}</p>}
           <FileList files={files} openOne />
+          </details>
 
-          <h2>Other changes in this folder</h2>
-          {readEngine && <p className="dk-note">Not committed yet, and not made by kell in this session (your edits, or another tool's). Undo never touches these.</p>}
-          {readEngine && otherFiles.length === 0 && <p className="dk-note">none</p>}
+          <details className="dk-fold">
+          <summary><h2>Other changes in this folder{otherFiles.length ? ` · ${otherFiles.length + otherMore}` : ""}</h2></summary>
+          {readEngine && otherFiles.length === 0 && <p className="dk-note">No other changes</p>}
           <FileList files={otherFiles} />
           {otherMore > 0 && <p className="dk-note">and {otherMore} more</p>}
+          </details>
 
-          <h2>Model steps</h2>
-          {ledger.length === 0 ? <p className="dk-note">Each model step shows here with its tokens and cost.</p> : (
+          <details className="dk-fold">
+          <summary><h2>Model steps{ledger.length ? ` · ${ledger.length}` : ""}</h2></summary>
+          {ledger.length === 0 ? <p className="dk-note">No model steps yet</p> : (
             <div className="dk-ledger">
               {ledger.map((r) => (
                 <div className="row" key={r.id}>
@@ -788,8 +932,10 @@ export default function Home() {
               ))}
             </div>
           )}
+          </details>
 
-          <h2>Tools for this request</h2>
+          <details className="dk-fold">
+          <summary><h2>Tools for this request{cards.length ? ` · ${cards.length}` : ""}</h2></summary>
           {cardsNote && <p className="dk-note">{cardsNote}</p>}
           <div className="dk-cards">
             {cards.map((c) => (
@@ -800,6 +946,7 @@ export default function Home() {
               </div>
             ))}
           </div>
+          </details>
         </aside>
       </div>
     </section>

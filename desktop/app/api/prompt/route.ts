@@ -2,6 +2,7 @@
 // (session.idle for it). Event payloads go through as-is; the UI maps types to bubbles, chips and the model strip.
 import { engineStatus, clientFor } from "@/lib/engine"
 import { pooledEngineConfig, ownKeyLane, walletRemaining, isNeedPlan } from "@/lib/pooled"
+import { TOOL_RULES } from "@/lib/tools"
 
 export const dynamic = "force-dynamic"
 
@@ -35,7 +36,7 @@ export async function POST(req: Request) {
           try {
             for await (const ev of client.event.subscribe()) {
               const k = (ev as any).type as string
-              if (!k.startsWith("session.")) continue
+              if (!k.startsWith("session.") && k !== "permission.asked") continue   // a permission ask waits on the person
               const d = (ev as any).data ?? {}
               if (d.sessionID && d.sessionID !== sessionID) continue
               // the turn ends with execution.succeeded/failed (idle may not fire in serve mode)
@@ -57,7 +58,13 @@ export async function POST(req: Request) {
           }
           ctrl.close()
         })()
-        await client.session.prompt({ sessionID, text: String(body.text || "") })
+        // This app's rules for its engine (lib/tools.ts), as the session's instruction; kell's plugin adds the task lookup and the tool note
+        // itself. An engine that refuses the entry still runs the prompt.
+        const text = String(body.text || "")
+        try {
+          await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools", value: TOOL_RULES } as any)
+        } catch { /* the prompt still runs */ }
+        await client.session.prompt({ sessionID, text })
         await pump
       },
     })

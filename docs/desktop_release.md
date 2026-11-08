@@ -6,7 +6,7 @@ Status 2026-11-05: built and tested up to the public step. **Nothing here has be
    (`kell-Setup-${version}.exe`, no spaces) because `latest.yml` and the website's /download look for it. If the build fails with
    `EPROTO ... wrong version number` while re-downloading Electron, use the cached zip instead:
    `npx electron-builder --win nsis --publish never --config.electronDist=%LOCALAPPDATA%\electron\Cache\<hash dir with the zip> --config.electronVersion=<version>`.
-2. (Anuj) Create the public repo `3Founders/kell-desktop` (README only; no code). The name is in `desktop/package.json`
+2. (Anuj) Create the public repo `AnujB05/kell-desktop` (README only; no code). The name is in `desktop/package.json`
    (`build.publish`) and `routing_kell_frontend/app/download/route.ts` (override with `KELL_DESKTOP_RELEASES_REPO`).
 3. (Anuj) Release: tag `v<version>`, attach the `.exe`, `.blockmap` and `latest.yml` (all three; the updater needs `latest.yml`).
    Bump `version` in `desktop/package.json` for every release or the updater sees nothing new.

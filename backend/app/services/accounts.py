@@ -26,8 +26,10 @@ log = logging.getLogger(__name__)
 ENV = "KELL_WALLETS"
 LEGACY_ENV = "KELL_PERSONAL_ORGS"
 # what an individual account may call: the pooled models, through the two tools the apps use.
-PROVIDERS = ("zai", "general_compute")
-MODELS = ("glm-5.3-flash", "gemma-4-31b-it")
+# (owner, 2026-11-07: DeepInfra serves them all, Z.ai is glm-5.3-flash's fallback; General Compute is no longer offered.
+# db/185 brings existing accounts' rows to these lists.)
+PROVIDERS = ("deepinfra", "zai")
+MODELS = ("glm-5.3-flash", "deepseek-v4.1-flash", "mimo-v2.6-flash", "deepseek-v4-pro", "kimi-k3")
 TOOLS = ("call_model", "chat_completions")
 # Private code is allowed because the founders state that every provider key is zero-retention (ZDR) and the connections in
 # deploy/provider_connections.json declare it. That is the owner's declaration, not a proof (docs/provider_catalog.md); the

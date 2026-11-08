@@ -116,6 +116,17 @@ def test_the_triage_goal_wins_over_the_guess_and_lifts_matching_cards():
     assert hits[0].goal_match
 
 
+def test_a_goal_found_by_the_router_is_asked_as_which_server_like_the_triages():
+    asked = []
+
+    async def note(query, docs):
+        asked.append(query)
+        return [0.5 for _ in docs]
+
+    _, info = run(rank("query the postgres database", CARDS, k=2, reranker=note))
+    assert info["goal"] == "database" and asked[0].startswith("Which MCP server") and asked[0].endswith("query the postgres database")
+
+
 def test_best_goal_by_words():
     assert best_goal(["stripe", "invoice"]) == "payments"
     assert best_goal(["zzz"]) is None
@@ -381,6 +392,15 @@ def test_an_outcome_report_becomes_rows_and_bad_input_is_dropped():
     assert all(r["owner_id"] == "u1" and r["client"] == "claude-code" and r["check_kind"] == "tests" for r in rows)
     bad = _outcome_rows({"tool_goal": "nope", "outcome": "great", "used": ["mcp.x.com"]}, client="c", owner=None)
     assert bad[0]["tool_goal"] is None and bad[0]["outcome"] == "unknown"
+
+
+def test_a_tool_reported_by_its_registry_name_is_recorded_under_its_ref(monkeypatch):
+    from app.mcp_server import server as srv
+
+    monkeypatch.setattr(srv, "_registry_refs", lambda: {"io.github.upstash/context7": "mcp.context7.com"})
+    rows = srv._outcome_rows({"used": ["io.github.upstash/context7"], "outcome": "pass"}, client="desktop", owner=None)
+    assert [r["ref"] for r in rows] == ["mcp.context7.com"] and rows[0]["used"]
+    assert srv._outcome_rows({"used": ["io.github.nobody/unknown"]}, client="desktop", owner=None) == []
 
 
 def test_what_worked_for_a_goal_moves_a_relevant_tool_up():

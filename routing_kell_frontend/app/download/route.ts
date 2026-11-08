@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const DESKTOP_RELEASES_REPO = process.env.KELL_DESKTOP_RELEASES_REPO || "3Founders/kell-desktop";
+const DESKTOP_RELEASES_REPO = process.env.KELL_DESKTOP_RELEASES_REPO || "AnujB05/kell-desktop";
 const PAGE = `https://github.com/${DESKTOP_RELEASES_REPO}/releases/latest`;
 
 export async function GET() {

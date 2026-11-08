@@ -14,7 +14,8 @@ import path from "node:path"
 import { spawn } from "node:child_process"
 import { NextResponse } from "next/server"
 import { engineStatus, findEngineExe } from "@/lib/engine"
-import { pooledEngineConfig, ownKeyLane, personalModelIds, personalEngineConfig, gatewayOrigin } from "@/lib/pooled"
+import { pooledEngineConfig, ownKeyLane, personalModelIds, personalEngineConfig, gatewayOrigin, ladderOrder } from "@/lib/pooled"
+import { modelPlan } from "@/lib/kellplugin"
 import { kellCommand } from "@/lib/cli"
 
 export const dynamic = "force-dynamic"
@@ -43,8 +44,8 @@ export async function GET() {
       const k = c?.provider?.kell
       lane = "organization"
       gateway = k?.options?.baseURL || null
-      const ids = Object.keys(k?.models || {})
-      models = { cheap: ids[0] || null, strong: String(c?.model || "").replace(/^kell\//, "") || null, fallback: null, mode: "session" }
+      const ids = String(k?.options?.headers?.["x-stealthlab-fallback-models"] || "").split(",").filter(Boolean)
+      if (ids.length) models = { ...modelPlan(ids), mode: "session" }
     } catch { lane = "none" }
   } else if (ownKeyLane()) {
     lane = "own-key"
@@ -56,8 +57,9 @@ export async function GET() {
     // The model list is the gateway's. Ask for it here too (at most once a minute) so the sidebar names the models before the
     // engine has started, instead of "not set".
     if (!personalModelIds().length && Date.now() - lastAsk > 60_000) { lastAsk = Date.now(); await personalEngineConfig().catch(() => undefined) }
-    const ids = personalModelIds()
-    if (ids.length) models = { cheap: ids[0], strong: ids[ids.length - 1], fallback: null, mode: "session" }
+    // the gateway lists them in its own order; the engine runs them in MODEL_LADDER's (lib/pooled.ts), and so does this
+    const ids = ladderOrder(personalModelIds())
+    if (ids.length) models = { ...modelPlan(ids), mode: "session" }
   }
 
   // Who the saved token belongs to, read from its payload for display and for the app's same-account check with the
