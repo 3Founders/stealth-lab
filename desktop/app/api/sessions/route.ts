@@ -9,6 +9,25 @@ export const dynamic = "force-dynamic"
 
 type Line = { who: "user" | "assistant"; text: string; at?: number }
 
+// Sessions the app started, not the ones the person started with the `opencode` CLI in the same folder. Every app
+// prompt writes a `kell-tools` instruction entry into its session; that is the marker. The answer is cached, so a
+// refresh only asks about ids the app has not seen before.
+const kellSessions = new Map<string, boolean>()
+async function isKellSession(client: any, id: string, metadata: any): Promise<boolean> {
+  if (metadata?.kell === true) return true
+  const known = kellSessions.get(id)
+  if (known !== undefined) return known
+  try {
+    const entries = await client.experimental.session.instructions.entry.list({ sessionID: id })
+    const ok = Array.isArray(entries) && entries.some((e: any) => e?.key === "kell-tools")
+    kellSessions.set(id, ok)
+    return ok
+  } catch {
+    kellSessions.set(id, false)
+    return false
+  }
+}
+
 export async function GET(req: Request) {
   const e = engineStatus()
   if (!e) return Response.json({ sessions: [], lines: [] })
@@ -28,7 +47,9 @@ export async function GET(req: Request) {
     }
     if (!id) {
       const out = await client.session.list({ directory: e.directory as any, limit: 50, order: "desc" })
-      const sessions = (out.data as any[]).filter((s) => !s.parentID).map((s) => ({
+      const rows = (out.data as any[]).filter((s) => !s.parentID)
+      const flags = await Promise.all(rows.map((s) => isKellSession(client, String(s.id), s.metadata)))
+      const sessions = rows.filter((_, i) => flags[i]).map((s) => ({
         id: String(s.id), title: typeof s.title === "string" ? s.title : "", updated: Number(s.time?.updated ?? s.time?.created ?? 0),
       }))
       return Response.json({ sessions })
