@@ -83,7 +83,8 @@ const signInFrom = (raw: string): { server: string; link: string } | null => {
   return { server, link }
 }
 
-type Line = { who: "user" | "assistant" | "signin" | "plan"; text: string; at?: number; server?: string; state?: "ready" | "open" | "done" | "failed" }
+type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission"; text: string; at?: number; server?: string
+              state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string }
 type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string; state?: "running" | "done" | "failed"; hint?: string }
 // One row per step (one model round trip). The engine splits it across events: session.step.started names the model (keyed
 // by assistantMessageID), session.step.ended carries tokens and cost for the same message. Neither event carries a rung.
@@ -395,6 +396,12 @@ export default function Home() {
           if (id) setLedger((rows) => rows.some((r) => r.id === id) ? rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) : [...rows, { id, ...patch }])
           if (d.cost != null) setSpend((c) => c + Number(d.cost))
         }
+        else if (t === "permission.asked") {
+          // the engine waits for this answer (reading a .env file asks first); without it the turn hung (2026-11-08, the e2e test)
+          const what = [d.action, ...(Array.isArray(d.resources) ? d.resources.slice(0, 3) : [])].filter(Boolean).join(" ")
+          setLines((l) => l.some((x) => x.requestID === d.id) ? l
+            : [...l, { who: "permission", text: String(d.message || what || "a tool call"), sessionID: d.sessionID, requestID: String(d.id), at: Date.now() }])
+        }
         else if (t === "need_plan") { setLines((l) => [...l, { who: "plan", text: "", at: Date.now() }]); setBusy(false) }
         else if (t === "error") {
           if (needsWebSignIn(ev.error)) { setEngine({ up: false, error: String(ev.error) }); appendAssistant("Sign in to run models: the buttons are on the left.") }
@@ -416,6 +423,13 @@ export default function Home() {
     for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (!busyRef.current) loadChanges(sid) }, ms)
     loadSessions()
     setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
+  }
+
+  const answerPermission = async (l: Line, decision: "once" | "always" | "reject") => {
+    setLines((all) => all.map((x) => (x.requestID === l.requestID ? { ...x, answer: decision } : x)))
+    const r = await fetch("/api/permission", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionID: l.sessionID, requestID: l.requestID, decision }) }).catch(() => null)
+    if (!r?.ok) setLines((all) => all.map((x) => (x.requestID === l.requestID ? { ...x, answer: undefined } : x)))
   }
 
   const appendNote = (text: string) => setLines((l) => [...l, { who: "assistant", text, at: Date.now() }])
@@ -755,6 +769,26 @@ export default function Home() {
                             <div className="dk-row">
                               <a className="btn-ink" href="https://www.kell.org.in/pricing" target="_blank" rel="noopener">See plans</a>
                             </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }
+                  if (l.who === "permission") {
+                    return (
+                      <div className="dg-run" data-agent="true" key={i}>
+                        <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                        <div className="dg-col">
+                          <div className="dg-meta"><b>Kell</b><span className="dg-badge">permission</span><time>{time(l.at)}</time></div>
+                          <div className="dk-signin" data-state={l.answer ? "done" : "ready"}>
+                            <p>{l.answer ? <>{l.answer === "reject" ? "Not allowed" : "Allowed"}: <code>{l.text}</code></> : <>Allow <code>{l.text}</code>?</>}</p>
+                            {!l.answer && (
+                              <div className="dk-row">
+                                <button type="button" className="btn-ink" onClick={() => answerPermission(l, "once")}>Allow once</button>
+                                <button type="button" className="btn-line" onClick={() => answerPermission(l, "always")}>Always</button>
+                                <button type="button" className="btn-line" onClick={() => answerPermission(l, "reject")}>Don&apos;t allow</button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

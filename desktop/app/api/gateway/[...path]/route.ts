@@ -38,6 +38,7 @@ async function forward(req: Request, ctx: { params: Promise<{ path: string[] }> 
   }
   const out = new Headers()
   for (const k of ["content-type", "cache-control"]) { const v = r.headers.get(k); if (v) out.set(k, v) }
+  for (const [k, v] of r.headers) if (/^x-stealthlab-/i.test(k)) out.set(k, v)   // the model that answered, a fallback taken, the cost
   return new Response(r.body, { status: r.status, headers: out })
 }
 

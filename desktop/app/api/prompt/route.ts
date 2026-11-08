@@ -2,7 +2,7 @@
 // (session.idle for it). Event payloads go through as-is; the UI maps types to bubbles, chips and the model strip.
 import { engineStatus, clientFor } from "@/lib/engine"
 import { pooledEngineConfig, ownKeyLane, walletRemaining, isNeedPlan } from "@/lib/pooled"
-import { askRouter, toolInstruction } from "@/lib/tools"
+import { TOOL_RULES } from "@/lib/tools"
 
 export const dynamic = "force-dynamic"
 
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
           try {
             for await (const ev of client.event.subscribe()) {
               const k = (ev as any).type as string
-              if (!k.startsWith("session.")) continue
+              if (!k.startsWith("session.") && k !== "permission.asked") continue   // a permission ask waits on the person
               const d = (ev as any).data ?? {}
               if (d.sessionID && d.sessionID !== sessionID) continue
               // the turn ends with execution.succeeded/failed (idle may not fire in serve mode)
@@ -58,12 +58,11 @@ export async function POST(req: Request) {
           }
           ctrl.close()
         })()
-        // The room agent's tool rules and the router's shortlist for this message, as this session's instruction (lib/tools.ts). A slow or
-        // signed-out router only drops the shortlist; an engine that refuses the entry still runs the prompt.
+        // This app's rules for its engine (lib/tools.ts), as the session's instruction; kell's plugin adds the task lookup and the tool note
+        // itself. An engine that refuses the entry still runs the prompt.
         const text = String(body.text || "")
-        const shortlist = text.trim() ? await askRouter(text, 6_000).catch(() => []) : []
         try {
-          await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools", value: toolInstruction(shortlist) } as any)
+          await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools", value: TOOL_RULES } as any)
         } catch { /* the prompt still runs */ }
         await client.session.prompt({ sessionID, text })
         await pump

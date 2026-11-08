@@ -1,25 +1,23 @@
-// Tool suggestions as cards: POST { need } asks kell's tool router (POST <server>/tools) which tools fit a request --
-// the same call the plugin's native layer makes (experiments/opencode_kell/plugin/native.mjs), same config
-// (~/.stealthlab/config.json { url, token }), so the cards show what the session would be offered.
+// Tool suggestions as cards: POST { need } -> the tools kell would offer for this request (lib/tools.ts askTools: the triage, then the
+// router for the tool goal it names), so the cards show what the session is offered. No goal: no outside tool is needed, and no cards.
 //
-// The router answers { tools: [{ name, source, url?, requires_auth?, oauth?, needs_key?, ... }] }. The card shows the
-// name, where it comes from, and whether it can be added without a sign-in; "use through kell" is the gateway path --
-// the tools run on kell's side, nothing is installed here.
+// A card shows the name, where it comes from, and whether it needs a sign-in first; "use through kell" is the gateway path -- the tools
+// run on kell's side, nothing is installed here.
 import { NextResponse } from "next/server"
-import { askRouter } from "@/lib/tools"
+import { askTools, needsSignIn } from "@/lib/tools"
 
 export const dynamic = "force-dynamic"
 
 export async function POST(req: Request) {
   let need = ""
   try { need = String((await req.json()).need || "").slice(0, 4000) } catch { /* empty */ }
+  if (!need.trim()) return NextResponse.json({ tools: [] })
   try {
-    const tools = (await askRouter(need)).slice(0, 5).map((t) => ({
-      name: String(t.name || ""), source: t.source === "installed" ? "installed" : "registry",
-      url: typeof t.url === "string" ? t.url : null,
-      needsSignIn: !!(t.requires_auth || t.oauth || t.needs_key),
-    })).filter((t) => t.name)
-    return NextResponse.json({ tools })
+    const { goal, tools } = await askTools(need)
+    return NextResponse.json({ goal, tools: tools.slice(0, 5).map((t) => ({
+      name: String(t.name || t.server || ""), source: t.source === "installed" ? "installed" : "registry",
+      url: typeof t.url === "string" ? t.url : null, needsSignIn: needsSignIn(t),
+    })).filter((t) => t.name) })
   } catch (err: any) {
     return NextResponse.json({ error: String(err?.message || err) }, { status: err?.status || 502 })
   }

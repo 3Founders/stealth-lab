@@ -13,6 +13,7 @@
 // (OpenCode's own global config, e.g. a developer-held key lane).
 import fs from "node:fs"
 import { SIGN_IN_TO_RUN, webToken } from "./websession"
+import { pluginDir, preparePlugin } from "./kellplugin"
 import os from "node:os"
 import path from "node:path"
 
@@ -26,7 +27,8 @@ type Profile = {
 
 type Model = { id: string; input?: number; output?: number }
 
-export type PooledEngine = { content: string; key: string }
+/** content: the inline config; key: the provider bearer; env: what the engine also needs (the plugin's files, lib/kellplugin.ts). */
+export type PooledEngine = { content: string; key: string; env: Record<string, string> }
 
 const readJson = (file: string): any => {
   try { return JSON.parse(fs.readFileSync(file, "utf8")) } catch { return null }
@@ -43,13 +45,17 @@ export const DEFAULT_MODEL = MODEL_LADDER[0]
 
 const home = (env: NodeJS.ProcessEnv) => env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab")
 
+const rank = (id: string) => { const i = MODEL_LADDER.indexOf(id); return i < 0 ? MODEL_LADDER.length : i }
+
+/** Model ids in the order a turn uses them: MODEL_LADDER's, then the ones it does not name (as given). */
+export const ladderOrder = (ids: string[]): string[] => [...ids].sort((a, b) => rank(a) - rank(b))
+
 /** The one engine config both lanes share: kell's gateway as an OpenAI-compatible provider, the bearer in the child's
  *  environment (never in this text), the first model of MODEL_LADDER the gateway offers as the default and the rest of the
  *  ladder, in order, as the provider-failure fallbacks (models the ladder does not name go last, cheapest first). */
 function buildConfig(models: Model[], baseUrl: string, token: string, extraHeaders: Record<string, string>,
                      cfg: any, env: NodeJS.ProcessEnv, modelKey?: string): PooledEngine {
-  const rank = (m: Model) => { const i = MODEL_LADDER.indexOf(m.id); return i < 0 ? MODEL_LADDER.length : i }
-  const ladder = [...models].sort((a, b) => rank(a) - rank(b) || priceOf(a) - priceOf(b))
+  const ladder = [...models].sort((a, b) => rank(a.id) - rank(b.id) || priceOf(a) - priceOf(b))
   const strong = ladder[0]
 
   const table: Record<string, unknown> = {}
@@ -81,15 +87,24 @@ function buildConfig(models: Model[], baseUrl: string, token: string, extraHeade
     model: `kell/${strong.id}`,
   }
 
-  // Keep kell's plugin and MCP server when `kell setup --client opencode` installed them, so the app gets the same
-  // triage/routing and room tools as the CLI. The inline config replaces the global file for this child only.
-  const pluginDir = path.join(home(env), "opencode", "plugin")
-  if (fs.existsSync(path.join(pluginDir, "index.mjs"))) config.plugin = [pluginDir.replace(/\\/g, "/")]
-  if (cfg?.url) {
-    config.mcp = { servers: { kell: { type: "remote", url: cfg.url, codemode: false, headers: { Authorization: `Bearer ${token}` } } } }
-  }
-  return { content: JSON.stringify(config), key: modelKey ?? token }
+  // kell's plugin (lib/kellplugin.ts): its hooks give every prompt what Claude Code's give it -- find_ways with .kell/, the survey, the
+  // outcome capture -- and its native layer picks the model per prompt. The inline config replaces the global file for this child only.
+  const plugin = pluginDir(env)
+  if (plugin) config.plugin = [plugin]
+  // web search through kell's tools (Exa runs with no sign-in), not the engine's own: its built-in search was cancelled, and the model then
+  // never asked kell (2026-11-08, the e2e test)
+  config.websearch = false
+  // the model asks in the chat, where the person can answer: the engine's question tool opened a form this app never showed, and the
+  // turn waited on it for good (2026-11-08)
+  config.permissions = [{ action: "question", resource: "*", effect: "deny" }]
+  // kell's MCP server through this app (app/api/mcp), which adds the current sign-in to each request: a token written here expired after
+  // an hour and the engine's kell tools were gone until the app restarted (2026-11-08)
+  if (cfg?.url) config.mcp = { servers: { kell: { type: "remote", url: `${localOrigin(env)}/api/mcp`, codemode: false } } }
+  return { content: JSON.stringify(config), key: modelKey ?? token, env: preparePlugin(ladder.map((m) => m.id), env) }
 }
+
+/** This app's own server, which the engine reaches for models (personal lane) and kell's MCP tools. */
+const localOrigin = (env: NodeJS.ProcessEnv) => `http://127.0.0.1:${env.PORT || "3400"}`
 
 /** The organization lane: the inline config and the bearer, or null when this machine is not on an organization gateway. */
 export function pooledEngineConfig(env: NodeJS.ProcessEnv = process.env): PooledEngine | null {
@@ -166,7 +181,7 @@ export async function personalEngineConfig(env: NodeJS.ProcessEnv = process.env,
   shared.__kellPersonalModels = models.map((m) => m.id)
   // The engine calls this app's own /api/gateway (it adds the current website session to each call), never the gateway directly:
   // a session refreshes every hour, and the engine keeps whatever key it started with.
-  const local = `http://127.0.0.1:${env.PORT || "3400"}/api/gateway/v1`
+  const local = `${localOrigin(env)}/api/gateway/v1`
   return { ok: true, engine: buildConfig(models, local, token, {}, cfg, env, "kell-desktop-local") }
 }
 
