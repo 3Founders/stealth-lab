@@ -197,6 +197,13 @@ def paying_org(requested: Optional[str], org_ids: tuple[str, ...], pilot_org: Op
     return None, None
 
 
+def fallback_models(header: Optional[str]) -> list[str]:
+    """X-Stealthlab-Fallback-Models: the models to try, in order, when the chosen one cannot answer (a dead provider, no connection
+    for it). The same header and limit as app/api/chat_completions.py; the desktop app sends kell's whole ladder (desktop/lib/pooled.ts).
+    It was ignored here, so a dead model failed the desktop's turn (2026-11-08)."""
+    return [m.strip() for m in (header or "").split(",") if m.strip()][:5]
+
+
 def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_local: Callable[[Request], bool]) -> None:
     """Attach the routes to the MCP server's custom-route table."""
 
@@ -266,11 +273,12 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             max_cost = float(request.headers["x-stealthlab-max-cost-usd"]) if request.headers.get("x-stealthlab-max-cost-usd") else None
         except ValueError:
             return _error(request, 400, "X-Stealthlab-Max-Cost-Usd must be a number", "invalid_request_error", "invalid_request")
+        fallbacks = fallback_models(request.headers.get("x-stealthlab-fallback-models"))
         pool = pool_getter()
         try:
             params = _chat.parse_chat_body(raw)
             outcome = await _chat.chat(
-                pool, who.scope, params, fallback_models=[], actor=who.actor_id,
+                pool, who.scope, params, fallback_models=fallbacks, actor=who.actor_id,
                 tenant_id=org or (who.org_ids[0] if who.org_ids else None), org_id=org,
                 governed=settings.deployment_mode == "shared",
                 data_class=request.headers.get("x-stealthlab-data-class") or "USER_PRIVATE",
@@ -279,6 +287,8 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             return _failure(request, exc)
         headers = {**cors_headers(request), "x-stealthlab-unit": outcome.unit, "x-stealthlab-connection": outcome.connection_id,
                    "x-stealthlab-ai-generated": "true"}
+        if outcome.fell_back:
+            headers["x-stealthlab-fell-back"] = ",".join(str(f.get("unit")) for f in outcome.fell_back)
         if outcome.stream is not None:
             headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
             return StreamingResponse(outcome.stream, media_type="text/event-stream", headers=headers)

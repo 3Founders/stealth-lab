@@ -2037,6 +2037,26 @@ async def tools_consent_route(request: Request):
 _OUTCOMES = ("pass", "fail", "unknown")
 
 
+@functools.lru_cache(maxsize=1)
+def _registry_refs() -> dict[str, str]:
+    """Registry server name (lowercase) -> the ref its outcomes are stored under (store.card_refs: its connector host or package)."""
+    from app.tool_routing.catalog import registry_cards
+    from app.tool_routing.store import card_refs
+
+    out: dict[str, str] = {}
+    for card in registry_cards():
+        refs = sorted(card_refs(card))
+        if refs:
+            out[card.name.lower()] = refs[0]
+    return out
+
+
+def _registry_ref(name: str) -> str:
+    """A registry server's name, as discover_tools lists it ("io.github.upstash/context7") -> its ref, or "". Agents report a tool by
+    the name they were shown; only URLs and packages were understood, so those reports were dropped (2026-11-08)."""
+    return _registry_refs().get(name.strip().lower(), "")
+
+
 def _outcome_rows(body: dict[str, Any], *, client: str, owner: str | None) -> list[dict[str, Any]]:
     """A tool-outcome report -> tool_observations rows. used: [{"ref" or "server", "tool"?}] or names; suggested: the
     same. A ref is normalised to a package or a host (app/tool_routing/store.py norm_ref); anything else is dropped."""
@@ -2052,7 +2072,7 @@ def _outcome_rows(body: dict[str, Any], *, client: str, owner: str | None) -> li
         out: dict[str, str] = {}
         for x in (items if isinstance(items, list) else [])[:30]:
             raw = x if isinstance(x, str) else (x.get("ref") or x.get("connector_url") or x.get("server") or "") if isinstance(x, dict) else ""
-            ref = norm_ref(str(raw))
+            ref = norm_ref(str(raw)) or _registry_ref(str(raw))
             if ref:
                 out.setdefault(ref, str(x.get("tool") or "") if isinstance(x, dict) else "")
         return out

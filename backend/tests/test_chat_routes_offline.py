@@ -62,3 +62,9 @@ def test_the_client_address_is_the_first_forwarded_entry():
     req = SimpleNamespace(headers={"x-forwarded-for": "203.0.113.9, 10.0.0.1"}, client=SimpleNamespace(host="10.0.0.1"))
     assert cr.client_address(req) == "203.0.113.9"
     assert cr.client_address(SimpleNamespace(headers={}, client=SimpleNamespace(host="198.51.100.4"))) == "198.51.100.4"
+
+
+def test_the_fallback_header_is_read_in_order_and_capped():
+    assert cr.fallback_models(None) == [] and cr.fallback_models(" , ") == []
+    assert cr.fallback_models("glm-5.3-flash, mimo-v2.6-flash,,deepseek-v4-pro") == ["glm-5.3-flash", "mimo-v2.6-flash", "deepseek-v4-pro"]
+    assert len(cr.fallback_models("a,b,c,d,e,f,g")) == 5
