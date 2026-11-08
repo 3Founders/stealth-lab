@@ -120,6 +120,7 @@
   .dk-page .dk-chips { display: none; }
   .dk-page .dk-switch { padding: 0 4px; gap: 4px; }
   .dk-page .dk-who { display: none; }
+  .dk-page .dk-help { margin-left: auto; }
 }
 
 /* sidebar fields */
@@ -204,11 +205,12 @@
 .dk-page { display: flex; flex-direction: column; height: 100dvh; }
 .dk-page .dg-shell { height: auto; flex: 1; min-height: 0; }
 .dk-page .dg-shell[hidden] { display: none; }
-.dk-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 44px; flex: none; padding: 0 6px 0 12px;
+.dk-switch { display: flex; align-items: center; justify-content: flex-start; gap: 12px; height: 44px; flex: none; padding: 0 6px 0 12px;
   border-bottom: 1px solid var(--rule); background: var(--paper);
   /* The window has no Windows frame (electron/main.ts): this bar is the title bar — drag it to move, double-click to maximize. */
   -webkit-app-region: drag; user-select: none; }
 .dk-switch button, .dk-switch a, .dk-switch .dk-help-menu { -webkit-app-region: no-drag; }
+.dk-menubtn { margin-right: 2px; }
 .dk-winbtns { display: flex; align-items: center; gap: 2px; margin-left: 2px; }
 .dk-winbtn { all: unset; box-sizing: border-box; width: 34px; height: 30px; display: grid; place-items: center; border-radius: 8px; cursor: pointer;
   color: var(--grey); -webkit-app-region: no-drag;
@@ -222,7 +224,7 @@
 .dk-switch [role="tablist"] button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent;
   color: var(--grey); cursor: pointer; }
 .dk-switch [role="tablist"] button[aria-selected="true"] { background: var(--yellow); color: #171717; border-color: var(--ink); }
-.dk-who { font-size: 12.5px; color: var(--grey); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-who { margin-left: auto; font-size: 12.5px; color: var(--grey); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dk-who b { color: var(--ink); font-weight: 500; }
 .dk-mismatch { margin: 8px 12px 0; display: grid; gap: 8px; flex: none; }
 .dk-rooms { flex: 1; min-height: 0; display: grid; place-items: center; background: var(--surface); }

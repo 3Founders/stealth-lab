@@ -8,7 +8,7 @@
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron"
 import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
-import { setAppMenu } from "./menu"
+import { popupAppMenu, setAppMenu } from "./menu"
 import { BOOT } from "./memory"
 import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import { createServer } from "node:http"
@@ -106,7 +106,7 @@ if (!app.requestSingleInstanceLock()) {
       else if (/^https?:/.test(url)) void shell.openExternal(url)
     })
     ipcMain.on("kell:open-signin", (_e, url: string) => openSignIn(win, String(url), signInDone))
-    // The team rooms (electron/rooms.ts) and the one account sign-in shared by the coding lane and the rooms.
+    ipcMain.on("kell:menu-popup", () => popupAppMenu(win))    // The team rooms (electron/rooms.ts) and the one account sign-in shared by the coding lane and the rooms.
     ipcMain.on("kell:rooms-bounds", (_e, rect) => { if (win) setRoomsBounds(win, rect && typeof rect === "object" ? rect : null) })
     ipcMain.on("kell:rooms-reload", () => reloadRooms())
     ipcMain.on("kell:rooms-email", () => openRoomsEmailSignIn())

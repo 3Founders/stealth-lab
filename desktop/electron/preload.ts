@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("kellDesktop", {
     ipcRenderer.on("kell:menu", h)
     return () => { ipcRenderer.removeListener("kell:menu", h) }
   },
+  showMenu: () => ipcRenderer.send("kell:menu-popup"),
   rooms: {
     show: (rect: Rect | null) => ipcRenderer.send("kell:rooms-bounds", rect),
     reload: () => ipcRenderer.send("kell:rooms-reload"),

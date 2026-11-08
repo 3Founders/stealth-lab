@@ -36,3 +36,9 @@ export function setAppMenu(win: () => BrowserWindow | undefined) {
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
+
+/** Show the same File / Edit / View / Window / Help menu as a popup, for the frameless window's top bar. */
+export function popupAppMenu(win: BrowserWindow | undefined) {
+  const menu = Menu.getApplicationMenu()
+  if (menu && win) menu.popup({ window: win })
+}

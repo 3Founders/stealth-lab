@@ -18,7 +18,7 @@ type Rect = { x: number; y: number; width: number; height: number }
 type RoomsWho = { id: string; email: string | null } | null
 type KellDesktop = {
   openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void
-  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void
+  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void; showMenu?: () => void
   window?: { minimize: () => void; toggleMaximize: () => void; close: () => void }
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
@@ -882,6 +882,11 @@ export default function Home() {
     <section className="dg-page dk-page" style={springVars() as React.CSSProperties}>
       <ThemeWatcher />
       <nav className="dk-switch" aria-label="Code or rooms">
+        {desktop() && (
+          <button type="button" className="dk-icon dk-icon-sm dk-menubtn" aria-label="File, Edit and View menu" title="File, Edit, View and Help" onClick={() => desktop()?.showMenu?.()}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+        )}
         <div role="tablist">
           <button type="button" role="tab" aria-selected={pane === "code"} onClick={() => setPane("code")}>Code</button>
           <button type="button" role="tab" aria-selected={pane === "rooms"} onClick={() => setPane("rooms")}>Rooms</button>
