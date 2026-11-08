@@ -17,29 +17,25 @@ are in `desktop_release.md`. This file is the current one and matches what the l
   irm https://www.kell.org.in/desktop.ps1 | iex
   ```
 
-Still wrong, and the admin's first jobs:
+Still to do before a public launch:
 
-1. **The repo names disagree.** The live site points at `AnujB05/kell-desktop` (that is the
-   `KELL_DESKTOP_RELEASES_REPO` Vercel env). `desktop/package.json`'s `build.publish` and
-   `routing_kell_frontend/app/download/route.ts`'s default still say `3Founders/kell-desktop`. The app's auto-updater
-   uses the `build.publish` baked in at build time, so if `v0.1.8` was built with the default, auto-update 404s.
-   Pick one repo and use it in both places.
-2. **The local version is behind.** `desktop/package.json` says `0.1.0`; `0.1.8` is already published. Bump above the
-   newest published release for the next one.
-3. **The installer is unsigned.** Windows shows "Windows protected your PC".
-4. **Supabase's redirect allow list** still needs `http://127.0.0.1:**` for the Google/GitHub buttons.
-5. **No live end-to-end pass** has been run from a clean Windows machine.
+1. **The installer is unsigned.** Windows shows "Windows protected your PC".
+2. **Supabase's redirect allow list** still needs `http://127.0.0.1:**` for the Google/GitHub buttons.
+3. **No live end-to-end pass** has been run from a clean Windows machine.
+4. **The next release must bump the version.** `desktop/package.json` is `0.1.8`, matching the published release; the
+   next build must be `0.1.9` or higher or the updater sees nothing new.
 
-## 1. Pick the releases repo
+## 1. Keep the releases repo names in sync
 
-The installers live as releases of a **public repo that holds only releases, no code**.
+The installers live as releases of a **public repo that holds only releases, no code**: `AnujB05/kell-desktop`
+(releases `v0.1.2` … `v0.1.8`). It is named in three places and they must agree:
 
-- Today that is `AnujB05/kell-desktop` (public; releases `v0.1.2` … `v0.1.8`).
-- If you move it to the org (`3Founders/kell-desktop`), change **both**:
-  - `desktop/package.json` → `build.publish.owner` / `build.publish.repo`
-  - the Vercel env `KELL_DESKTOP_RELEASES_REPO` (or the default in
-    `routing_kell_frontend/app/download/route.ts`)
-- Do not put the app source in that repo. A README is enough.
+- `desktop/package.json` → `build.publish.owner` / `build.publish.repo` (the updater reads this at build time)
+- `routing_kell_frontend/app/download/route.ts` → the default (override with `KELL_DESKTOP_RELEASES_REPO`)
+- the Vercel env `KELL_DESKTOP_RELEASES_REPO`
+
+If you move it to the org (`3Founders/kell-desktop`), change all three. Do not put the app source there; a README is
+enough.
 
 ## 2. Build the installer
 
