@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld("kellDesktop", {
   openAccount: (url: string): Promise<boolean> => ipcRenderer.invoke("kell:account-open", String(url)),
   signOutRooms: (): Promise<void> => ipcRenderer.invoke("kell:rooms-signout"),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke("kell:pick-folder"),
+  // The app draws its own window (no Windows frame), so it also draws minimize / maximize / close (the page's top bar).
+  window: { minimize: () => ipcRenderer.send("kell:win", "minimize"), toggleMaximize: () => ipcRenderer.send("kell:win", "maximize"),
+            close: () => ipcRenderer.send("kell:win", "close") },
   onMenu: (cb: (what: string) => void) => {
     const h = (_e: unknown, what: string) => cb(String(what))
     ipcRenderer.on("kell:menu", h)

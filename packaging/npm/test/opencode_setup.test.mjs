@@ -51,9 +51,10 @@ test("the second provider (di) is added only when its key variable is given, and
 });
 
 test("model plan: with the second provider the strong rung moves there and gc/deepseek becomes its fallback; otherwise today's setup", () => {
-  assert.deepEqual(modelPlan({}), { strong: STRONG_MODEL, fallback: CHEAP_MODEL });
+  assert.deepEqual(modelPlan({}), { strong: STRONG_MODEL, fallback: CHEAP_MODEL, fallbacks: [STRONG_MODEL, CHEAP_MODEL] });
   assert.deepEqual(modelPlan({ strongKeyEnv: "DEEPINFRA_KEY" }),
-                   { strong: `${DI_PROVIDER}/${DI_MODEL}`, fallback: STRONG_MODEL });
+                   { strong: `${DI_PROVIDER}/${DI_MODEL}`, fallback: STRONG_MODEL,
+                     fallbacks: [`${DI_PROVIDER}/${DI_MODEL}`, STRONG_MODEL, CHEAP_MODEL] });
   assert.equal(STRONG_MODEL.startsWith("gc/"), true);
   assert.equal(CHEAP_MODEL.startsWith("gc/"), true);
 });
@@ -79,7 +80,8 @@ test("organization lane: join profiles point the provider at the gateway, with t
                "a dead cheap provider falls back to the strong model, and the reverse");
   assert.deepEqual(config.provider.kell.models["glm-5.3"].cost, { input: 0.6, output: 2.2 });
   assert.equal(config.model, "kell/glm-5.3", "the priciest joined model is the strong rung");
-  assert.deepEqual(modelPlan({ pooled }), { strong: "kell/glm-5.3", fallback: "kell/glm-5.3-flash" });
+  assert.deepEqual(modelPlan({ pooled }), { strong: "kell/glm-5.3", fallback: "kell/glm-5.3-flash",
+                                           fallbacks: ["kell/glm-5.3", "kell/glm-5.3-flash"] });
   assert.deepEqual(withoutKell(config, { pluginDir, owned }), {}, "uninstall removes the gateway provider too");
 });
 

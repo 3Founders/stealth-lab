@@ -220,6 +220,55 @@ def test_a_down_model_falls_back_to_the_named_next_model_but_a_bad_request_does_
         _chat(_params(model="one"), fallback_models=["two"])
 
 
+def test_a_model_the_provider_account_does_not_allow_falls_back_to_the_next(monkeypatch):
+    """The live shape: 'model ... is not on this organization's allowlist' with no HTTP status in the message the
+    engine shows. It is a model-level refusal, so the next rung answers instead of the turn ending on it."""
+    calls = []
+
+    def handler(request):
+        model = json.loads(request.content)["model"]
+        calls.append(model)
+        if model == "vendor/one":
+            return httpx.Response(404, text="model 'one' is not on this organization's allowlist")
+        return httpx.Response(200, json=_reply("two"))
+    _serve(monkeypatch, _conn("mr-a", model="one", provider_model="vendor/one"),
+           _conn("mr-b", model="two", provider_model="vendor/two"), handler=handler)
+    out = _chat(_params(model="one"), fallback_models=["two"])
+    assert out.unit == "two|direct" and calls == ["vendor/one", "vendor/two"]
+    assert out.fell_back[0]["unit"] == "one|direct"
+
+
+def test_a_model_the_organization_policy_does_not_allow_falls_back_to_the_next(monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content)["model"])
+        return httpx.Response(200, json=_reply("two"))
+    _serve(monkeypatch, _conn("pr-a", model="one", provider_model="vendor/one"),
+           _conn("pr-b", model="two", provider_model="vendor/two"), handler=handler)
+
+    async def reserve(pool, **kw):
+        if kw["model"] == "one":
+            raise gov.PolicyDenied("model 'one' is not on this organization's allowlist", code="model_not_allowed")
+        return gov.Reservation("ledger-1", kw["org_id"], 1)
+
+    async def settle(pool, reservation, **kw):
+        return None
+
+    async def fail(pool, reservation, **kw):
+        return None
+
+    async def record_denial(pool, **kw):
+        return None
+
+    monkeypatch.setattr(gov, "reserve_call", reserve)
+    monkeypatch.setattr(gov, "settle_call", settle)
+    monkeypatch.setattr(gov, "fail_call", fail)
+    monkeypatch.setattr(gov, "record_denial", record_denial)
+    out = _chat(_params(model="one"), governed=True, fallback_models=["two"])
+    assert out.unit == "two|direct" and calls == ["vendor/two"]
+
+
 # ------------------------------------------------------------------ streaming
 
 SSE = (b'data: {"choices":[{"delta":{"role":"assistant","content":"Hel"}}]}\n\n'

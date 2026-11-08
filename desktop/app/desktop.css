@@ -84,8 +84,17 @@
 .dk-page { display: flex; flex-direction: column; height: 100dvh; }
 .dk-page .dg-shell { height: auto; flex: 1; min-height: 0; }
 .dk-page .dg-shell[hidden] { display: none; }
-.dk-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 44px; flex: none; padding: 0 12px;
-  border-bottom: 1px solid var(--rule); background: var(--paper); }
+.dk-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 44px; flex: none; padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--rule); background: var(--paper);
+  /* The window has no Windows frame (electron/main.ts): this bar is the title bar — drag it to move, double-click to maximize. */
+  -webkit-app-region: drag; user-select: none; }
+.dk-switch button, .dk-switch a, .dk-switch .dk-help-menu { -webkit-app-region: no-drag; }
+.dk-winbtns { display: flex; align-items: center; gap: 2px; margin-left: 2px; }
+.dk-winbtn { all: unset; box-sizing: border-box; width: 34px; height: 30px; display: grid; place-items: center; border-radius: 8px; cursor: pointer;
+  color: var(--grey); -webkit-app-region: no-drag; }
+.dk-winbtn:hover { background: var(--soft, rgba(0,0,0,.06)); color: var(--ink); }
+.dk-winbtn-x:hover { background: #c42b1c; color: #fff; }
+.dk-winbtn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
 .dk-switch [role="tablist"] { display: flex; gap: 4px; }
 .dk-switch [role="tablist"] button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent;
   color: var(--grey); cursor: pointer; }

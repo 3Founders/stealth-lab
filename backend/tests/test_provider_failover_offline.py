@@ -235,6 +235,21 @@ def test_a_bad_request_does_not_move_to_a_fallback_model(monkeypatch):
     assert seen == ["big|direct"]
 
 
+def test_a_named_model_denied_by_policy_moves_to_the_ladder(monkeypatch):
+    """The live desktop shape: model 'kimi-k3' is not on this organization's allowlist. A named model is no longer the
+    end of the turn when another rung may answer."""
+    seen = _tool(monkeypatch, {"big|direct": ProviderCallDenied("model 'big' is not on this organization's allowlist")})
+    body = json.loads(run(srv.call_model(_Ctx(), "p", model="big")))
+    assert seen[0] == "big|direct" and body["unit"] == "deepseek-v4.1-flash|direct"
+    assert body["fell_back"][0] == {"unit": "big|direct", "refused": "model 'big' is not on this organization's allowlist"}
+
+
+def test_a_named_model_that_does_not_exist_moves_to_the_ladder(monkeypatch):
+    seen = _tool(monkeypatch, {"big|direct": ProviderCallFailed("HTTP 404: model 'big' not found", status=404)})
+    body = json.loads(run(srv.call_model(_Ctx(), "p", model="big")))
+    assert seen[0] == "big|direct" and body["unit"] == "deepseek-v4.1-flash|direct"
+
+
 def test_auto_skips_a_down_rung_and_tells_report_result_which_model_ran(monkeypatch):
     seen = _tool(monkeypatch, {"cheap|direct": DOWN})
 

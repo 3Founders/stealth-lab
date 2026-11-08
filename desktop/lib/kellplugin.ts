@@ -69,7 +69,9 @@ export function preparePlugin(models: string[], env: NodeJS.ProcessEnv = process
   }
   write(hooksFile, hooksDoc())
   const plan = modelPlan(models)
+  // `fallbacks` is the whole ladder the plugin walks when a model is denied or a provider fails; `fallback` stays for an
+  // older plugin that reads only one rung.
   write(settingsFile, { mode: "session", cheap: `kell/${plan.cheap}`, strong: `kell/${plan.strong}`, fallback: `kell/${plan.fallback}`,
-                        settings: [hooksFile] })
+                        fallbacks: models.map((m) => `kell/${m}`), settings: [hooksFile] })
   return { KELL_OC_CONFIG: settingsFile, KELL_OC_SETTINGS: hooksFile }
 }

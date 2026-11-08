@@ -40,17 +40,33 @@ export function useSpringScroll(viewport: RefObject<HTMLDivElement | null>, cont
     const el = viewport.current;
     if (!el) return;
 
-    const track = () => { atEnd.current = el.scrollHeight - el.clientHeight - el.scrollTop <= NEAR_END; };
+    let lastTop = el.scrollTop;
+    const track = () => {
+      const top = el.scrollTop;
+      const nearEnd = el.scrollHeight - el.clientHeight - top <= NEAR_END;
+      // Moving up by any real amount is the reader taking over, even while still within NEAR_END: the next streamed
+      // token must not pull the view back down (2026-11-08).
+      if (top < lastTop - 1) atEnd.current = false;
+      else if (nearEnd) atEnd.current = true;
+      lastTop = top;
+    };
     const stop = () => scroll.current?.cancel();
+    const onWheel = (e: WheelEvent) => { stop(); if (e.deltaY < 0) atEnd.current = false; };
+    const onKey = (e: KeyboardEvent) => {
+      if (["ArrowUp", "PageUp", "Home"].includes(e.key)) atEnd.current = false;
+      stop();
+    };
 
     track();
     el.addEventListener("scroll", track, { passive: true });
+    el.addEventListener("wheel", onWheel, { passive: true });
     el.addEventListener("touchstart", stop, { passive: true });
-    el.addEventListener("keydown", stop);
+    el.addEventListener("keydown", onKey);
     return () => {
       el.removeEventListener("scroll", track);
+      el.removeEventListener("wheel", onWheel);
       el.removeEventListener("touchstart", stop);
-      el.removeEventListener("keydown", stop);
+      el.removeEventListener("keydown", onKey);
       scroll.current?.cancel();
     };
   }, [viewport, content, resetKey]); // the content element is replaced when the room changes

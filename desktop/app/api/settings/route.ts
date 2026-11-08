@@ -44,7 +44,11 @@ export async function GET() {
       const k = c?.provider?.kell
       lane = "organization"
       gateway = k?.options?.baseURL || null
-      const ids = String(k?.options?.headers?.["x-stealthlab-fallback-models"] || "").split(",").filter(Boolean)
+      // The provider's own table is what this lane offers; the fallback header is now the whole deployment ladder, so it
+      // must not be read as the lane's model list.
+      const offered = Object.keys(k?.models || {})
+      const ids = offered.length ? ladderOrder(offered)
+        : String(k?.options?.headers?.["x-stealthlab-fallback-models"] || "").split(",").filter(Boolean)
       if (ids.length) models = { ...modelPlan(ids), mode: "session" }
     } catch { lane = "none" }
   } else if (ownKeyLane()) {

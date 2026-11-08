@@ -170,6 +170,7 @@ async def call_unit(pool: Any, scope: AccessScope, unit: str, request: CallReque
         raise ProviderCallDenied(f"no connection available to you offers {unit!r}")
     attempts: list[dict[str, Any]] = []
     first_denial: Optional[ProviderCallDenied] = None
+    first_refusal: Optional[ProviderCallFailed] = None
     for conn, spec in _rotation(offers):
         try:
             result = await _call_one(pool, scope, unit, conn, spec, request, actor=actor, tenant_id=tenant_id,
@@ -180,9 +181,13 @@ async def call_unit(pool: Any, scope: AccessScope, unit: str, request: CallReque
             attempts.append({"connection_id": conn.connection_id, "refused": str(exc)})
             continue
         except ProviderCallFailed as exc:
-            if not exc.outage:
+            if not exc.outage and not exc.model_refused:
                 raise                                   # the request itself failed: another endpoint would too
-            if not exc.budget_timeout:                  # the caller's own budget is not the endpoint's outage
+            if exc.model_refused:
+                # This endpoint's account/policy does not allow the model. Another endpoint offering the same
+                # model may; and either way the caller may move to the next rung of the ladder.
+                first_refusal = first_refusal or exc
+            if exc.outage and not exc.budget_timeout:   # the caller's own budget is not the endpoint's outage
                 HEALTH.record_failure(conn.connection_id, spec.unit, status=exc.status, transport=exc.transport,
                                       error=str(exc))
             attempts.append({"connection_id": conn.connection_id, "error": str(exc)})
@@ -190,6 +195,8 @@ async def call_unit(pool: Any, scope: AccessScope, unit: str, request: CallReque
         HEALTH.record_success(conn.connection_id, spec.unit)
         failed = [a for a in attempts if "error" in a]
         return replace(result, extra={**dict(result.extra), "failover": failed}) if failed else result
+    if first_refusal is not None and not any("error" in a for a in attempts):
+        raise first_refusal                              # every endpoint refused this model: another model may answer
     if first_denial is not None and not any("error" in a for a in attempts):
         raise first_denial                              # every connection refused by policy: say why
     raise ProviderCallFailed(

@@ -19,6 +19,7 @@ type RoomsWho = { id: string; email: string | null } | null
 type KellDesktop = {
   openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void
+  window?: { minimize: () => void; toggleMaximize: () => void; close: () => void }
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
 /** A tool call's subject in a few words: the path, pattern, command or query it was given. */
@@ -204,6 +205,9 @@ export default function Home() {
   const [busy, setBusy] = useState(false)
   const [big, setBig] = useState(false)                  // the message box: bigger / smaller, like the website chat
   const textRef = useRef<HTMLTextAreaElement>(null)
+  // Up-arrow history: the prompts already sent in THIS chat (the session's user lines), not a global list.
+  const histPos = useRef<number | null>(null)
+  const histSaved = useRef("")
   const [files, setFiles] = useState<FileDiff[]>([])
   const [filesNote, setFilesNote] = useState("")
   // Everything else uncommitted in the folder (your own edits, another tool's): shown apart from kell's, and never touched by Undo.
@@ -239,6 +243,7 @@ export default function Home() {
     fetch("/api/settings").then((r) => r.json()).then(setSettings).catch(() => undefined)
   }, [])
   useEffect(() => { scrollToEnd({ instant: true }) }, [scrollToEnd, sessionID])
+  useEffect(() => { histPos.current = null; histSaved.current = "" }, [sessionID])
   useEffect(() => { follow() }, [lines, steps, busy, follow])
 
   const loadChanges = useCallback(async (sid: string | null) => {
@@ -334,13 +339,13 @@ export default function Home() {
     if (!body.trim() || !directory) return
     if (busy) {                                              // still working: keep it for when this turn ends
       setQueued((q) => [...q, body])
-      if (again === undefined) setText("")
+      if (again === undefined) { setText(""); histPos.current = null }
       return
     }
     const sent = body
     setLines((l) => [...l, { who: "user", text: sent, at: Date.now() }])
     setSteps([])
-    if (again === undefined) setText("")                     // sending it again keeps what you were typing
+    if (again === undefined) { setText(""); histPos.current = null }   // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
     setCards([]); setCardsNote(""); loadTools(sent)
@@ -570,8 +575,12 @@ export default function Home() {
     return () => { live = false; clearInterval(t); mo.disconnect() }
   }, [roomsOn])
   const otherAccount = !!(settings?.signedIn && settings.subject && roomsWho && roomsWho.id !== settings.subject)
+  const dw = desktop()
 
   const isCheap = (r: LedgerRow) => !!settings?.models.cheap && `${r.providerID}/${r.model}` === settings.models.cheap
+  // The prompts sent in this chat, oldest first. Opening a past session loads its user lines, so Up works there too;
+  // a new session starts empty. Scoped to `lines`, which is reset when the session changes.
+  const promptHistory = lines.filter((l) => l.who === "user").map((l) => l.text)
   const readEngine = engine?.up && !!directory
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
 
@@ -598,6 +607,20 @@ export default function Home() {
             </span>
           )}
         </span>
+        {/* The app draws its own frame: these are the window's minimize / maximize / close (desktop/electron/main.ts). */}
+        {dw?.window && (
+          <span className="dk-winbtns">
+            <button type="button" className="dk-winbtn" aria-label="Minimize" title="Minimize" onClick={() => dw.window!.minimize()}>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+            </button>
+            <button type="button" className="dk-winbtn" aria-label="Maximize" title="Maximize" onClick={() => dw.window!.toggleMaximize()}>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="2" y="2" width="6" height="6" stroke="currentColor" strokeWidth="1.1" /></svg>
+            </button>
+            <button type="button" className="dk-winbtn dk-winbtn-x" aria-label="Close" title="Close" onClick={() => dw.window!.close()}>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+            </button>
+          </span>
+        )}
       </nav>
       {otherAccount && (
         <div className="dk-err dk-mismatch" role="alert">
@@ -869,10 +892,28 @@ export default function Home() {
             {busy && <><span className="dg-pulse" aria-hidden="true" /> Kell is working</>}
           </div>
           <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
-            <textarea ref={textRef} rows={1} data-big={big || undefined} value={text} onChange={(e) => setText(e.target.value)}
+            <textarea ref={textRef} rows={1} data-big={big || undefined} value={text}
+              onChange={(e) => { setText(e.target.value); histPos.current = null }}
               placeholder={directory ? "Tell kell what to do…" : "Open a project first"}
               disabled={!!engine && !engine.up}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} />
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); return }
+                if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return
+                // Only when the caret is at the very start: inside a multi-line draft Up/Down still moves the caret.
+                if (e.currentTarget.selectionStart !== 0 || e.currentTarget.selectionEnd !== 0) return
+                if (!promptHistory.length) return
+                if (e.key === "ArrowUp") {
+                  e.preventDefault()
+                  if (histPos.current === null) { histSaved.current = text; histPos.current = promptHistory.length - 1 }
+                  else histPos.current = Math.max(0, histPos.current - 1)
+                  setText(promptHistory[histPos.current])
+                  return
+                }
+                if (histPos.current === null) return
+                e.preventDefault()
+                if (histPos.current >= promptHistory.length - 1) { histPos.current = null; setText(histSaved.current) }
+                else { histPos.current += 1; setText(promptHistory[histPos.current]) }
+              }} />
             <div className="dg-composer-meta">
               {text.trim() && <span className="dg-count" aria-live="off">{words} {words === 1 ? "word" : "words"}</span>}
               <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); textRef.current?.focus() }} aria-pressed={big}
