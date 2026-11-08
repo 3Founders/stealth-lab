@@ -450,6 +450,8 @@ def test_find_ways_with_library_rows_returns_this_repos_matches_first(monkeypatc
                                          library_rows=(FIX / "canonical.idx").read_text(encoding="utf-8"))))
     assert seen["kw"]["library"] is not None
     assert [m["id"] for m in body["library_matches"]] == ["L-0a91f2", "L-b00c1e"]
+    # the rows reach the goal choice as candidates, so its judge decides them: selected after it they were never judged (2026-11-08)
+    assert all(m["judged"] and m["relation"] == "matches" for m in body["library_matches"])
     assert body["library"]["rows"] == 3 and body["outcome"] == "no_match"
 
 

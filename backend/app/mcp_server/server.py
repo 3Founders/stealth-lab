@@ -4552,17 +4552,20 @@ async def _find_ways_impl(
     # Round-4 fix (knowledge_related_examples): the judged Goal candidates feed `related_examples`.
     related_hits: Optional[list] = (
         [] if settings.knowledge_related_examples and settings.knowledge_verified_examples else None)
-    with _stages.stage("goal_choice"):
-        goal_choice = await _find_ways_goal_choice(
-            pool, query, facts, scope=scope, embedder=embedder, top_k=top_k, collect=related_hits,
-            **({"library": library} if library is not None else {}),
-        )
-
+    # This repo's own library rows become candidates BEFORE the goal choice, which judges them in the same batch as the global Goals
+    # (retrieval_service.search_goals). Selected after it, they were never judged: every library match came back judged=false and the
+    # hook, which shows only judged matches, dropped them -- a fix solved in this repo was never offered again (2026-11-08).
     if library is not None:
         from app.services import library_context as _lc
         from app.services.retrieval_service import Hit as _Hit
 
         library.select_local(query, _lc.make_local_hit_factory(_Hit))
+
+    with _stages.stage("goal_choice"):
+        goal_choice = await _find_ways_goal_choice(
+            pool, query, facts, scope=scope, embedder=embedder, top_k=top_k, collect=related_hits,
+            **({"library": library} if library is not None else {}),
+        )
 
     async def _with_related(body: dict, exclude: tuple = ()) -> str:
         if library is not None:
