@@ -245,7 +245,7 @@ export default function ConnectPanel({ client, initial }: { client: HelperClient
 
       <section className="card">
         <h2>What leaves your machine</h2>
-        <p>Installing only changes files on this machine. Once it is installed, the hooks look things up: in Cursor, the hook sends your prompt (up to 1,500 characters) and the repository’s <code>claims.md</code> to the kell server. Cheap-model dispatch sends the task to the model providers you list under Keys &amp; models.</p>
+        <p>Installing only changes files on this machine. Once it is installed, the hooks look things up: in Cursor, the hook sends your prompt (up to 1,500 characters) and the repository’s <code>claims.md</code> to the kell server. Cheap-model dispatch sends the task to the models set up on this machine.</p>
         <p className="small dim">Your own Claude Code or Codex subscription stays yours. This page never asks for, stores or passes on a Claude or Codex login.</p>
       </section>
     </div>

@@ -46,8 +46,21 @@ export function settleTime(spec: SpringSpec): number {
   return 4;
 }
 
+/**
+ * The curve is sampled over the spring's settle time, but the CSS duration is the perceptual one.
+ * A spring's 99.9% settle time is much longer than the motion reads: `smooth` settles at ~775ms
+ * and `micro` at ~296ms, which makes hovers and the sidebars feel sluggish and out of sync with
+ * the rest of the UI. These are the durations the design system actually uses.
+ */
+export const PERCEPTUAL_MS = {
+  micro: 160,
+  smooth: 300,
+  snappy: 280,
+  bouncy: 360,
+} as const satisfies Record<keyof typeof SPRINGS, number>;
+
 /** A spring as a CSS `linear()` timing function: progress 0 to 1 (a bouncy one overshoots 1), plus how long it lasts. */
-export function springCss(spec: SpringSpec, points = 40): { easing: string; ms: number } {
+export function springCss(spec: SpringSpec, points = 40, durationMs?: number): { easing: string; ms: number } {
   const T = settleTime(spec);
   const out: string[] = ["0"];
   let s = { x: 1, v: 0 };
@@ -56,14 +69,14 @@ export function springCss(spec: SpringSpec, points = 40): { easing: string; ms: 
     out.push((1 - s.x).toFixed(3).replace(/\.?0+$/, "") || "0");
   }
   out.push("1");
-  return { easing: `linear(${out.join(", ")})`, ms: Math.ceil(T * 1000) };
+  return { easing: `linear(${out.join(", ")})`, ms: Math.round(durationMs ?? T * 1000) };
 }
 
 /** CSS custom properties for every preset: `--dg-<name>` is the timing function, `--dg-<name>-d` its duration. */
 export function springVars(): Record<string, string> {
   const vars: Record<string, string> = {};
   for (const [name, spec] of Object.entries(SPRINGS)) {
-    const { easing, ms } = springCss(spec);
+    const { easing, ms } = springCss(spec, 40, PERCEPTUAL_MS[name as keyof typeof SPRINGS]);
     vars[`--dg-${name}`] = easing;
     vars[`--dg-${name}-d`] = `${ms}ms`;
   }

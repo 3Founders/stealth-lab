@@ -53,10 +53,13 @@ const DI_MODELS = { [DI_MODEL]: { name: "DeepSeek V3.2", cost: { input: 0.26, ou
  * today's setup -- the strong model on General Compute, the cheap model as the fallback.
  */
 export function modelPlan({ strongKeyEnv, pooled } = {}) {
-  if (pooled) return { strong: `${KELL_PROVIDER}/${pooled.strong}`, fallback: `${KELL_PROVIDER}/${pooled.fallback}` };
+  if (pooled) {
+    const ladder = [...new Set([pooled.strong, pooled.cheap, ...(pooled.ladder || [])].map((m) => `${KELL_PROVIDER}/${m}`))];
+    return { strong: `${KELL_PROVIDER}/${pooled.strong}`, fallback: `${KELL_PROVIDER}/${pooled.fallback}`, fallbacks: ladder };
+  }
   return strongKeyEnv
-    ? { strong: `${DI_PROVIDER}/${DI_MODEL}`, fallback: STRONG_MODEL }
-    : { strong: STRONG_MODEL, fallback: CHEAP_MODEL };
+    ? { strong: `${DI_PROVIDER}/${DI_MODEL}`, fallback: STRONG_MODEL, fallbacks: [`${DI_PROVIDER}/${DI_MODEL}`, STRONG_MODEL, CHEAP_MODEL] }
+    : { strong: STRONG_MODEL, fallback: CHEAP_MODEL, fallbacks: [STRONG_MODEL, CHEAP_MODEL] };
 }
 
 /**
@@ -81,7 +84,8 @@ export function pooledFromExec(exec, { dataClass = process.env.KELL_OC_DATA_CLAS
   for (const p of same) {
     models[p.model_id] = { name: p.model_id, ...(Number.isFinite(price(p)) ? { cost: { input: p.input_per_mtok, output: p.output_per_mtok } } : {}) };
   }
-  return { baseUrl, models, orgId: exec?.organization_id, dataClass, cheap: cheap.model_id, strong: strong.model_id, fallback: cheap.model_id };
+  return { baseUrl, models, orgId: exec?.organization_id, dataClass, cheap: cheap.model_id, strong: strong.model_id,
+           fallback: cheap.model_id, ladder: sorted.map((p) => p.model_id) };
 }
 
 export function opencodeDir(env = process.env) {
@@ -115,10 +119,10 @@ export function withKell(cfg, { pluginDir, url, token, keyEnv = "GENERAL_COMPUTE
         headers: {
           ...(pooled.orgId ? { "x-stealthlab-org": String(pooled.orgId) } : {}),
           "x-stealthlab-data-class": pooled.dataClass,
-          // If the chosen model's provider is down or out of credit, the gateway tries the others in this list (it
-          // dedupes the requested model). Production on 2026-11-03: gemma-4-31b-it answered 402 (empty balance), so a
-          // cheap rung alone can fail a turn; the strong rung is the first fallback.
-          "x-stealthlab-fallback-models": [...new Set([pooled.strong, pooled.cheap])].join(","),
+          // If the chosen model's provider is down, out of credit, or the organization does not allow the model, the
+          // gateway tries the others in this list (it dedupes the requested model). Production on 2026-11-03:
+          // gemma-4-31b-it answered 402 (empty balance), so a cheap rung alone can fail a turn.
+          "x-stealthlab-fallback-models": [...new Set([pooled.strong, pooled.cheap, ...(pooled.ladder || [])])].join(","),
         },
       },
       models: pooled.models,
@@ -216,7 +220,8 @@ export async function installOpenCode({ url, token, launch, env = process.env, n
   const { config, owned } = withKell(readJson(file), { pluginDir, url, token, strongKeyEnv: useDi ? strongEnv : undefined, owned: before, pooled });
   writeJson(file, config);
   const plan = modelPlan({ strongKeyEnv: useDi ? strongEnv : undefined, pooled });
-  writeJson(path.join(dir, "config.json"), { mode: "session", cheap: pooled ? `${KELL_PROVIDER}/${pooled.cheap}` : CHEAP_MODEL, strong: plan.strong, fallback: plan.fallback, settings: [hooksFile], owned });
+  writeJson(path.join(dir, "config.json"), { mode: "session", cheap: pooled ? `${KELL_PROVIDER}/${pooled.cheap}` : CHEAP_MODEL,
+                                            strong: plan.strong, fallback: plan.fallback, fallbacks: plan.fallbacks, settings: [hooksFile], owned });
   if (pooled) return `plugin + hooks in ${dir}; models through your organization's kell gateway at ${pooled.baseUrl} (no provider key on this machine), plugin and MCP server in ${file}`;
   return `plugin + hooks in ${dir}; provider${useDi ? "s (General Compute + DeepInfra for the strong model)" : ""}, plugin and MCP server in ${file}`;
 }

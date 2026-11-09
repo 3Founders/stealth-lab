@@ -25,7 +25,7 @@ import { clients } from "./clients.mjs";
 import { checklist, keyIsSet, probeServer } from "./setup.mjs";
 import { envFilePath, isKeyName, readEnvFileVar, removeEnvFileVar, writeEnvFileVar } from "./envfile.mjs";
 import { execConfigPath, readExecConfig, readJson, runsDir, RUN_ID_RE, writePrivate } from "./exec/store.mjs";
-import { isLoopbackUrl, normaliseProfile, profileKey } from "./executors/profile.mjs";
+import { isLoopbackUrl, KEY_FROM_STEALTHLAB, normaliseProfile, profileKey } from "./executors/profile.mjs";
 import { costOf } from "./spend.mjs";
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
@@ -94,11 +94,36 @@ function keyValue(name, env) {
 }
 
 function describeModel(p, env) {
-  const local = !p.key_env;
-  const v = local ? "" : keyValue(p.key_env, env);
-  return { name: p.name, model_id: p.model_id, base_url: p.openai_base_url || p.anthropic_base_url || null, key_env: p.key_env || null,
-           local: local || isLoopbackUrl(p.openai_base_url), key_set: local ? true : Boolean(v), key_last4: last4(v) || null,
+  // A profile with key_from "stealthlab" is the organization's gateway: the model runs on the person's kell plan and no
+  // provider key lives on this machine. It is reported as such, never with one of kell's own key names.
+  const platform = p.key_from === KEY_FROM_STEALTHLAB;
+  const local = !p.key_env && !platform;
+  const v = local || platform ? "" : keyValue(p.key_env, env);
+  return { name: p.name, model_id: p.model_id, base_url: p.openai_base_url || p.anthropic_base_url || null,
+           key_env: platform || local ? null : (p.key_env || null), platform,
+           local: local || isLoopbackUrl(p.openai_base_url), key_set: local || platform ? true : Boolean(v), key_last4: last4(v) || null,
            input_per_mtok: p.input_per_mtok ?? null, output_per_mtok: p.output_per_mtok ?? null, tier: p.tier };
+}
+
+/**
+ * Which way this machine pays for models (2026-11-08):
+ *   "kell"    a kell sign-in exists, or a profile is key_from "stealthlab": the plan's models run through kell's
+ *             gateway. There is no provider key to show, save or remove here, and kell's own provider keys must never
+ *             appear on the page.
+ *   "own-key" the person brought their own provider keys (profiles with key_env).
+ *   "local"   only loopback models: no key at all.
+ *   "none"    nothing set up yet.
+ */
+function laneOf(env) {
+  let profiles = {};
+  try { profiles = readExecConfig(env).profiles; } catch { /* unreadable: treated as empty */ }
+  const list = Object.values(profiles);
+  const platformModels = list.filter((p) => p.key_from === KEY_FROM_STEALTHLAB).length;
+  let signedIn = false;
+  try { signedIn = Boolean(resolveSettings({}, env).token); } catch { /* no config */ }
+  const plan = platformModels > 0 || signedIn;
+  const lane = plan ? "kell" : list.some((p) => p.key_env) ? "own-key" : list.length ? "local" : "none";
+  return { lane, plan, signedIn, platformModels, models: list.length };
 }
 
 export function createConsole({ env = process.env, token = crypto.randomBytes(18).toString("hex"), uiDir = null, allowOrigins = [],
@@ -205,17 +230,23 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
     let models = [], execOk = true, execDetail = "", profiles = {};
     try { const cfg = readExecConfig(env); profiles = cfg.profiles; models = Object.values(cfg.executors).flatMap((e) => (Array.isArray(e?.models) ? e.models : []).map(String)); if (!models.length) { execOk = false; execDetail = "no models listed"; } }
     catch (err) { execOk = false; execDetail = err.message; }
-    const keyNames = [...new Set(Object.values(profiles).map((p) => p.key_env).filter(Boolean))];
-    const first = keyNames[0] || "GENERAL_COMPUTE_API_KEY";
+    // On a kell plan the checklist must not name any provider key either: the plan's models run through the gateway.
+    const lane = laneOf(env);
+    const shown = lane.plan ? Object.values(profiles).filter((p) => p.key_from === KEY_FROM_STEALTHLAB) : Object.values(profiles);
+    if (lane.plan) { models = shown.map((p) => p.model_id); execOk = models.length > 0; execDetail = models.length ? "" : "no plan models on this machine: run `kell join`"; }
+    const keyNames = lane.plan ? [] : [...new Set(shown.map((p) => p.key_env).filter(Boolean))];
+    const first = keyNames[0] || (lane.plan ? "" : "GENERAL_COMPUTE_API_KEY");
     const cfg = readConfig(env);
     const wantsCursor = isInstalled("cursor", env);
-    const res = checklist({ server, hasToken: Boolean(settings.token), execOk, execDetail, models, keyEnv: first,
-                            key: { set: Boolean(keyValue(first, env)) || keyIsSet(first, { env }).set, where: "" }, dispatch: cfg.dispatch !== false,
-                            cursorModel: cfg.cursor_model, wantsCursor });
+    const res = checklist({ server, hasToken: Boolean(settings.token), execOk, execDetail, models, keyEnv: first || "",
+                            key: lane.plan ? { set: true, where: "" } : { set: Boolean(keyValue(first, env)) || keyIsSet(first, { env }).set, where: "" },
+                            dispatch: cfg.dispatch !== false, cursorModel: cfg.cursor_model, wantsCursor, central: lane.plan });
     for (const k of keyNames.slice(1)) {
       const set = Boolean(keyValue(k, env)) || keyIsSet(k, { env }).set;
       res.items.push({ name: `key ${k}`, ok: set, detail: set ? "found" : "not set", fix: set ? undefined : "add it under Keys" });
     }
+    // A plan with no joined models is fixed by joining, not by deleting exec.json.
+    if (lane.plan && !execOk) { const item = res.items.find((i) => i.name === "exec.json"); if (item) item.fix = "kell join   (or open the kell app and sign in)"; }
     return res.items.map((i) => ({ name: i.name, ok: i.ok, detail: i.detail, ...(i.fix ? { fix: i.fix } : {}) }));
   }
 
@@ -231,6 +262,9 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
     await Promise.all(names.map(async (name) => {
       const p = cfg.profiles[name];
       if (!p?.openai_base_url) return emit({ model: name, error: "That model is not set up for chat (it needs an OpenAI-compatible address)." });
+      // On a kell plan the provider profiles on this machine are not this person's to run (and their keys are never shown):
+      // only the plan's own models may answer.
+      if (laneOf(env).plan && p.key_from !== KEY_FROM_STEALTHLAB) return emit({ model: name, error: "Your plan runs models through kell; this machine's provider models are not used here." });
       const t0 = Date.now(); let first = null, usage = null;
       try {
         const r = await fetchImpl(`${p.openai_base_url}/chat/completions`, {
@@ -293,8 +327,22 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
       return send(res, 200, out);
     }
     if (m === "GET" && p === "/readiness") return send(res, 200, await readiness());
-    if (m === "GET" && p === "/models") { try { return send(res, 200, Object.values(readExecConfig(env).profiles).map((x) => describeModel(x, env))); } catch (e) { return send(res, 500, { error: "exec.json is not valid" }); } }
+    if (m === "GET" && p === "/lane") return send(res, 200, laneOf(env));
+    if (m === "GET" && p === "/models") {
+      try {
+        const lane = laneOf(env);
+        // On a kell plan only the plan's own models are listed. The own-key profiles on this machine are kell's (or
+        // someone's) provider keys and must not be shown to a plan user at all.
+        const list = Object.values(readExecConfig(env).profiles)
+          .filter((x) => !lane.plan || x.key_from === KEY_FROM_STEALTHLAB)
+          .map((x) => describeModel(x, env));
+        return send(res, 200, list);
+      } catch (e) { return send(res, 500, { error: "exec.json is not valid" }); }
+    }
     if (m === "POST" && p === "/models") {
+      // A plan has no key UI: adding a provider model here would be invisible (and would put one of our keys on the page
+      // again). Say how to use an own key instead of accepting a model that then disappears.
+      if (laneOf(env).plan) return send(res, 403, { error: "Your plan runs models through kell. To use your own provider key, sign out of the plan or run `kell setup --client opencode`." });
       const b = await readBody(req);
       const name = String(b.name || "").trim();
       if (!/^[A-Za-z0-9][\w.-]{0,63}$/.test(name)) return send(res, 400, { error: "the name must be letters, digits, dots, dashes" });
@@ -315,6 +363,7 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
     if (m === "DELETE" && (mm = /^\/models\/([^/]+)$/.exec(p))) {
       const name = decodeURIComponent(mm[1]); const cur = readExecRaw(env);
       if (!cur.profiles[name]) return send(res, 404, { error: "no such model" });
+      if (cur.profiles[name].key_from === KEY_FROM_STEALTHLAB) return send(res, 403, { error: "This model comes from your kell plan; it cannot be removed here." });
       delete cur.profiles[name];
       for (const e of Object.values(cur.executors)) if (Array.isArray(e?.models)) e.models = e.models.filter((x) => x !== name);
       writeExecRaw(env, cur);
@@ -332,16 +381,23 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
         if (!r.ok) return send(res, 200, { ok: false, latency_ms: Date.now() - t0, error: explainFailure({ status: r.status }) });
         return send(res, 200, { ok: true, latency_ms: Date.now() - t0 });
       } catch (err) {
-        return send(res, 200, { ok: false, latency_ms: Date.now() - t0, error: /is not set/.test(String(err?.message)) ? "The key for this model is not set. Add it under Keys." : failureOf(err) });
+        const noKey = /is not set/.test(String(err?.message));
+        return send(res, 200, { ok: false, latency_ms: Date.now() - t0,
+          error: noKey ? (prof.key_from === KEY_FROM_STEALTHLAB ? "The kell sign-in for this plan has expired: run `kell login`, then try again." : "The key for this model is not set. Add it under Keys.") : failureOf(err) });
       }
     }
     if (m === "GET" && p === "/keys") {
+      // A kell plan has no key on this machine: report none, not the provider keys a profile may name.
+      if (laneOf(env).plan) return send(res, 200, []);
       let names = [];
       try { names = [...new Set(Object.values(readExecConfig(env).profiles).map((x) => x.key_env).filter(Boolean))]; } catch { /* none */ }
       return send(res, 200, names.map((n) => { const v = keyValue(n, env); return { name: n, set: Boolean(v) || keyIsSet(n, { env }).set, last4: last4(v) || null }; }));
     }
     if ((mm = /^\/keys\/([A-Z][A-Z0-9_]{1,63})$/.exec(p)) && (m === "PUT" || m === "DELETE")) {
       const name = mm[1];
+      // On a kell plan the model calls are paid by kell's gateway: there is nothing here to change, and a key must never
+      // be removed from this page (2026-11-08: the panel offered exactly that, for keys that were not the person's).
+      if (laneOf(env).plan) return send(res, 403, { error: "Your plan runs models through kell; there is no key to change on this machine." });
       if (m === "PUT") {
         const b = await readBody(req);
         try { writeEnvFileVar(name, b.value, env); } catch (e) { return send(res, 400, { error: String(e.message).replace(String(b.value ?? "\0"), "") }); }

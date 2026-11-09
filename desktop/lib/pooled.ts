@@ -55,8 +55,13 @@ export const ladderOrder = (ids: string[]): string[] => [...ids].sort((a, b) => 
  *  ladder, in order, as the provider-failure fallbacks (models the ladder does not name go last, cheapest first). */
 function buildConfig(models: Model[], baseUrl: string, token: string, extraHeaders: Record<string, string>,
                      cfg: any, env: NodeJS.ProcessEnv, modelKey?: string): PooledEngine {
+  // What this lane can actually run (the gateway's list, or the organization's profiles), in ladder order.
   const ladder = [...models].sort((a, b) => rank(a.id) - rank(b.id) || priceOf(a) - priceOf(b))
   const strong = ladder[0]
+  // The gateway's fallback header carries the whole deployment ladder, not only what this lane offers: when a rung is
+  // not on the organization's allowlist (or has no connection), the gateway moves to the next model instead of showing
+  // the refusal (2026-11-08). The engine's own model table and plugin stay on what the lane offers.
+  const fallbackIds = ladderOrder([...new Set([...ladder.map((m) => m.id), ...MODEL_LADDER])])
 
   const table: Record<string, unknown> = {}
   for (const m of models) {
@@ -77,8 +82,9 @@ function buildConfig(models: Model[], baseUrl: string, token: string, extraHeade
             // The conservative class: an organization that allows private material accepts it; the public-only pilot
             // refuses it with a message instead of silently widening the policy.
             "x-stealthlab-data-class": env.KELL_OC_DATA_CLASS || "USER_PRIVATE",
-            // A dead or out-of-credit provider on the chosen model does not fail the turn: the gateway tries the others.
-            "x-stealthlab-fallback-models": ladder.map((m) => m.id).join(","),
+            // A dead, out-of-credit or not-allowed model on the chosen rung does not fail the turn: the gateway tries the
+            // others (desktop/lib/pooled.ts MODEL_LADDER, the same order the server uses).
+            "x-stealthlab-fallback-models": fallbackIds.join(","),
           },
         },
         models: table,

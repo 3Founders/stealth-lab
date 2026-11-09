@@ -40,6 +40,17 @@ export interface ModelInfo {
   input_per_mtok: number | null;
   output_per_mtok: number | null;
   tier: string | null;
+  /** Runs on the person's kell plan through kell's gateway: no provider key is involved. */
+  platform?: boolean;
+}
+
+/** Which way this machine pays for models, from GET /lane. `plan` means a kell plan: no key UI at all. */
+export interface Lane {
+  lane: "kell" | "own-key" | "local" | "none";
+  plan: boolean;
+  signedIn: boolean;
+  platformModels: number;
+  models: number;
 }
 
 export interface NewModel {

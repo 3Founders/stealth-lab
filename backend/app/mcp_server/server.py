@@ -2888,9 +2888,11 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
 
     When a model is not working: if several connected endpoints serve it, the next one is tried automatically.
     If every endpoint of the model is down, model="auto" moves on to the plan's next model; with a named model,
-    the models in `fallback_models` (["model" or "model|scaffold", ...]) are tried in order -- without it a named
-    model is never swapped for another. The reply's `unit` is the model that actually answered, and
-    `fell_back` lists what failed first. An outage is never reported as a failed attempt of that model.
+    the models in `fallback_models` (["model" or "model|scaffold", ...]) are tried in order, then the deployment's
+    ladder (MODEL_LADDER). A model the organization's policy does not allow (or one that does not exist) is never
+    shown as the answer while another rung can run: it moves on immediately, even for a named model. A generic bad
+    request still stops. The reply's `unit` is the model that actually answered, and `fell_back` lists what failed
+    first. An outage is never reported as a failed attempt of that model.
     max_latency_ms: your latency budget per attempt (e.g. 20000). An endpoint that has not answered by then is
       abandoned and the next endpoint -- then, as above, the next model -- is tried. Endpoints that are usually
       slow are tried after fast ones even without it.
@@ -2915,6 +2917,7 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
     """
     pool = ctx.request_context.lifespan_context["pool"]
     from app.providers import CallRequest, ProviderCallFailed, ProviderError, call_unit, unit_of
+    from app.providers.types import is_model_refusal
 
     if max_latency_ms is not None and not 500 <= max_latency_ms <= 600_000:
         return "REFUSED: max_latency_ms must be between 500 and 600000"
@@ -2947,8 +2950,21 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
     request = CallRequest(prompt=prompt, system=system, max_tokens=max_tokens, temperature=temperature,
                           data_class=data_class)
     fell_back: list[dict[str, Any]] = []
+    refusals: list[tuple[str, str]] = []
     result = None
-    for candidate in order:
+    tried: set[str] = set()
+
+    def extend_ladder() -> None:
+        """Add the deployment's ladder after what was asked, once. A model that is not allowed (or has no connection)
+        must not end the turn while another rung may answer; the plan's own ladder, when there is one, stays first."""
+        for name in MODEL_LADDER:
+            candidate = unit_of(name, scaffold)
+            if candidate not in tried and candidate not in order:
+                order.append(candidate)
+
+    while any(candidate not in tried for candidate in order):
+        candidate = next(candidate for candidate in order if candidate not in tried)
+        tried.add(candidate)
         try:
             result = await call_unit(
                 pool, scope, candidate, request,
@@ -2958,14 +2974,31 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
                 instance_key=instance_key, max_latency_ms=max_latency_ms)
             break
         except ProviderCallFailed as exc:
-            if not exc.outage or len(order) == 1:
+            if exc.model_refused:
+                refusals.append((candidate, str(exc)))
+                fell_back.append({"unit": candidate, "refused": str(exc)})
+                extend_ladder()
+                continue
+            if not exc.outage:
+                return f"FAILED: {exc}" + (f" (after: {json.dumps(fell_back)})" if fell_back else "")
+            if len(order) == 1:
                 return f"FAILED: {exc}" + (f" (after: {json.dumps(fell_back)})" if fell_back else "")
             fell_back.append({"unit": candidate, "error": str(exc)})
+            # An ordinary outage keeps the old contract: a named model without fallback_models is not swapped. A
+            # model-level refusal (above) does move on, because another rung may be allowed.
         except ProviderError as exc:
+            if is_model_refusal(None, str(exc)):
+                refusals.append((candidate, str(exc)))
+                fell_back.append({"unit": candidate, "refused": str(exc)})
+                extend_ladder()
+                continue
             if len(order) == 1:
                 return f"REFUSED: {exc}" + await _call_model_hint(scope, exc, data_class)
             fell_back.append({"unit": candidate, "refused": str(exc)})
     if result is None:
+        if refusals and len(refusals) == len(tried):
+            return ("REFUSED: no model on kell's ladder is allowed for this organization: "
+                    + "; ".join(f"{name}: {why}" for name, why in refusals))
         return "FAILED: no model could answer: " + json.dumps(fell_back)
     usage = {"tokens_in": result.tokens_in, "tokens_out": result.tokens_out, "cost_usd": result.cost_usd,
              "latency_ms": result.latency_ms}

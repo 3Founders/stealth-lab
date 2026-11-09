@@ -2,7 +2,7 @@
 // the body of the one PUT that saves it.
 import { readSse } from "@/lib/sse";
 import { HelperError, helperMessage, isLoopbackAddress, scrub, type HelperFailure } from "@/lib/words";
-import type { ActivityEvent, RunSnapshot, ChatEvent, ChatMessage, ClientId, ClientInfo, InstallResult, KeyInfo, ModelInfo, NewModel, ReadinessItem, TestResult } from "@/lib/types";
+import type { ActivityEvent, RunSnapshot, ChatEvent, ChatMessage, ClientId, ClientInfo, InstallResult, KeyInfo, Lane, ModelInfo, NewModel, ReadinessItem, TestResult } from "@/lib/types";
 
 const TOKEN_STORE = "kel.console.token";
 
@@ -89,6 +89,8 @@ export class HelperClient {
     this.call<InstallResult[]>("POST", "/install", { clients, ...opts });
   uninstall = (clients: ClientId[]) => this.call<InstallResult[]>("POST", "/uninstall", { clients });
   readiness = () => this.call<ReadinessItem[]>("GET", "/readiness");
+  /** Which way this machine pays for models: a kell plan (no key UI) or the person's own provider keys. */
+  lane = () => this.call<Lane>("GET", "/lane");
   models = () => this.call<ModelInfo[]>("GET", "/models");
   addModel = (m: NewModel) => this.call<{ ok: boolean; name: string }>("POST", "/models", m);
   removeModel = (name: string) => this.call<{ ok: boolean }>("DELETE", `/models/${encodeURIComponent(name)}`);

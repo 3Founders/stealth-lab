@@ -133,9 +133,9 @@ describe("Connect: the checklist for each tool in at most 3 actions", () => {
 });
 
 describe("Keys: a key never appears on the page or in storage", () => {
-  it("KeyField: typed, saved, shown as last four only, replaceable and removable", async () => {
+  it("KeyField: typed, saved, shown as last four only, replaceable, and never removable", async () => {
     let sent = "";
-    await mount(<KeyField envName="MY_KEY" isSet={false} last4={null} onSave={async (v) => { sent = v; return { last4: v.slice(-4) }; }} onRemove={async () => {}} />);
+    await mount(<KeyField envName="MY_KEY" isSet={false} last4={null} onSave={async (v) => { sent = v; return { last4: v.slice(-4) }; }} />);
     const input = host!.querySelector<HTMLInputElement>('input[type="password"]')!;
     expect(input.getAttribute("autocomplete")).toBe("new-password");
     await type(input, GOOD_KEY);
@@ -148,18 +148,18 @@ describe("Keys: a key never appears on the page or in storage", () => {
     expect(JSON.stringify({ ...window.localStorage })).not.toContain(GOOD_KEY);
     expect(JSON.stringify({ ...window.sessionStorage })).not.toContain(GOOD_KEY);
     expect(window.location.href).not.toContain(GOOD_KEY);
+    // 2026-11-08: the console must not offer to delete a key at all.
+    expect(byText("button", /^Remove$/)).toBeUndefined();
     await click(byText("button", /^Replace$/));
     expect(host!.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe("");
     await type(host!.querySelector<HTMLInputElement>('input[type="password"]')!, GOOD_KEY);
     await submit(host!.querySelector("form"));
     await until(() => /ends in/.test(text()));
-    await click(byText("button", /^Remove$/));
-    await until(() => /Removed/.test(text()));
-    expect(text()).toMatch(/No key is saved/);
+    expect(byText("button", /^Remove$/)).toBeUndefined();
   });
 
   it("KeyField: an error that carries the key is scrubbed", async () => {
-    await mount(<KeyField envName="MY_KEY" isSet={false} last4={null} onSave={async (v) => { throw Object.assign(new Error(`bad ${v}`), { name: "HelperError" }); }} onRemove={async () => {}} />);
+    await mount(<KeyField envName="MY_KEY" isSet={false} last4={null} onSave={async (v) => { throw Object.assign(new Error(`bad ${v}`), { name: "HelperError" }); }} />);
     await type(host!.querySelector<HTMLInputElement>('input[type="password"]')!, GOOD_KEY);
     await submit(host!.querySelector("form"));
     await until(() => !!host!.querySelector("[role=alert]"));

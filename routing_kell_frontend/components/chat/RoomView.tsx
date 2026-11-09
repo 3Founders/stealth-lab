@@ -1508,7 +1508,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                   <p className="dg-empty dg-loading" role="status">Loading messages…</p>
                 )}
                 {items.length === 0 && streamingHere.length === 0 && !kellHere && roomReady && (
-                  <p className="dg-empty">No messages in {roomName(room)} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}In a room with just you, a message with no mention goes to <b>kell</b>; add your own agents with <b>+ Add agent</b>.</p>
+                  <div className="dg-empty">
+                    <p>No messages in {roomName(room)} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}In a room with just you, a message with no mention goes to <b>kell</b>; add your own agents with <b>+ Add agent</b>.</p>
+                    <div className="dg-empty-prompts">
+                      {["Ask kell what it can do here", "Say hello to the room", "Ask kell to start a task"].map((p) => (
+                        <button key={p} type="button" className="btn-line dg-mini" onClick={() => setDraft((d) => ({ text: p, n: d.n + 1 }))}>{p}</button>
+                      ))}
+                    </div>
+                  </div>
                 )}
                 {items.map((i) => i.node)}
                 {streamingHere.map(([h, v]) => (

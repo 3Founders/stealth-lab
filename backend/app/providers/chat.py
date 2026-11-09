@@ -172,8 +172,9 @@ async def chat(pool: Any, scope: AccessScope, params: ChatParams, *, fallback_mo
                actor: Optional[str], tenant_id: Optional[str], org_id: Optional[str], governed: bool,
                data_class: str = "USER_PRIVATE", max_cost_usd: Optional[float] = None,
                tool: str = "chat_completions", on_done: Optional[OnDone] = None) -> ChatOutcome:
-    """Serve one chat-completions request. Tries the requested model, then `fallback_models` in order, but only when
-    every endpoint of the earlier model is down or refused; a request the provider says is bad stops at once."""
+    """Serve one chat-completions request. Tries the requested model, then `fallback_models` in order, when every
+    endpoint of the earlier model is down, refused by policy, or says that MODEL is not allowed for this account
+    (an allowlist, no access, an unknown model). A request the provider says is bad (a generic 400) stops at once."""
     if data_class not in {c.value for c in DataClass}:
         raise ProviderCallDenied(f"unknown data_class {data_class!r}")
     order = list(dict.fromkeys([params.unit, *[unit_of(m, None) for m in fallback_models if m and m.strip()]]))
@@ -184,7 +185,7 @@ async def chat(pool: Any, scope: AccessScope, params: ChatParams, *, fallback_mo
                                        governed=governed, data_class=data_class, max_cost_usd=max_cost_usd, tool=tool,
                                        on_done=on_done)
         except ProviderCallFailed as exc:
-            if not exc.outage or position == len(order) - 1:
+            if not (exc.outage or exc.model_refused) or position == len(order) - 1:
                 raise
             fell_back.append({"unit": unit, "error": str(exc)})
             continue
@@ -205,6 +206,7 @@ async def _chat_unit(pool, scope, unit, params, *, actor, tenant_id, org_id, gov
         raise ProviderCallDenied(f"no connection available to you offers {unit!r}")
     attempts: list[dict[str, Any]] = []
     first_denial: Optional[ProviderCallDenied] = None
+    first_refusal: Optional[ProviderCallFailed] = None
     for conn, spec in service._rotation(offers):
         try:
             outcome = await _start_one(pool, scope, unit, conn, spec, params, actor=actor, tenant_id=tenant_id,
@@ -215,14 +217,21 @@ async def _chat_unit(pool, scope, unit, params, *, actor, tenant_id, org_id, gov
             attempts.append({"connection_id": conn.connection_id, "refused": str(exc)})
             continue
         except ProviderCallFailed as exc:
-            if not exc.outage:
+            if not exc.outage and not exc.model_refused:
                 raise
-            HEALTH.record_failure(conn.connection_id, spec.unit, status=exc.status, transport=exc.transport,
-                                  error=str(exc))
+            if exc.model_refused:
+                # The account/policy behind this endpoint does not allow the model. Another endpoint offering the
+                # same model may, and the caller can move to the next model when every endpoint refuses it.
+                first_refusal = first_refusal or exc
+            if exc.outage:
+                HEALTH.record_failure(conn.connection_id, spec.unit, status=exc.status, transport=exc.transport,
+                                      error=str(exc))
             attempts.append({"connection_id": conn.connection_id, "error": str(exc)})
             continue
         HEALTH.record_success(conn.connection_id, spec.unit)
         return outcome
+    if first_refusal is not None and not any("error" in a for a in attempts):
+        raise first_refusal
     if first_denial is not None and not any("error" in a for a in attempts):
         raise first_denial
     raise ProviderCallFailed(

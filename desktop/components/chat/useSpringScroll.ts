@@ -1,10 +1,8 @@
 "use client";
 import { useCallback, useEffect, useRef, type RefObject } from "react";
-import { SPRINGS, SpringValue, rubberBand } from "@/lib/chat/spring";
+import { SPRINGS, SpringValue } from "@/lib/chat/spring";
 
 const NEAR_END = 120; // px from the bottom that still counts as "reading the latest"
-const RELEASE_MS = 90; // no wheel input for this long: the finger has let go
-const PULL = 0.55; // the post's touch coefficient
 
 const reduced = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -12,13 +10,15 @@ const reduced = () => typeof matchMedia === "function" && matchMedia("(prefers-r
  * Spring scrolling for a message viewport, in place of `scroll-behavior: smooth`:
  *  - `scrollToEnd` moves with a spring that keeps its velocity if it is called again mid-flight, and it follows content
  *    that grows while it runs. Wheel, touch or keys hand control back to the user at once.
- *  - New content scrolls into view only if the reader was already at the bottom.
- *  - Pulling past either edge with a wheel or trackpad moves the content with rubber-band resistance, then springs back.
+ *  - New content scrolls into view only if the reader was already at the bottom. Scrolling UP at any distance hands
+ *    control back and keeps it: the next streamed token must not pull the reader back down (2026-11-08).
+ * The top and bottom ends are left to the browser (`overscroll-behavior: contain` on the viewport). The custom wheel
+ * rubber-band this file used to have fought trackpad momentum and made both ends snap and jitter; the website's copy
+ * already dropped it and the desktop now matches.
  * With reduced motion all of it is instant.
  */
 export function useSpringScroll(viewport: RefObject<HTMLDivElement | null>, content: RefObject<HTMLDivElement | null>, resetKey: string) {
   const scroll = useRef<SpringValue | null>(null);
-  const band = useRef<SpringValue | null>(null);
   const atEnd = useRef(true);
 
   const toEnd = useCallback(() => {
@@ -39,50 +39,49 @@ export function useSpringScroll(viewport: RefObject<HTMLDivElement | null>, cont
   const follow = useCallback(() => { if (atEnd.current) scrollToEnd(); }, [scrollToEnd]);
 
   useEffect(() => {
-    const el = viewport.current, inner = content.current;
-    if (!el || !inner) return;
+    const el = viewport.current;
+    if (!el) return;
 
-    const track = () => { atEnd.current = el.scrollHeight - el.clientHeight - el.scrollTop <= NEAR_END; };
-    const stop = () => scroll.current?.cancel();
-
-    let pull = 0; // finger distance past the edge: + above the top, - below the bottom
-    let timer: number | undefined;
-    const draw = (px: number) => { inner.style.transform = px ? `translate3d(0, ${px.toFixed(2)}px, 0)` : ""; };
-    const release = () => {
-      const from = Math.sign(pull) * rubberBand(Math.abs(pull), el.clientHeight, PULL);
-      if (!band.current) band.current = new SpringValue(from, SPRINGS.smooth, draw, () => { pull = 0; draw(0); });
-      band.current.set(from);
-      band.current.retarget(0);
+    let lastTop = el.scrollTop;
+    const track = () => {
+      const top = el.scrollTop;
+      const nearEnd = el.scrollHeight - el.clientHeight - top <= NEAR_END;
+      // Moving up by any real amount is the reader taking over, even while still within NEAR_END. This is what stops
+      // the next streamed token from yanking the view back to the bottom.
+      if (top < lastTop - 1) atEnd.current = false;
+      else if (nearEnd) atEnd.current = true;
+      lastTop = top;
     };
+    const stop = () => scroll.current?.cancel();
     const onWheel = (e: WheelEvent) => {
-      if (reduced()) return;
-      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-      const top = el.scrollTop <= 0, bottom = el.scrollTop >= el.scrollHeight - el.clientHeight - 1;
-      if (!pull && !((top && dy < 0) || (bottom && dy > 0))) { stop(); return; } // ordinary scrolling
-      e.preventDefault();
       stop();
-      band.current?.cancel();
-      const next = pull - dy;
-      pull = Math.sign(next) === Math.sign(pull) || pull === 0 ? next : 0; // reversing past the edge ends the pull
-      draw(Math.sign(pull) * rubberBand(Math.abs(pull), el.clientHeight, PULL));
-      window.clearTimeout(timer);
-      timer = window.setTimeout(release, RELEASE_MS);
+      if (e.deltaY < 0) atEnd.current = false; // scrolling up: follow no more until the reader returns to the bottom
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (["ArrowUp", "PageUp", "Home"].includes(e.key)) atEnd.current = false;
+      stop();
+    };
+    let touchY: number | null = null;
+    const onTouchStart = (e: TouchEvent) => { touchY = e.touches[0]?.clientY ?? null; stop(); };
+    const onTouchMove = (e: TouchEvent) => {
+      const y = e.touches[0]?.clientY;
+      if (touchY !== null && y !== undefined && y > touchY + 1) atEnd.current = false; // finger down = content up
+      touchY = y ?? touchY;
     };
 
     track();
     el.addEventListener("scroll", track, { passive: true });
-    el.addEventListener("wheel", onWheel, { passive: false });
-    el.addEventListener("touchstart", stop, { passive: true });
-    el.addEventListener("keydown", stop);
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("keydown", onKey);
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
     return () => {
       el.removeEventListener("scroll", track);
       el.removeEventListener("wheel", onWheel);
-      el.removeEventListener("touchstart", stop);
-      el.removeEventListener("keydown", stop);
-      window.clearTimeout(timer);
+      el.removeEventListener("keydown", onKey);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
       scroll.current?.cancel();
-      band.current?.cancel();
-      draw(0);
     };
   }, [viewport, content, resetKey]); // the content element is replaced when the room changes
 

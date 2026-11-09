@@ -18,7 +18,8 @@ type Rect = { x: number; y: number; width: number; height: number }
 type RoomsWho = { id: string; email: string | null } | null
 type KellDesktop = {
   openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void
-  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void
+  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void; showMenu?: () => void
+  window?: { minimize: () => void; toggleMaximize: () => void; close: () => void }
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
 /** A tool call's subject in a few words: the path, pattern, command or query it was given. */
@@ -65,6 +66,69 @@ function FileList({ files, openOne = false }: { files: FileDiff[]; openOne?: boo
         </details>
       ))}
     </div>
+  )
+}
+
+type TreeEntry = { name: string; path: string; dir: boolean }
+
+/** One folder in the sidebar's file tree. Each folder asks the app for its own entries when it is first opened
+ *  (app/api/files), so the tree costs nothing until you look at it; the root opens on mount. */
+function TreeLevel({ directory, rel, depth, onOpen, selected }: {
+  directory: string; rel: string; depth: number; onOpen: (p: string) => void; selected?: string
+}) {
+  const [entries, setEntries] = useState<TreeEntry[] | null>(null)
+  const [more, setMore] = useState(0)
+  const [err, setErr] = useState("")
+  useEffect(() => {
+    let live = true
+    setEntries(null)
+    fetch(`/api/files?directory=${encodeURIComponent(directory)}&dir=${encodeURIComponent(rel)}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (!live) return
+        if (j.error) { setErr(j.error); return }
+        setEntries(Array.isArray(j.entries) ? j.entries : []); setMore(Number(j.more) || 0); setErr("")
+      })
+      .catch((e) => { if (live) setErr(String(e?.message || e)) })
+    return () => { live = false }
+  }, [directory, rel])
+
+  if (err) return <p className="dk-note" style={{ paddingLeft: 8 + depth * 12 }}>{err}</p>
+  if (!entries) return <p className="dk-note" style={{ paddingLeft: 8 + depth * 12 }}>Reading…</p>
+  if (!entries.length) return depth === 0 ? <p className="dk-note">No files</p> : null
+  return (
+    <ul className="dk-tree-level" role={depth === 0 ? "tree" : "group"} aria-label={depth === 0 ? "Project files" : undefined}>
+      {entries.map((e) => e.dir
+        ? <TreeFolder key={e.path} entry={e} directory={directory} depth={depth} onOpen={onOpen} selected={selected} />
+        : (
+          <li key={e.path} role="treeitem">
+            <button type="button" className="dk-tree-row" data-file data-here={selected === e.path || undefined}
+              style={{ paddingLeft: 8 + depth * 12 }} title={e.path} onClick={() => onOpen(e.path)}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
+              <span className="nm">{e.name}</span>
+            </button>
+          </li>
+        ))}
+      {more > 0 && <li><p className="dk-note" style={{ paddingLeft: 8 + depth * 12 }}>and {more} more</p></li>}
+    </ul>
+  )
+}
+
+/** A folder row: the chevron turns (micro spring) and the children mount only once it is open. */
+function TreeFolder({ entry, directory, depth, onOpen, selected }: {
+  entry: TreeEntry; directory: string; depth: number; onOpen: (p: string) => void; selected?: string
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <li role="treeitem" aria-expanded={open}>
+      <button type="button" className="dk-tree-row" data-dir style={{ paddingLeft: 8 + depth * 12 }}
+        aria-expanded={open} title={entry.path} onClick={() => setOpen((o) => !o)}>
+        <svg className="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+        <span className="nm">{entry.name}</span>
+      </button>
+      {open && <TreeLevel directory={directory} rel={entry.path} depth={depth + 1} onOpen={onOpen} selected={selected} />}
+    </li>
   )
 }
 
@@ -151,9 +215,45 @@ export default function Home() {
     } catch { /* storage blocked */ }
     return next
   })
-  // The two side columns can be dragged wider or narrower; the widths are kept on this device.
+  // The two side columns can be dragged wider or narrower, and either one can be collapsed; the widths and which
+  // sidebars are open are kept on this device (kell.layout / kell.sidebars).
   const [widths, setWidths] = useState({ left: 260, right: 340 })
-  useEffect(() => { try { const w = JSON.parse(window.localStorage.getItem("kell.layout") || "null"); if (w && typeof w.left === "number" && typeof w.right === "number") setWidths(w) } catch { /* default */ } }, [])
+  const [leftOpen, setLeftOpen] = useState(true)
+  const [rightOpen, setRightOpen] = useState(true)
+  useEffect(() => {
+    try {
+      const w = JSON.parse(window.localStorage.getItem("kell.layout") || "null")
+      if (w && typeof w.left === "number" && typeof w.right === "number") setWidths(w)
+      const s = JSON.parse(window.localStorage.getItem("kell.sidebars") || "null")
+      if (s && typeof s.left === "boolean") setLeftOpen(s.left)
+      if (s && typeof s.right === "boolean") setRightOpen(s.right)
+    } catch { /* default */ }
+  }, [])
+  // Narrow windows: the side columns become drawers, so start them closed rather than covering the chat. Only when
+  // the window crosses into the narrow range, not on every resize (opening a drawer must stay open).
+  const wasNarrow = useRef({ right: false, left: false })
+  useEffect(() => {
+    const apply = () => {
+      const narrowRight = window.innerWidth <= 1100
+      const narrowLeft = window.innerWidth <= 760
+      if (narrowRight && !wasNarrow.current.right) setRightOpen(false)
+      if (narrowLeft && !wasNarrow.current.left) setLeftOpen(false)
+      wasNarrow.current = { right: narrowRight, left: narrowLeft }
+    }
+    apply()
+    window.addEventListener("resize", apply)
+    return () => window.removeEventListener("resize", apply)
+  }, [])
+  const toggleSidebar = (side: "left" | "right") => {
+    const next = { left: side === "left" ? !leftOpen : leftOpen, right: side === "right" ? !rightOpen : rightOpen }
+    setLeftOpen(next.left); setRightOpen(next.right)
+    try { window.localStorage.setItem("kell.sidebars", JSON.stringify(next)) } catch { /* storage blocked */ }
+  }
+  const showSidebar = (side: "left" | "right") => {
+    const next = { left: side === "left" ? true : leftOpen, right: side === "right" ? true : rightOpen }
+    setLeftOpen(next.left); setRightOpen(next.right)
+    try { window.localStorage.setItem("kell.sidebars", JSON.stringify(next)) } catch { /* storage blocked */ }
+  }
   const dragColumn = (side: "left" | "right") => (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     const el = e.currentTarget
@@ -199,11 +299,20 @@ export default function Home() {
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
   const [sessions, setSessions] = useState<{ id: string; title: string; updated: number }[]>([])
   const [sessOpen, setSessOpen] = useState(false)
+  // Import OpenCode CLI chats into this project: the sessions the sidebar deliberately hides.
+  const [importOpen, setImportOpen] = useState(false)
+  const [importable, setImportable] = useState<{ id: string; title: string; updated: number }[]>([])
+  const [importPick, setImportPick] = useState<Set<string>>(new Set())
+  const [importBusy, setImportBusy] = useState(false)
+  const [importNote, setImportNote] = useState("")
   const [spend, setSpend] = useState(0)
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
   const [big, setBig] = useState(false)                  // the message box: bigger / smaller, like the website chat
   const textRef = useRef<HTMLTextAreaElement>(null)
+  // Up-arrow history: the prompts already sent in THIS chat (the session's user lines), not a global list.
+  const histPos = useRef<number | null>(null)
+  const histSaved = useRef("")
   const [files, setFiles] = useState<FileDiff[]>([])
   const [filesNote, setFilesNote] = useState("")
   // Everything else uncommitted in the folder (your own edits, another tool's): shown apart from kell's, and never touched by Undo.
@@ -211,6 +320,24 @@ export default function Home() {
   const [otherMore, setOtherMore] = useState(0)
   const [confirm, setConfirm] = useState("")
   const [pending, setPending] = useState(0)
+  // The file view: a file picked in the sidebar's tree, its text from app/api/files, and the state of that read.
+  const [filePath, setFilePath] = useState<string | null>(null)
+  const [fileView, setFileView] = useState<{ text: string; bytes: number; lines: number; truncated: boolean; binary: boolean } | null>(null)
+  const [fileErr, setFileErr] = useState("")
+  const [fileBusy, setFileBusy] = useState(false)
+  const [fileCopied, setFileCopied] = useState(false)
+  const [treeEpoch, setTreeEpoch] = useState(0)          // bump: the tree re-reads the folder it was on
+  const openFile = async (rel: string) => {
+    setFilePath(rel); setFileErr(""); setFileView(null); setFileBusy(true)
+    showSidebar("right")                                  // the view lives in the right panel: bring it back if it was hidden
+    try {
+      const r = await fetch(`/api/files?directory=${encodeURIComponent(directory)}&path=${encodeURIComponent(rel)}`)
+      const j = await r.json()
+      if (!r.ok || j.error) { setFileErr(j.error || `Could not read ${rel}`); return }
+      setFileView(j)
+    } catch (e: any) { setFileErr(String(e?.message || e)) }
+    finally { setFileBusy(false) }
+  }
   const [cards, setCards] = useState<ToolCard[]>([])
   const [cardsNote, setCardsNote] = useState("")
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -227,6 +354,13 @@ export default function Home() {
   const busyRef = useRef(false)                       // a late poll must not overwrite a turn that started after it
   // Messages sent while kell is working wait here and go out one at a time, in order, as each turn ends (× drops one).
   const [queued, setQueued] = useState<string[]>([])
+  // The command palette (Ctrl/Cmd-K): app actions and "go to file", with the last few choices first.
+  const [palette, setPalette] = useState(false)
+  const [paletteQ, setPaletteQ] = useState("")
+  const [paletteIdx, setPaletteIdx] = useState(0)
+  const [fileHits, setFileHits] = useState<{ name: string; path: string }[]>([])
+  const [stopping, setStopping] = useState(false)
+  const [stopNote, setStopNote] = useState("")
 
   useEffect(() => {
     const last = window.localStorage.getItem("kell.directory") || ""
@@ -239,6 +373,7 @@ export default function Home() {
     fetch("/api/settings").then((r) => r.json()).then(setSettings).catch(() => undefined)
   }, [])
   useEffect(() => { scrollToEnd({ instant: true }) }, [scrollToEnd, sessionID])
+  useEffect(() => { histPos.current = null; histSaved.current = "" }, [sessionID])
   useEffect(() => { follow() }, [lines, steps, busy, follow])
 
   const loadChanges = useCallback(async (sid: string | null) => {
@@ -264,6 +399,30 @@ export default function Home() {
       if (Array.isArray(p.projects)) mergeProjects(p.projects.map((x: { dir: string }) => x.dir))
     } catch { /* the lists stay as they were */ }
   }, [])
+
+  // The OpenCode CLI chats in this folder, with a checkbox each. Importing marks them as kell sessions; they then
+  // appear in the sidebar like any other and can be continued here.
+  const openImport = async () => {
+    setImportOpen(true); setImportNote(""); setImportPick(new Set()); setImportable([])
+    try {
+      const j = await (await fetch("/api/sessions?opencode=1")).json()
+      if (j.error) setImportNote(String(j.error))
+      setImportable(Array.isArray(j.sessions) ? j.sessions : [])
+    } catch { setImportNote("Could not read the OpenCode chats.") }
+  }
+  const doImport = async () => {
+    const ids = [...importPick]
+    if (!ids.length || importBusy) return
+    setImportBusy(true); setImportNote("")
+    try {
+      const r = await fetch("/api/sessions/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionIDs: ids }) })
+      const j = await r.json()
+      if (!r.ok) { setImportNote(String(j.error || "Could not import these chats.")); return }
+      setImportOpen(false)
+      await loadSessions()
+    } catch { setImportNote("Could not import these chats.") }
+    finally { setImportBusy(false) }
+  }
 
   // A past session: its conversation back on screen, and the next message continues it.
   const openSession = async (id: string) => {
@@ -334,14 +493,15 @@ export default function Home() {
     if (!body.trim() || !directory) return
     if (busy) {                                              // still working: keep it for when this turn ends
       setQueued((q) => [...q, body])
-      if (again === undefined) setText("")
+      if (again === undefined) { setText(""); histPos.current = null }
       return
     }
     const sent = body
     setLines((l) => [...l, { who: "user", text: sent, at: Date.now() }])
     setSteps([])
-    if (again === undefined) setText("")                     // sending it again keeps what you were typing
+    if (again === undefined) { setText(""); histPos.current = null }   // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
+    setStopNote("")
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
     setCards([]); setCardsNote(""); loadTools(sent)
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID, directory, text: sent }) })
@@ -423,6 +583,20 @@ export default function Home() {
     for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (!busyRef.current) loadChanges(sid) }, ms)
     loadSessions()
     setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
+  }
+
+  /** Stop the turn at its next safe point (reqs §5). Work that already ran is not undone, and the note says so. */
+  const stop = async () => {
+    if (!sessionID || stopping) return
+    setStopping(true)
+    try {
+      const r = await fetch("/api/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || `stop failed (${r.status})`)
+      setStopNote("Stopped. Steps that already ran stay; nothing is undone.")
+    } catch (e: any) {
+      setStopNote(`Could not stop the turn: ${String(e?.message || e)}`)
+    } finally { setStopping(false) }
   }
 
   const answerPermission = async (l: Line, decision: "once" | "always" | "reject") => {
@@ -539,6 +713,45 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queued, busy, resume])
 
+  // Ctrl/Cmd-K opens the command palette from anywhere in the app (reqs §1: "same shortcut in every context").
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); setPalette((p) => !p); setPaletteQ(""); setPaletteIdx(0) }
+      else if (e.key === "Escape" && palette) { setPalette(false) }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [palette])
+
+  // The draft prompt survives switching projects or sessions (reqs §1). The queued prompts already outlive a re-render;
+  // this keeps what was being typed when the person looked at another session.
+  useEffect(() => {
+    if (!directory) return
+    try { setText(window.localStorage.getItem(`kell.draft:${directory}`) || "") } catch { /* storage blocked */ }
+    // only when the project changes: typing must not be overwritten by this effect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [directory])
+  useEffect(() => {
+    if (!directory) return
+    try {
+      if (text) window.localStorage.setItem(`kell.draft:${directory}`, text)
+      else window.localStorage.removeItem(`kell.draft:${directory}`)
+    } catch { /* storage blocked */ }
+  }, [text, directory])
+
+  // "Go to file" in the palette: the app searches the project (bounded walk) once the query has a letter in it.
+  useEffect(() => {
+    if (!palette || !directory || paletteQ.trim().length < 2) { setFileHits([]); return }
+    let live = true
+    const timer = setTimeout(() => {
+      fetch(`/api/files?directory=${encodeURIComponent(directory)}&q=${encodeURIComponent(paletteQ)}`)
+        .then((r) => r.json())
+        .then((j) => { if (live) setFileHits(Array.isArray(j.files) ? j.files : []) })
+        .catch(() => { if (live) setFileHits([]) })
+    }, 140)
+    return () => { live = false; clearTimeout(timer) }
+  }, [palette, directory, paletteQ])
+
   // The rooms view follows the placeholder's rectangle while the Rooms pane shows, and hides on the coding pane.
   const roomsOn = pane === "rooms" && !!settings?.signedIn
   useEffect(() => {
@@ -570,18 +783,110 @@ export default function Home() {
     return () => { live = false; clearInterval(t); mo.disconnect() }
   }, [roomsOn])
   const otherAccount = !!(settings?.signedIn && settings.subject && roomsWho && roomsWho.id !== settings.subject)
+  const dw = desktop()
 
   const isCheap = (r: LedgerRow) => !!settings?.models.cheap && `${r.providerID}/${r.model}` === settings.models.cheap
+  // The prompts sent in this chat, oldest first. Opening a past session loads its user lines, so Up works there too;
+  // a new session starts empty. Scoped to `lines`, which is reset when the session changes.
+  const promptHistory = lines.filter((l) => l.who === "user").map((l) => l.text)
   const readEngine = engine?.up && !!directory
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
 
   const project = directory ? directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || directory : "No project"
   const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null)
 
+  // The waiting prompts can be reordered or pulled back into the box, not only dropped (reqs §2: "edit / reorder / delete").
+  const moveQueued = (i: number, d: number) => setQueued((q) => {
+    const j = i + d
+    if (j < 0 || j >= q.length) return q
+    const next = [...q]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    return next
+  })
+  const editQueued = (i: number) => {
+    const t = queued[i]
+    setQueued((q) => q.filter((_, k) => k !== i))
+    setText(t); histPos.current = null; textRef.current?.focus()
+  }
+
+  // The command palette (Ctrl/Cmd-K): app actions, then files whose path matches (app/api/files?q=). Recent choices come
+  // first on an empty query, so the shortcut is never an empty box (reqs §1).
+  const runCommand = (run: () => void, id?: string) => {
+    setPalette(false); setPaletteQ(""); setPaletteIdx(0)
+    if (id) try {
+      const prev = JSON.parse(window.localStorage.getItem("kell.palette.recent") || "[]")
+      const next = [id, ...(Array.isArray(prev) ? prev : []).filter((x) => x !== id)].slice(0, 5)
+      window.localStorage.setItem("kell.palette.recent", JSON.stringify(next))
+    } catch { /* storage blocked */ }
+    run()
+  }
+  const commands = [
+    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
+    { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); void openProject(d) } }) } },
+    { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
+    { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
+    { id: "left", title: "Show or hide the project sidebar", run: () => toggleSidebar("left") },
+    { id: "right", title: "Show or hide the changes panel", run: () => toggleSidebar("right") },
+    { id: "stop", title: "Stop kell", hint: "end the running turn; nothing is undone", run: () => void stop() },
+    { id: "code", title: "Go to the coding agent", run: () => setPane("code") },
+    { id: "rooms", title: "Go to the team rooms", run: () => setPane("rooms") },
+    { id: "console", title: "Open the console", run: () => void openConsole() },
+    { id: "signin", title: "Sign in", run: () => void signIn() },
+    { id: "signout", title: "Sign out", run: () => void signOut() },
+    { id: "help", title: "Help: how kell works", run: () => window.open("https://www.kell.org.in/docs", "_blank", "noopener") },
+  ]
+  // Subsequence match: "nw s" finds "New session". An empty query matches everything.
+  const fuzzy = (hay: string, needle: string) => {
+    let i = 0
+    for (const ch of hay.toLowerCase()) { if (ch === needle[i]) i++; if (i === needle.length) return true }
+    return needle.length === 0
+  }
+  const recentCommands = (() => {
+    if (typeof window === "undefined") return [] as string[]       // the page is prerendered once, without a window
+    try { const r = JSON.parse(window.localStorage.getItem("kell.palette.recent") || "[]"); return Array.isArray(r) ? r.filter((x) => typeof x === "string") : [] }
+    catch { return [] }
+  })()
+  const paletteQ2 = paletteQ.trim().toLowerCase()
+  const matchedCommands = commands.filter((c) => !paletteQ2 || fuzzy(c.title, paletteQ2))
+  const orderedCommands = paletteQ2 ? matchedCommands
+    : [...matchedCommands].sort((a, b) => (recentCommands.indexOf(a.id) + 1 || 99) - (recentCommands.indexOf(b.id) + 1 || 99))
+  const paletteItems = [
+    ...orderedCommands.map((c) => ({ id: c.id, title: c.title, hint: c.hint as string | undefined, kind: "command" as const, run: () => runCommand(c.run, c.id) })),
+    ...(paletteQ2.length >= 2 ? fileHits.map((f) => ({ id: `file:${f.path}`, title: f.path, hint: undefined, kind: "file" as const, run: () => runCommand(() => void openFile(f.path)) })) : []),
+  ].slice(0, 40)
+  const runPaletteItem = (i: number) => { const it = paletteItems[i]; if (it) it.run() }
+  const paletteSelected = Math.min(paletteIdx, Math.max(0, paletteItems.length - 1))
+
+  /** Drag the pill at the top of the composer to set its height. The native corner grip still works; this one is
+   *  visible and resizes upward the way a bottom-anchored composer should. */
+  const startComposerResize = (e: React.PointerEvent<HTMLSpanElement>) => {
+    e.preventDefault()
+    const el = textRef.current
+    if (!el) return
+    const startY = e.clientY
+    const startH = el.getBoundingClientRect().height
+    const max = Math.max(120, window.innerHeight * 0.5)
+    const move = (ev: PointerEvent) => {
+      const h = Math.max(44, Math.min(max, startH + (startY - ev.clientY)))
+      el.style.height = `${h}px`
+    }
+    const up = () => {
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+    }
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", up, { once: true })
+  }
+
   return (
     <section className="dg-page dk-page" style={springVars() as React.CSSProperties}>
       <ThemeWatcher />
       <nav className="dk-switch" aria-label="Code or rooms">
+        {desktop() && (
+          <button type="button" className="dk-icon dk-icon-sm dk-menubtn" aria-label="File, Edit and View menu" title="File, Edit, View and Help" onClick={() => desktop()?.showMenu?.()}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+        )}
         <div role="tablist">
           <button type="button" role="tab" aria-selected={pane === "code"} onClick={() => setPane("code")}>Code</button>
           <button type="button" role="tab" aria-selected={pane === "rooms"} onClick={() => setPane("rooms")}>Rooms</button>
@@ -598,6 +903,20 @@ export default function Home() {
             </span>
           )}
         </span>
+        {/* The app draws its own frame: these are the window's minimize / maximize / close (desktop/electron/main.ts). */}
+        {dw?.window && (
+          <span className="dk-winbtns">
+            <button type="button" className="dk-winbtn" aria-label="Minimize" title="Minimize" onClick={() => dw.window!.minimize()}>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+            </button>
+            <button type="button" className="dk-winbtn" aria-label="Maximize" title="Maximize" onClick={() => dw.window!.toggleMaximize()}>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="2" y="2" width="6" height="6" stroke="currentColor" strokeWidth="1.1" /></svg>
+            </button>
+            <button type="button" className="dk-winbtn dk-winbtn-x" aria-label="Close" title="Close" onClick={() => dw.window!.close()}>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+            </button>
+          </span>
+        )}
       </nav>
       {otherAccount && (
         <div className="dk-err dk-mismatch" role="alert">
@@ -629,8 +948,9 @@ export default function Home() {
           )}
         </div>
       )}
-      <div className="dg-shell" hidden={pane !== "code"}
+      <div className="dg-shell" hidden={pane !== "code"} data-left={leftOpen ? "open" : "closed"} data-right={rightOpen ? "open" : "closed"} data-menu={leftOpen ? "open" : "closed"}
         style={{ "--dk-left": `${widths.left}px`, "--dk-right": `${widths.right}px` } as React.CSSProperties}>
+        <div className="dg-scrim" onClick={() => setLeftOpen(false)} aria-hidden="true" />
         <div className="dk-resize" data-side="left" role="separator" aria-orientation="vertical" aria-label="Drag to resize the project list" onPointerDown={dragColumn("left")} />
         <div className="dk-resize" data-side="right" role="separator" aria-orientation="vertical" aria-label="Drag to resize the changes panel" onPointerDown={dragColumn("right")} />
         <aside className="dg-side" aria-label="Project, models and account">
@@ -638,6 +958,10 @@ export default function Home() {
             <img className="wm-light" src="/kel-wordmark.png" alt="keळ" style={{ height: 38, width: "auto" }} />
             <img className="wm-dark" src="/kel-wordmark-dark.png" alt="" aria-hidden="true" style={{ height: 38, width: "auto" }} />
           </div>
+          <button type="button" className="dk-icon dk-icon-sm dk-side-close" aria-label="Hide the project sidebar"
+            title="Hide the project sidebar" onClick={() => toggleSidebar("left")}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
+          </button>
 
           <h2>Project</h2>
           {/* One way in: the folder picker (the app), or a typed path where there is no picker (a browser during development). Projects
@@ -689,22 +1013,40 @@ export default function Home() {
                       <span className="nm">{name}</span>
                     </button>
                     <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>×</button>
-                    {here && engine?.up && sessions.length > 0 && (
+                    {here && engine?.up && (
                       // The open project's sessions under it, one list: the newest shows, a chevron shows the rest.
                       <div className="dk-sess">
-                        {(sessOpen || sessions.slice(1).some((x) => x.id === sessionID) ? sessions : sessions.slice(0, 1)).map(sessionRow)}
+                        {sessions.length > 0 && (sessOpen || sessions.slice(1).some((x) => x.id === sessionID) ? sessions : sessions.slice(0, 1)).map(sessionRow)}
                         {sessions.length > 1 && (
                           <button type="button" className="dk-sess-toggle" aria-expanded={sessOpen} aria-label={sessOpen ? "Show fewer sessions" : "Show all sessions"}
                             title={sessOpen ? "Show fewer" : "Show all"} onClick={() => setSessOpen((o) => !o)}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
                           </button>
                         )}
+                        <button type="button" className="dk-sess-import" onClick={() => void openImport()}>Import OpenCode chats</button>
                       </div>
                     )}
                   </li>
                 )
               })}
             </ul>
+          )}
+
+          {/* The project's files: a folder opens on click and asks the app for its entries then; a file opens in the
+              right panel's file view. */}
+          {directory && (
+            <>
+              <div className="dk-sec-head">
+                <h2>Files</h2>
+                <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the file list" title="Refresh the file list"
+                  onClick={() => setTreeEpoch((n) => n + 1)}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+                </button>
+              </div>
+              <div className="dk-tree" key={`${directory}:${treeEpoch}`}>
+                <TreeLevel directory={directory} rel="" depth={0} onOpen={openFile} selected={filePath || undefined} />
+              </div>
+            </>
           )}
 
           <div className="dk-foot">
@@ -747,16 +1089,57 @@ export default function Home() {
 
         <section className="dg-main" aria-label={`Chat in ${project}`}>
           <header className="dg-head">
+            {/* The two panel toggles live on their own sides of the project bar: the project sidebar on the left,
+                the changes panel on the right. They used to sit together in one cluster after the title, which put
+                both in the middle of the bar. */}
+            {!leftOpen && (
+              <button type="button" className="dk-icon dk-icon-sm dk-head-toggle" aria-label="Show the project sidebar" title="Show the project sidebar"
+                onClick={() => toggleSidebar("left")}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>
+              </button>
+            )}
             <h1>{project}</h1>
             <div className="dk-chips">
               {spend > 0 && <span className="dk-spend">${spend.toFixed(4)} this session</span>}
             </div>
             <ThemeToggle className="dg-theme" />
+            {!rightOpen && (
+              <button type="button" className="dk-icon dk-icon-sm dk-head-toggle dk-show-right" aria-label="Show the changes panel" title="Show the changes panel"
+                onClick={() => toggleSidebar("right")}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+              </button>
+            )}
           </header>
 
           <div className="dg-scroll">
             <div className="dg-viewport" ref={logRef} aria-label="Messages">
               <div className="dg-content" ref={logContentRef}>
+                {lines.length === 0 && !busy && (
+                  // The empty state is not a blank box (reqs §8): one line states the boundary, and three prompts that
+                  // are known to work here fill the composer rather than a highlight reel.
+                  <div className="dk-empty">
+                    {directory ? (
+                      <>
+                        <p className="dk-empty-line">kell can read and edit this folder and run commands here. It asks before anything destructive, and every change comes back as a diff you can undo.</p>
+                        <div className="dk-empty-prompts">
+                          {["Explain how this project is put together", "Find and fix the bug I describe", "Write tests for a file I name"].map((p) => (
+                            <button key={p} type="button" className="btn-line dg-mini dk-empty-prompt" onClick={() => { setText(p); textRef.current?.focus() }}>{p}</button>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="dk-empty-line">kell works in one folder at a time. Open a folder, then describe the task — the changes come back as a diff you can undo.</p>
+                        <div className="dk-row" style={{ margin: 0 }}>
+                          <button type="button" className="btn-ink" onClick={async () => {
+                            if (!desktop()?.pickFolder) { void openProject(); return }
+                            const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); void openProject(d) }
+                          }}>Open a folder</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 {lines.map((l, i) => {
                   if (l.who === "plan") {
                     return (
@@ -863,23 +1246,59 @@ export default function Home() {
           {queued.map((q, i) => (
             <div key={i} className="dg-queued small" role="status">
               <span className="dim">Waiting for kell:</span> <span className="dg-queued-text">{q}</span>
-              <button type="button" aria-label="Don't send this one" title="Don't send this one" onClick={() => setQueued((x) => x.filter((_, k) => k !== i))}>×</button>
+              <span className="dk-queue-tools">
+                {i > 0 && <button type="button" aria-label="Send this sooner" title="Send this sooner" onClick={() => moveQueued(i, -1)}>↑</button>}
+                {i < queued.length - 1 && <button type="button" aria-label="Send this later" title="Send this later" onClick={() => moveQueued(i, 1)}>↓</button>}
+                <button type="button" aria-label="Edit this message" title="Edit this message" onClick={() => editQueued(i)}>✎</button>
+                <button type="button" aria-label="Don't send this one" title="Don't send this one" onClick={() => setQueued((x) => x.filter((_, k) => k !== i))}>×</button>
+              </span>
             </div>))}
+          {stopNote && <div className="dg-queued small" role="status"><span className="dim">{stopNote}</span></div>}
           <div className="dg-typing" role="status" aria-live="polite">
             {busy && <><span className="dg-pulse" aria-hidden="true" /> Kell is working</>}
           </div>
           <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
-            <textarea ref={textRef} rows={1} data-big={big || undefined} value={text} onChange={(e) => setText(e.target.value)}
+            <span className="dg-composer-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the message box" onPointerDown={startComposerResize} />
+            <textarea ref={textRef} rows={1} data-big={big || undefined} value={text}
+              onChange={(e) => { setText(e.target.value); histPos.current = null }}
               placeholder={directory ? "Tell kell what to do…" : "Open a project first"}
               disabled={!!engine && !engine.up}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} />
+              onKeyDown={(e) => {
+                // IME-safe: Enter during a CJK composition selects a candidate, it must not send the prompt.
+                if (e.key === "Enter" && !e.shiftKey) {
+                  if (e.nativeEvent.isComposing) return
+                  e.preventDefault(); send(); return
+                }
+                if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return
+                // Only when the caret is at the very start: inside a multi-line draft Up/Down still moves the caret.
+                if (e.currentTarget.selectionStart !== 0 || e.currentTarget.selectionEnd !== 0) return
+                if (!promptHistory.length) return
+                if (e.key === "ArrowUp") {
+                  e.preventDefault()
+                  if (histPos.current === null) { histSaved.current = text; histPos.current = promptHistory.length - 1 }
+                  else histPos.current = Math.max(0, histPos.current - 1)
+                  setText(promptHistory[histPos.current])
+                  return
+                }
+                if (histPos.current === null) return
+                e.preventDefault()
+                if (histPos.current >= promptHistory.length - 1) { histPos.current = null; setText(histSaved.current) }
+                else { histPos.current += 1; setText(promptHistory[histPos.current]) }
+              }} />
             <div className="dg-composer-meta">
               {text.trim() && <span className="dg-count" aria-live="off">{words} {words === 1 ? "word" : "words"}</span>}
-              <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); textRef.current?.focus() }} aria-pressed={big}
+              <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); if (textRef.current) textRef.current.style.height = ""; textRef.current?.focus() }} aria-pressed={big}
                 aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
               </button>
             </div>
+            {busy && (
+              // Always reachable while a turn runs (reqs §5). Stopping does not undo what already ran, and the title says so.
+              <button type="button" className="dk-stop" onClick={() => void stop()} disabled={stopping || !sessionID}
+                aria-label="Stop kell" title="Stop the turn. Steps that already ran stay; nothing is undone.">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+              </button>
+            )}
             <button type="submit" className="dk-send" disabled={!text.trim() || !directory || (engine != null && !engine.up)}
               aria-label={busy ? "Queue this message" : "Send"} title={busy ? "kell is working: this waits and goes out when it finishes" : "Send"}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
@@ -887,11 +1306,50 @@ export default function Home() {
           </form>
         </section>
 
-        <aside className="dk-panel" aria-label="Changes, steps and tools">
+        <aside className="dk-panel" aria-label="File, changes, steps and tools">
+          {/* The file view: the file picked in the sidebar's tree, read-only, with its size and a copy button. */}
+          {filePath && (
+            <section className="dk-viewer" aria-label={`File ${filePath}`}>
+              <div className="dk-panel-head dk-viewer-head">
+                <h2 title={filePath}>{filePath}</h2>
+                <span className="dk-iconrow">
+                  <button type="button" className="dk-icon dk-icon-sm" aria-label="Copy the file's text" title="Copy the file"
+                    disabled={!fileView || fileView.binary}
+                    onClick={async () => {
+                      if (!fileView) return
+                      try {
+                        await navigator.clipboard.writeText(fileView.text)
+                        setFileCopied(true); setTimeout(() => setFileCopied(false), 1400)
+                      } catch { /* the clipboard can be blocked; the text stays selectable */ }
+                    }}>
+                    {fileCopied
+                      ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m4 12 5 5L20 6" /></svg>
+                      : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>}
+                  </button>
+                  <button type="button" className="dk-icon dk-icon-sm" aria-label="Close the file" title="Close the file"
+                    onClick={() => { setFilePath(null); setFileView(null); setFileErr("") }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                  </button>
+                </span>
+              </div>
+              {fileBusy && <p className="dk-note">Reading…</p>}
+              {fileErr && <p className="dk-err">{fileErr}</p>}
+              {fileView && (fileView.binary
+                ? <p className="dk-note">A binary file ({Math.max(1, Math.round(fileView.bytes / 1024))} KB) — nothing to show as text.</p>
+                : <>
+                    <pre className="dk-code" tabIndex={0}>{fileView.text}</pre>
+                    <p className="dk-note">{fileView.lines} lines · {Math.max(1, Math.round(fileView.bytes / 1024))} KB{fileView.truncated ? " · showing the start of the file" : ""}</p>
+                  </>)}
+            </section>
+          )}
           <details className="dk-fold" open>
           <summary className="dk-panel-head">
             <h2>Changed by kell{files.length ? ` · ${files.length}` : ""}</h2>
             <span className="dk-iconrow">
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Hide the changes panel" title="Hide the changes panel"
+                onClick={(e) => { e.preventDefault(); toggleSidebar("right") }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg>
+              </button>
               <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the changes" title="Refresh" onClick={(e) => { e.preventDefault(); loadChanges(sessionID) }} disabled={!readEngine}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
               </button>
@@ -948,7 +1406,76 @@ export default function Home() {
           </div>
           </details>
         </aside>
+        <div className="dk-scrim-right" onClick={() => setRightOpen(false)} aria-hidden="true" />
       </div>
+
+      {palette && (
+        <div className="dk-palette-backdrop" onMouseDown={() => setPalette(false)}>
+          <div className="dk-palette" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(e) => e.stopPropagation()}>
+            <input className="dk-palette-input" autoFocus value={paletteQ} placeholder="Type a command, or a file name…"
+              aria-label="Search commands and files" aria-controls="dk-palette-list"
+              aria-activedescendant={paletteItems[paletteSelected] ? `dk-palette-${paletteSelected}` : undefined}
+              onChange={(e) => { setPaletteQ(e.target.value); setPaletteIdx(0) }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") { e.preventDefault(); setPaletteIdx((i) => Math.min(Math.max(0, paletteItems.length - 1), i + 1)) }
+                else if (e.key === "ArrowUp") { e.preventDefault(); setPaletteIdx((i) => Math.max(0, i - 1)) }
+                else if (e.key === "Enter") { if (e.nativeEvent.isComposing) return; e.preventDefault(); runPaletteItem(paletteSelected) }
+              }} />
+            <ul id="dk-palette-list" role="listbox" aria-label="Commands and files" className="dk-palette-list">
+              {paletteItems.map((it, i) => (
+                <li key={it.id} id={`dk-palette-${i}`} role="option" aria-selected={i === paletteSelected}>
+                  <button type="button" className="dk-palette-row" onMouseEnter={() => setPaletteIdx(i)} onClick={() => it.run()}>
+                    <span className="t">{it.title}</span>
+                    {it.hint && <span className="h">{it.hint}</span>}
+                    <span className="k">{it.kind === "file" ? "file" : ""}</span>
+                  </button>
+                </li>
+              ))}
+              {!paletteItems.length && <li className="dk-note" style={{ padding: "10px 14px" }}>Nothing matches.</li>}
+            </ul>
+            <div className="dk-palette-foot"><kbd>↑</kbd><kbd>↓</kbd> move <kbd>↵</kbd> run <kbd>esc</kbd> close</div>
+          </div>
+        </div>
+      )}
+
+      {importOpen && (
+        <div className="dk-import-backdrop" onMouseDown={() => { if (!importBusy) setImportOpen(false) }}>
+          <div className="dk-import" role="dialog" aria-modal="true" aria-label="Import OpenCode chats" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="dk-import-head">
+              <h2>Import OpenCode chats</h2>
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Close" title="Close" disabled={importBusy} onClick={() => setImportOpen(false)}>×</button>
+            </div>
+            <p className="dk-note">Chats started with the <code>opencode</code> CLI in this folder. Imported chats appear in kell&apos;s session list and can be continued here.</p>
+            {importNote && <p className="dk-err" role="status">{importNote}</p>}
+            {importable.length > 0 && (
+              <div className="dk-import-tools">
+                <button type="button" className="btn-line dg-mini" onClick={() => setImportPick(new Set(importable.map((s) => s.id)))}>Select all</button>
+                <button type="button" className="btn-line dg-mini" onClick={() => setImportPick(new Set())}>Clear</button>
+              </div>
+            )}
+            {importable.length === 0 ? <p className="dk-note">No OpenCode chats in this folder.</p> : (
+              <ul className="dk-import-list">
+                {importable.map((s) => (
+                  <li key={s.id}>
+                    <label>
+                      <input type="checkbox" checked={importPick.has(s.id)}
+                        onChange={(e) => setImportPick((p) => { const n = new Set(p); if (e.target.checked) n.add(s.id); else n.delete(s.id); return n })} />
+                      <span>{s.title || "Untitled chat"}</span>
+                      <time>{s.updated ? when(s.updated) : ""}</time>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="dk-import-actions">
+              <button type="button" className="btn-line" disabled={importBusy} onClick={() => setImportOpen(false)}>Cancel</button>
+              <button type="button" className="btn-ink" disabled={importBusy || importPick.size === 0} onClick={() => void doImport()}>
+                {importBusy ? "Importing…" : importPick.size ? `Import ${importPick.size}` : "Import"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

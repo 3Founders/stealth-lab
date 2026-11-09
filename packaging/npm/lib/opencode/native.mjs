@@ -1,8 +1,9 @@
 // Layer 2: what hooks cannot do. Loaded by index.mjs when KELL_OC_NATIVE=on.
 //  (a) triage + model: kell's own triage (POST <server>/triage, the call `kell hook-prompt` makes) picks the model per prompt;
 //  (b) escalation: two failed test runs on the cheap model switch the session to the strong one;
-//  (b2) fallback: a provider failure (the model never answered) is retried once on the same model, then the session switches
-//       to the fallback model (config.json's fallback, default gc/minimax-m2.7) -- at most one switch per turn, never a loop;
+//  (b2) fallback: a provider failure (the model never answered) is retried once on the same model, then the session walks
+//       to the next rung of the ladder (config.json's fallbacks, else its fallback, default gc/minimax-m2.7). A model the
+//       account may not use (an allowlist, no access, an unknown model) moves at once; no rung is tried twice in a turn;
 //  (c) tools: the tool router's suggestions (POST <server>/tools) for the prompt's tool goal, remote servers only;
 //  (d) recording: per turn, model, tokens, cost, tools used and the test result go to <server>/tools/outcome.
 //
@@ -77,32 +78,50 @@ export function nextEscalation(s, { isTest, failed }, limit = 2) {
   return { escalate: s.which === "cheap" && s.testFails >= limit }
 }
 
+// A refusal that names the MODEL, not the request: the organization's allowlist, the provider account, or a model
+// that does not exist. OpenCode reports these as AI.Error.Authentication with only the sentence, so there is no HTTP
+// status to read; another rung of the ladder may answer.
+export const MODEL_DENIED = /not on this organization'?s allowlist|no connection available to you offers|model_not_(allowed|found)|\bmodel\b[^.\n]{0,140}\b(not found|does not exist|doesn'?t exist|not available|is not available|not supported|is not supported|not enabled|is not enabled|deactivated|deprecated|retired|not permitted|not allowed|is not allowed)\b|(no|not have|don'?t have|do not have|lacks?) (access|permission) to (the )?model|not (authorized|permitted|allowed) to (use|access|call) (the )?model|(unknown|invalid|unsupported|unrecognized) model/i
+
+export function isModelDenial(err) {
+  if (!err) return false
+  let text = ""
+  try { text = JSON.stringify(err?.error ?? err) } catch { text = "" }
+  text += " " + String(err?.message || err?.name || "")
+  return MODEL_DENIED.test(text)
+}
+
 /**
  * Provider-side failures (the model never answered) told apart from every other error. OpenCode's retry hook hands over a
  * SessionError; classify on the text, because the shapes vary (message strings, HTTP status objects, AbortError...).
  * Covers the failures seen live: "Provider request failed with HTTP 403", "Streaming request failed" (a 400 body),
- * 5xx, and timeouts. Not covered on purpose: everything a model or a tool decided by itself.
+ * 5xx, timeouts, and a model the account may not use (isModelDenial). Not covered on purpose: everything a model or a
+ * tool decided by itself.
  */
 export function isProviderFailure(err) {
   if (!err) return false
   let text = ""
   try { text = JSON.stringify(err?.error ?? err) } catch { text = "" }
   text += " " + String(err?.message || err?.name || "")
-  return /streaming request failed|http \d{3}|status[: ]?\d{3}|timeout|timed ?out|abort|econn|socket hang up|fetch failed|network/i.test(text)
+  return isModelDenial(err) || /streaming request failed|http \d{3}|status[: ]?\d{3}|timeout|timed ?out|abort|econn|socket hang up|fetch failed|network/i.test(text)
 }
 
 /**
- * What to do after a provider failure, from OpenCode's retry hook. One failure is tolerated (the same model is retried
- * once); the second one in a turn switches the session to the fallback. Never loops: the fallback itself is never switched
- * away from, and at most one switch happens per turn (the prompt hook resets fallbackDone).
+ * What to do after a provider failure, from OpenCode's retry hook. An ordinary outage is tolerated once (the same model
+ * is retried); the next failure moves to the next rung. A model the account may not use moves at once: retrying it
+ * cannot help. `fallbacks` is the whole ladder, in order; `fallback` is the older single-rung setting. A rung already
+ * tried this turn is skipped, so the ladder walks down once and never loops.
  */
-export function nextFallback(s, { attempt, model, fallback, failing }) {
+export function nextFallback(s, { attempt, model, fallback, fallbacks, failing, denied }) {
+  const ladder = (Array.isArray(fallbacks) && fallbacks.length ? fallbacks : fallback ? [fallback] : [])
+    .map(String).filter((m) => parseModel(m))
   if (!failing) return { switch: false, reason: "not a provider failure" }
-  if (!parseModel(fallback)) return { switch: false, reason: "no fallback model" }
-  if (model === fallback) return { switch: false, reason: "already on the fallback" }
-  if (s.fallbackDone) return { switch: false, reason: "already switched this turn" }
-  if (Number(attempt || 0) < 2) return { switch: false, reason: "first failure: the same model is retried once" }
-  return { switch: true }
+  if (!ladder.length) return { switch: false, reason: "no fallback model" }
+  const tried = s.tried instanceof Set ? s.tried : (s.tried = new Set())
+  const next = ladder.find((m) => m !== model && !tried.has(m))
+  if (!next) return { switch: false, reason: "the ladder is exhausted" }
+  if (!denied && Number(attempt || 0) < 2) return { switch: false, reason: "first failure: the same model is retried once" }
+  return { switch: true, to: next }
 }
 
 /** Remote MCP servers from the router's answer that can be added with no sign-in. Field names are an assumption. */
@@ -113,13 +132,18 @@ export function addableRemote(reply, installed = []) {
     && !t.requires_auth && !t.oauth && !t.needs_key && !have.has(t.name)).slice(0, 2)
 }
 
-export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: strongCfg, fallback: fallbackCfg } = {}) {
+export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: strongCfg, fallback: fallbackCfg, fallbacks: fallbackCfgs } = {}) {
   // read on each call, not once: the saved sign-in is refreshed about hourly (the hooks and the desktop app do it), and a session
   // that kept the first one sent every triage and outcome with an expired token (2026-11-08)
   const cfg = { get url() { return readKellConfig().url }, get token() { return readKellConfig().token } }
   const cheap = process.env.KELL_OC_CHEAP_MODEL || cheapCfg || "gc/minimax-m2.7"
   const strong = process.env.KELL_OC_STRONG_MODEL || process.env.KELL_OC_DEFAULT_MODEL || strongCfg || null
   const fallback = process.env.KELL_OC_FALLBACK_MODEL || fallbackCfg || "gc/minimax-m2.7"
+  // The whole ladder, in order: KELL_OC_FALLBACK_MODELS, then config.json's fallbacks, then the older single fallback.
+  const envFallbacks = String(process.env.KELL_OC_FALLBACK_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean)
+  const fallbacks = envFallbacks.length ? envFallbacks
+    : Array.isArray(fallbackCfgs) && fallbackCfgs.length ? fallbackCfgs.map(String).filter(Boolean)
+      : [fallback]
   const addRemote = process.env.KELL_OC_ADD_REMOTE === "on"
   const log = (...a) => { if (process.env.KELL_OC_DEBUG === "1") try { fs.appendFileSync(path.join(process.env.KELL_OC_STATE_DIR || os.tmpdir(), "native.log"), `${new Date().toISOString()} ${a.join(" ")}\n`) } catch { /* best effort */ } }
   const turns = new Map()            // sessionID -> { which, strongRef, testFails, lastTest, tools: Set, goal, tokens, cost, model, fallbackDone }
@@ -127,7 +151,7 @@ export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: 
 
   await ctx.session.hook("prompt", async (e) => {
     const t = turn(e.sessionID)
-    Object.assign(t, { testFails: 0, lastTest: undefined, tools: new Set(), tokens: undefined, cost: undefined, fallbackDone: false })
+    Object.assign(t, { testFails: 0, lastTest: undefined, tools: new Set(), tokens: undefined, cost: undefined, tried: new Set() })
     const verdict = await post(cfg.url, "/triage", { query: String(e.prompt.text).slice(0, 6000) }, { token: cfg.token })
     t.goal = verdict?.tool && verdict.tool !== "-" ? String(verdict.tool) : undefined
     if (strong) t.strongRef = strong            // the session's own model, kept before the switch so escalation can go back to it
@@ -170,23 +194,27 @@ export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: 
   })
 
   // (b2) Provider failures. OpenCode retries a failed model request by itself and hands each attempt to the retry hook;
-  // kell lets the first failure retry on the same model, and on the second one switches the session to the fallback so
-  // the retry continues on a model that answers. At most one switch per turn, and the fallback is never switched away from.
+  // kell lets the first ordinary failure retry on the same model, and on the next one walks to the next rung of the
+  // ladder. A model the account may not use (an allowlist, no access, an unknown model) moves at once: retrying it cannot
+  // help. Rungs already tried this turn are skipped, so the ladder walks down once and never loops.
   await ctx.session.hook("retry", async (e) => {
     const t = turn(e.sessionID)
     const model = `${e.model?.providerID ?? "?"}/${e.model?.id ?? "?"}`
+    const denied = isModelDenial(e.error)
     const failing = isProviderFailure(e.error)
-    const verdict = nextFallback(t, { attempt: e.attempt, model, fallback, failing })
+    const verdict = nextFallback(t, { attempt: e.attempt, model, fallback, fallbacks, failing, denied })
     if (!verdict.switch) {
       if (failing) log("provider failure on", model, "attempt", e.attempt, "-", verdict.reason)
       return
     }
-    const ref = parseModel(fallback)
-    t.fallbackDone = true
-    log("provider failure on", model, "attempt", e.attempt, "-> fallback", fallback)
+    const ref = parseModel(verdict.to)
+    if (!ref) return
+    t.tried.add(model)
+    t.tried.add(verdict.to)
+    log(denied ? "model denied on" : "provider failure on", model, "attempt", e.attempt, "-> fallback", verdict.to)
     try {
       await ctx.session.switchModel({ sessionID: e.sessionID, model: ref })
-      e.decision = { retry: true, delay: 250 }      // the retry now goes out on the fallback model
+      e.decision = { retry: true, delay: denied ? 0 : 250 }      // the retry now goes out on the next rung
     } catch (err) { log("switchModel to the fallback failed:", String(err?.message || err)) }
   })
 

@@ -11,6 +11,11 @@ if (!fs.existsSync(path.join(out, "server.js"))) {
 }
 fs.cpSync(path.join(root, ".next", "static"), path.join(out, ".next", "static"), { recursive: true })
 if (fs.existsSync(path.join(root, "public"))) fs.cpSync(path.join(root, "public"), path.join(out, "public"), { recursive: true })
+// The server tree too. Next's standalone trace can leave out the chunks its own pages/_document.js requires
+// ("./vendor-chunks/next.js", "./611.js"), and the packaged app then never boots -- no window, "the Next server never
+// answered" (found 2026-11-08 on a cold .next). Copying .next/server over the traced copy is small next to the app and
+// guarantees every file the server requires is there.
+fs.cpSync(path.join(root, ".next", "server"), path.join(out, ".next", "server"), { recursive: true })
 
 let files = 0, bytes = 0
 const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else { files++; bytes += fs.statSync(p).size } } }

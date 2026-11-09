@@ -188,7 +188,8 @@ ${merged.reason}`
 
     if (mode === "session") {
       const { installNative } = await import("./native.mjs")
-      await installNative(ctx, { cwd, state, base, cheap: ocConfig.cheap, strong: ocConfig.strong, fallback: ocConfig.fallback })
+      await installNative(ctx, { cwd, state, base, cheap: ocConfig.cheap, strong: ocConfig.strong, fallback: ocConfig.fallback,
+                                 fallbacks: ocConfig.fallbacks })
     }
   },
 })

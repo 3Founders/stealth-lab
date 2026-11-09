@@ -30,7 +30,7 @@ export async function POST(req: Request) {
         const client = await clientFor(e)                 // async: loads the ESM-only client via import()
         // Subscribe before prompting: otherwise the turn's session.idle can fire before the stream starts.
         const sessionID: string = body.sessionID ||
-          (await client.session.create({ location: { directory: e.directory } })).id
+          (await client.session.create({ location: { directory: e.directory }, metadata: { kell: true } })).id
         enc({ type: "session", sessionID })
         const pump = (async () => {
           try {

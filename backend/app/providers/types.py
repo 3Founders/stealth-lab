@@ -10,12 +10,40 @@ so the routing layer needs no special case for agents: an agent is just a unit w
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
 DIRECT = "direct"                       # the scaffold of a bare model call
 KINDS = ("openai_compatible", "a2a")
 CREDENTIAL_OWNERS = ("customer", "platform")
+
+# A refusal that names the MODEL, not the request: the organization's allowlist, the provider account, or a model
+# that does not exist. Another rung of the ladder may answer, so the caller must move on instead of showing it.
+_MODEL_REFUSAL = re.compile(
+    r"not on this organization'?s allowlist"
+    r"|no connection available to you offers"
+    r"|model_not_(allowed|found)"
+    r"|\bmodel\b[^.\n]{0,140}\b(not found|does not exist|doesn'?t exist|not available|is not available|"
+    r"not supported|is not supported|not enabled|is not enabled|deactivated|deprecated|retired|"
+    r"not permitted|not allowed|is not allowed)\b"
+    r"|(no|not have|don'?t have|do not have|lacks?) (access|permission) to (the )?model"
+    r"|not (authorized|permitted|allowed) to (use|access|call) (the )?model"
+    r"|(unknown|invalid|unsupported|unrecognized) model",
+    re.IGNORECASE,
+)
+
+
+def is_model_refusal(status: Optional[int], text: Any) -> bool:
+    """Whether an error says this MODEL cannot be used (allowlist, no access, unknown model), not that the request is
+    bad. `status=None` reads the message alone (a ProviderCallDenied carries no HTTP status). A generic 400/404 with no
+    model named stays a request error, as before."""
+    body = str(text or "")
+    if not body:
+        return False
+    if status is not None and status not in (400, 401, 402, 403, 404, 422):
+        return False
+    return bool(_MODEL_REFUSAL.search(body))
 
 
 class ProviderError(Exception):
@@ -49,6 +77,12 @@ class ProviderCallFailed(ProviderError):
         from app.providers.health import is_outage
 
         return is_outage(self.status, self.transport)
+
+    @property
+    def model_refused(self) -> bool:
+        """The endpoint answered, but said this model is not usable here (allowlist, no access, unknown model).
+        Unlike `outage`, the endpoint is not rested: the next rung of the ladder may be allowed."""
+        return is_model_refusal(self.status, self)
 
 
 @dataclass(frozen=True)

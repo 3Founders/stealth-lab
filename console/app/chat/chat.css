@@ -113,3 +113,33 @@ body:has(.dg-page) .nav-wrap, body:has(.dg-page) .console-foot, body:has(.dg-pag
 .dg-brand { padding: 2px 6px 10px; }
 .dg-brand img { height: 38px; width: auto; display: block; }
 .dg-brand a { display: inline-block; }
+
+/* Sidebar motion: the open and closed states share one transition list (300ms), so the column and its
+   contents move together. The old build had no transition here at all, so the list snapped shut. */
+@media (min-width: 761px) {
+  .dg-side {
+    opacity: 1; transform: none; visibility: visible;
+    transition:
+      padding var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+      border-right-width var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+      opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+      transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+      visibility 0s linear 0s;
+  }
+  .dg-shell {
+    transition:
+      grid-template-columns var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+      box-shadow var(--dg-smooth-d, 300ms) var(--dg-smooth, ease);
+  }
+  .dg-shell[data-panel="closed"] { grid-template-columns: 0 1fr; }
+  .dg-shell[data-panel="closed"] .dg-side {
+    opacity: 0; transform: translateX(-16px); visibility: hidden;
+    padding-left: 0; padding-right: 0; border-right-width: 0; overflow: hidden;
+    transition:
+      padding var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+      border-right-width var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+      opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+      transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+      visibility 0s linear var(--dg-smooth-d, 300ms);
+  }
+}

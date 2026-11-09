@@ -5,10 +5,11 @@
 // The child gets ELECTRON_RUN_AS_NODE=1 so it runs as plain node, listens on an OS-picked port (port 0 probed, never a
 // fixed one — the OpenCode desktop app owns 28894 and is never touched), and its whole tree — including the opencode
 // engine it starts through lib/engine.ts's /api routes — dies with the app.
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron"
 import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
-import { setAppMenu } from "./menu"
+import { popupAppMenu, setAppMenu } from "./menu"
+import { BOOT } from "./memory"
 import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import { createServer } from "node:http"
 import { randomBytes } from "node:crypto"
@@ -77,9 +78,19 @@ if (!app.requestSingleInstanceLock()) {
     if (!up) throw new Error("the Next server never answered")
     say(`next up on ${base}`)
 
-    win = new BrowserWindow({ width: 1240, height: 880, title: "kell", backgroundColor: "#F8F6EF", show: false,
+    // A run starts clean: the page's storage of the last run (the folder open, its sessions, the column widths, the last tab) goes
+    // before the window exists (electron/memory.ts). Only localStorage and index DB: the rooms, sign-in and cookie jars are other
+    // partitions and keep their sign-ins.
+    await session.defaultSession.clearStorageData({ storages: ["localstorage", "indexdb"] }).catch(() => undefined)
+    win = new BrowserWindow({ width: 1240, height: 880, minWidth: 360, minHeight: 360, title: "kell", backgroundColor: "#F8F6EF", show: false,
+                              // The app draws its own window: no Windows title bar or frame, no File / Edit / View strip
+                              // (the page's top bar carries the tabs, the account and Help; drag it to move the window).
+                              // Electron's frame on Windows cannot take the app's rounded corners and shadow.
+                              frame: false,
                               webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false,
                                                                devTools: !app.isPackaged } })   // no inspector in the installed app
+    // The page's storage emptied before it reads anything, before it can restore anything: a fresh project and no sessions.
+    win.webContents.on("dom-ready", () => { void win?.webContents.executeJavaScript(BOOT).catch(() => undefined) })
     // Links: a tool's sign-in opens in the app's own sign-in window (electron/signin.ts); any other link goes to the
     // system browser. The app window itself never navigates away from the UI.
     const signInDone = (r: { url: string; ok: boolean }) => win?.webContents.send("kell:signin-done", r)
@@ -95,7 +106,7 @@ if (!app.requestSingleInstanceLock()) {
       else if (/^https?:/.test(url)) void shell.openExternal(url)
     })
     ipcMain.on("kell:open-signin", (_e, url: string) => openSignIn(win, String(url), signInDone))
-    // The team rooms (electron/rooms.ts) and the one account sign-in shared by the coding lane and the rooms.
+    ipcMain.on("kell:menu-popup", () => popupAppMenu(win))    // The team rooms (electron/rooms.ts) and the one account sign-in shared by the coding lane and the rooms.
     ipcMain.on("kell:rooms-bounds", (_e, rect) => { if (win) setRoomsBounds(win, rect && typeof rect === "object" ? rect : null) })
     ipcMain.on("kell:rooms-reload", () => reloadRooms())
     ipcMain.on("kell:rooms-email", () => openRoomsEmailSignIn())
@@ -104,6 +115,13 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.handle("kell:rooms-signout", () => signOutRooms())
     ipcMain.handle("kell:rooms-signin", (_e, provider) => (win ? signInRooms(win, provider === "github" ? "github" : "google") : false))
     ipcMain.handle("kell:account-open", (_e, url: string) => openAccountSignIn(win, String(url)))
+    // The window's own buttons, drawn by the page: the frame is off (above), so Electron's are not there to click.
+    ipcMain.on("kell:win", (_e, what: string) => {
+      if (!win) return
+      if (what === "minimize") win.minimize()
+      else if (what === "maximize") { if (win.isMaximized()) win.unmaximize(); else win.maximize() }
+      else if (what === "close") win.close()
+    })
     // The project folder: the system's own folder picker (typing a path was the only way, and the button looked dead, 2026-11-06).
     ipcMain.handle("kell:pick-folder", async () => {
       const r = win ? await dialog.showOpenDialog(win, { title: "Choose a project folder", properties: ["openDirectory", "createDirectory"] })
@@ -115,6 +133,10 @@ if (!app.requestSingleInstanceLock()) {
     // nothing, 2026-11-03). show() is idempotent, so it is also called once the load has finished.
     win.once("ready-to-show", () => win?.show())
     win.on("closed", () => { win = undefined })
+    // The frame is off, so no Windows shadow; the page adds a hairline so the window's edge reads against a light desktop.
+    const edge = () => void win?.webContents.insertCSS(
+      ".dk-switch { border-top: 1px solid var(--rule-strong, rgba(0,0,0,.18)); }").catch(() => undefined)
+    win.webContents.on("did-finish-load", edge)
     await win.loadURL(base)
     say("window loaded")
     win.show()

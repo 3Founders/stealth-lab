@@ -6,15 +6,17 @@ import { HelperError, scrub } from "@/lib/words";
  * Where a key is typed, and what is shown afterwards. The value lives only in this component's state while it is being
  * typed; it is sent once, then cleared. It is never put in storage, in the address, or in a message (errors are scrubbed
  * of it). After saving, only the last four characters are shown, and the key cannot be read back.
+ *
+ * There is no "Remove" (2026-11-08): a key that is shown here must never be deletable from the console. Replacing it
+ * (typing a new one) is the way to change it; a plan user never sees this component at all (ModelsPanel).
  */
 export default function KeyField({
-  envName, isSet, last4, onSave, onRemove, label = "Key",
+  envName, isSet, last4, onSave, label = "Key",
 }: {
   envName: string;
   isSet: boolean;
   last4: string | null;
   onSave: (value: string) => Promise<{ last4: string | null }>;
-  onRemove: () => Promise<void>;
   label?: string;
 }) {
   const id = useId();
@@ -23,7 +25,6 @@ export default function KeyField({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(isSet ? last4 : null);
-  const [state, setState] = useState<"saved" | "removed" | "idle">(isSet ? "saved" : "idle");
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -32,7 +33,7 @@ export default function KeyField({
     setBusy(true); setError(null);
     try {
       const r = await onSave(typed);
-      setSaved(r.last4); setState("saved"); setEditing(false);
+      setSaved(r.last4); setEditing(false);
     } catch (err) {
       setError(scrub(err instanceof HelperError ? err.message : "The key could not be saved.", typed));
     } finally {
@@ -40,14 +41,7 @@ export default function KeyField({
     }
   }
 
-  async function remove() {
-    setBusy(true); setError(null);
-    try { await onRemove(); setSaved(null); setState("removed"); setEditing(true); }
-    catch (err) { setError(err instanceof HelperError ? err.message : "The key could not be removed."); }
-    finally { setBusy(false); }
-  }
-
-  if (!editing && state === "saved") {
+  if (!editing) {
     return (
       <div className="stack" data-key-state="saved">
         <p className="small">
@@ -56,7 +50,6 @@ export default function KeyField({
         </p>
         <div className="cluster">
           <button type="button" className="btn-line" onClick={() => { setEditing(true); setError(null); }} disabled={busy}>Replace</button>
-          <button type="button" className="btn-line" onClick={remove} disabled={busy}>Remove</button>
         </div>
         {error && <p className="notice" role="alert" data-tone="bad">{error}</p>}
       </div>
@@ -64,8 +57,7 @@ export default function KeyField({
   }
 
   return (
-    <form onSubmit={save} className="stack" data-key-state={state === "removed" ? "removed" : "empty"} autoComplete="off">
-      {state === "removed" && <p className="small" role="status">Removed. No key is saved for <code>{envName}</code>.</p>}
+    <form onSubmit={save} className="stack" data-key-state="empty" autoComplete="off">
       <div className="field">
         <label htmlFor={id}>{label} <span className="dim">(kept in <code>{envName}</code> on this machine)</span></label>
         <div className="keyline">
