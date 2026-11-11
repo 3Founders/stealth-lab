@@ -72,8 +72,8 @@ goal-first router (`backend/app/tool_routing/goal_router.py`) already returns go
 Two things are still missing, and they are the reason for this plan:
 
 1. **Enforcement.** Relevance decides who should win; a deterministic, fail-closed gate decides whether anyone may run.
-   Today the gateway checks data class, secrets, grants and rate limits, but there is no policy store, no task-scoped
-   intent, no risk tier, no approval, and no signed receipt.
+   The pieces now exist — `tool_policies`, `intent_certificates` and the signed `tool_call_audit` (P1-05/06/07) — but
+   they are not yet wired into `use_tool` (P1-04), and there is no approval surface (P1-11).
 2. **Evidence.** We do not yet measure whether a tool actually does the job **better than the procedure it would
    replace**. Phase 2 is a Python harness that runs the same task through both arms and compares the results. Phase 3
    turns that evidence into ranking, trials and retirement.
@@ -95,13 +95,16 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Recommend-goal CLI | **built (P1-02)** | `backend/scripts/recommend_goal.py`; `search_goals.py` is a wrapper |
 | Security subgoals | **built (P1-01)** | `app/tool_routing/goals.py`, `db/187_tool_goals_security.sql` |
 | Manual pins | **built (P1-03)** | `map_tool_cards_to_goals.py --pin`, `report_goal_coverage.py`; Exa pinned to `web` at 9.0 |
+| Policy store | **built (P1-05)** | `tool_policies` (db/188), `app/tool_routing/policy.py`, `scripts/check_policy.py` |
+| Intent certificates | **built (P1-06)** | `intent_certificates` (db/189), `certificates.py`, `scripts/issue_cert.py`, `scripts/check_cert.py` |
+| Signed audit | **built (P1-07)** | `tool_call_audit` (db/190), `audit.py`, `signing.py`, `scripts/verify_audit_chain.py` |
 | Card → goal mapping | exists, 125,656 rows | `db/186_tool_card_goals.sql`, `scripts/map_tool_cards_to_goals.py` |
 | Tool gateway | exists, phase 1 | `app/tool_routing/gateway.py`, `_gateway_call` in `app/mcp_server/server.py` |
 | OAuth / consent | exists, off by default | `tool_oauth_*`, `oauth_client.py`, `TOOL_GATEWAY_OAUTH` |
 | Outcome recording | partial | `tool_observations` (db/162), `store.record_outcome` |
 | Exa | card + mapping exist | `registry:ai.exa/exa`, goal `web`, score 3.31 |
 | Hinoki | not integrated | needs an MCP wrapper and a card |
-| Policy / intent / signed audit | not built | this plan, Phase 1 |
+| Policy / intent / signed audit | **built (P1-05/06/07)** | `tool_policies`, `intent_certificates`, `tool_call_audit` |
 | Tool-vs-procedure comparison | not built | this plan, Phase 2 |
 | Trust from reuse, trials, pricing | not built | this plan, Phase 3 |
 
@@ -385,21 +388,25 @@ today's.
 
 **Builds:** declarative, deterministic policy. `tool_policies` rows are keyed by server/tool/goal and carry risk tier,
 effect (`allow`/`deny`/`approve`), data classes, max calls, egress allowlist, and a priority. Evaluation order: explicit
-deny → allowlist → risk → data class → rate → default deny. Ship seed rows for Exa (R0 allow) and Hinoki (R3 approve).
+deny → the most specific enabled row → data class → risk ceiling → effect → default deny. Rate limits stay in the
+gateway, not here. Ship seed rows for Exa (R0 allow) and Hinoki (R3 approve).
 
 **Files you own**
 
 - `backend/app/tool_routing/policy.py`
 - `backend/db/188_tool_policies.sql`
+- `backend/scripts/check_policy.py`
 
 **Manual check**
 
-Run the recommend-goal script against one tool per tier and confirm the printed decision:
+`check_policy.py` calls `policy.evaluate()` directly, so it works before P1-04 wires the gate:
 
 ```powershell
-python scripts/recommend_goal.py "search the web" --call            # R0 -> allow
-python scripts/recommend_goal.py "scan this repository" --call       # R3 -> approve
-python scripts/recommend_goal.py "delete the production database" --call  # unknown/deny
+python scripts/check_policy.py --server ai.exa/exa --tool web_search_exa --expect allow
+python scripts/check_policy.py --server hinoki --tool scan_repository --risk-ceiling R3 --expect approve
+python scripts/check_policy.py --server unknown --tool x --expect deny
+python scripts/check_policy.py --server hinoki --tool scan_repository --risk-ceiling R1 --expect deny
+python scripts/check_policy.py --server hinoki --tool scan_repository --data-class USER_PRIVATE --expect deny
 ```
 
 Deny must win over allow, an empty allowlist must mean "all", and an unknown tool must deny.
@@ -417,20 +424,56 @@ is inside the allowed set.
 
 - `backend/app/tool_routing/certificates.py`
 - `backend/db/189_intent_certificates.sql`
+- `backend/scripts/issue_cert.py`
+- `backend/scripts/check_cert.py`
+
+It imports `signing.py` (owned by P1-07); it does not own that file.
 
 **Manual check**
 
-Issue a certificate for one read-only Hinoki tool, then:
+Issue a certificate, then check calls against it:
 
 ```powershell
-python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call --cert <cert_id>
-# allowed only for scan_repository; explain_finding is refused
+$out = python scripts/issue_cert.py --task demo-1 --owner dev-local --risk R0 `
+    --server ai.exa/exa --tool web_search_exa --ttl 3600
+$cert = (($out | Select-String '^cert:').Line -split '\s+')[1]
 
-python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call --cert <expired_id>
-# REFUSED: cert:expired
+python scripts/check_cert.py --cert $cert --owner dev-local --task demo-1 `
+    --server ai.exa/exa --tool web_search_exa          # ok
+python scripts/check_cert.py --cert $cert --owner dev-local --task demo-1 `
+    --server ai.exa/exa --tool web_fetch_exa           # REFUSED: cert:tool
+python scripts/check_cert.py --cert $cert --owner other --task demo-1 `
+    --server ai.exa/exa --tool web_search_exa          # REFUSED: cert:owner
+python scripts/check_cert.py --cert $cert --owner dev-local --task other `
+    --server ai.exa/exa --tool web_search_exa          # REFUSED: cert:task
 ```
 
-Check wrong-user, wrong-goal and widened-capability cases by editing the certificate row directly.
+Argument constraints (use a file on Windows, where the shell strips JSON quotes):
+
+```powershell
+# .scratch/hinoki_constraint.json
+# {"repo_url":{"required":true,"pattern":"^https://github.com/"}}
+python scripts/issue_cert.py --task demo-2 --owner dev-local --risk R3 `
+    --server hinoki --tool scan_repository `
+    --constraint-file ..\.scratch\hinoki_constraint.json
+
+python scripts/check_cert.py --cert <cert2> --owner dev-local --task demo-2 `
+    --server hinoki --tool scan_repository --arg repo_url=https://github.com/org/repo   # ok
+python scripts/check_cert.py --cert <cert2> --owner dev-local --task demo-2 `
+    --server hinoki --tool scan_repository --arg repo_url=https://evil.com/x            # pattern
+python scripts/check_cert.py --cert <cert2> --owner dev-local --task demo-2 `
+    --server hinoki --tool scan_repository                                              # required
+```
+
+Revoke and re-check:
+
+```powershell
+python scripts/issue_cert.py --revoke $cert --owner dev-local
+python scripts/check_cert.py --cert $cert --owner dev-local --task demo-1 `
+    --server ai.exa/exa --tool web_search_exa          # REFUSED: cert:revoked
+```
+
+An expired certificate is `cert:expired`; a widened scope is `cert:server` / `cert:tool`.
 
 **Do not touch:** `gate.py`, `server.py`, `policy.py`.
 
@@ -443,19 +486,27 @@ Never store arguments or results, only hashes.
 **Files you own**
 
 - `backend/app/tool_routing/audit.py`
+- `backend/app/tool_routing/signing.py`
 - `backend/db/190_tool_call_audit.sql`
 - `backend/scripts/verify_audit_chain.py`
+- `backend/scripts/audit_demo.py`
 
 **Manual check**
 
 ```powershell
-python scripts/recommend_goal.py "search the web for the latest Postgres release" --call
+python scripts/audit_demo.py --count 3 --tamper
+# expect:
+#   wrote: rc_..., rc_..., rc_...
+#   verify: ok (ok), 3 receipts
+#   tampered: FAILED as expected (hash mismatch at receipt rc_...)
+#   restored: ok (ok)
+
 python scripts/verify_audit_chain.py --since 1h
 # expect: ok, N receipts
-
-# then tamper with one row's reason in a scratch database and run it again:
-# expect: FAILED at receipt <id>
 ```
+
+`audit_demo.py` writes ordinary `demo` rows, then edits one row's reason, proves the chain fails at
+that receipt, and restores it. Nothing else is changed.
 
 **Do not touch:** `gate.py`, `server.py`.
 
@@ -964,9 +1015,9 @@ Update only your own row. `—` means unclaimed.
 | P1-02 | Recommend-goal script (start here) | opencode | done | this commit |
 | P1-03 | Mapping v2 and manual pins | opencode | done | this commit |
 | P1-04 | Gate core (`server.py`) | — | open | |
-| P1-05 | Policy store | — | open | |
-| P1-06 | Intent certificates | — | open | |
-| P1-07 | Signed audit | anuj-claude | in progress | #28 |
+| P1-05 | Policy store | opencode | done | this commit |
+| P1-06 | Intent certificates | opencode | done | this commit |
+| P1-07 | Signed audit | opencode | done | this commit |
 | P1-08 | Exa adapter | anuj-claude | done | #27 |
 | P1-09 | Hinoki adapter | — | blocked: no Hinoki API or credential | #26 |
 | P1-10 | Run recording | anuj-claude | done | #25 |
@@ -996,9 +1047,9 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 | `backend/scripts/recommend_goal.py`, `backend/scripts/search_goals.py`, `backend/app/tool_routing/goal_router.py` | P1-02 (router then P3-03) |
 | `backend/scripts/map_tool_cards_to_goals.py`, `backend/scripts/report_goal_coverage.py` | P1-03 |
 | `backend/app/tool_routing/gate.py`, `backend/app/mcp_server/server.py` | P1-04 (then P3-06) |
-| `backend/app/tool_routing/policy.py`, `backend/db/188_*` | P1-05 |
-| `backend/app/tool_routing/certificates.py`, `backend/db/189_*` | P1-06 |
-| `backend/app/tool_routing/audit.py`, `backend/db/190_*`, `backend/scripts/verify_audit_chain.py` | P1-07 |
+| `backend/app/tool_routing/policy.py`, `backend/db/188_*`, `backend/scripts/check_policy.py` | P1-05 |
+| `backend/app/tool_routing/certificates.py`, `backend/db/189_*`, `backend/scripts/issue_cert.py`, `backend/scripts/check_cert.py` | P1-06 |
+| `backend/app/tool_routing/audit.py`, `backend/app/tool_routing/signing.py`, `backend/db/190_*`, `backend/scripts/verify_audit_chain.py`, `backend/scripts/audit_demo.py` | P1-07 |
 | `backend/app/tool_providers/exa/**` | P1-08 |
 | `backend/app/tool_providers/hinoki/**`, `backend/scripts/register_hinoki_card.py` | P1-09 |
 | `backend/app/tool_routing/runs.py`, `backend/db/191_*`, `backend/scripts/show_runs.py` | P1-10 (then P2-06) |
@@ -1082,17 +1133,17 @@ milestones:
     manual_check: "enforce denies R3 without cert; shadow logs only; fail closed"
   - id: P1-05
     title: policy store
-    owns: [backend/app/tool_routing/policy.py, backend/db/188_tool_policies.sql]
+    owns: [backend/app/tool_routing/policy.py, backend/db/188_tool_policies.sql, backend/scripts/check_policy.py]
     depends: []
     manual_check: "deny wins; R0 allow; R2/R3 approve; unknown deny"
   - id: P1-06
     title: intent certificates
-    owns: [backend/app/tool_routing/certificates.py, backend/db/189_intent_certificates.sql]
+    owns: [backend/app/tool_routing/certificates.py, backend/db/189_intent_certificates.sql, backend/scripts/issue_cert.py, backend/scripts/check_cert.py]
     depends: []
     manual_check: "expired/revoked/widened fail; valid passes"
   - id: P1-07
     title: signed audit
-    owns: [backend/app/tool_routing/audit.py, backend/db/190_tool_call_audit.sql]
+    owns: [backend/app/tool_routing/audit.py, backend/app/tool_routing/signing.py, backend/db/190_tool_call_audit.sql, backend/scripts/verify_audit_chain.py, backend/scripts/audit_demo.py]
     depends: []
     manual_check: "chain verifies; tamper fails at the row"
   - id: P1-08
