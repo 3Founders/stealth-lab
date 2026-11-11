@@ -7,11 +7,16 @@ procedure per (card, goal), whose single step is bound to that card.
 
     python scripts/materialize_tool_procedures.py --dry-run
     python scripts/materialize_tool_procedures.py --apply --limit-per-goal 20
+    python scripts/materialize_tool_procedures.py --apply --all
     python scripts/materialize_tool_procedures.py --apply --goal web
     python scripts/materialize_tool_procedures.py --apply --replace
 
 It is idempotent: `source_key = 'tool_card:<goal>:<card>'` identifies the row, and a re-run updates
-it in place. `--replace` deletes the generated rows first (only `provenance='tool_card'`).
+it in place. `--replace` deletes the generated rows first (only `provenance='tool_card'`). By default
+it takes the top 20 cards per Goal (the ways the router shows); `--all` materializes the whole runnable
+library -- every card->goal edge whose card has a connector and a tool -- in one bulk insert. The
+router still shows only the top 5 per Goal, so the full library is stored for trust/lifecycle and the
+comparison harness without flooding the list. `--all` keeps the curated top-20 rows (`DO NOTHING`).
 
 The step binding is `{kind: 'tool', tool: <name>, server_url: <card connector>}`. Cards without a
 connector URL (not gateway-callable) are skipped: a way whose binding cannot run is worse than no way.
@@ -82,6 +87,75 @@ def _extra(row) -> dict:
     return raw or {}
 
 
+_RANKED = """
+    SELECT cg.card_id, cg.goal_id, cg.score, t.name, t.title, t.server, t.tools, t.extra,
+           row_number() OVER (PARTITION BY cg.goal_id
+                              ORDER BY cg.score DESC,
+                                       NULLIF(t.extra->>'stars', '')::int DESC NULLS LAST,
+                                       t.id) AS rn
+    FROM tool_card_goals cg
+    JOIN tool_cards t ON t.id = cg.card_id
+    WHERE t.extra ? 'connector_url' AND COALESCE(array_length(t.tools, 1), 0) > 0
+      AND ($1::text IS NULL OR cg.goal_id::text = $1
+           OR EXISTS (SELECT 1 FROM goals gg WHERE gg.id = cg.goal_id
+                      AND gg.canonical_name ILIKE '%' || $1 || '%'))
+"""
+
+_PICKED = f"""
+    SELECT gen_random_uuid() AS pid, r.*,
+           CASE r.card_id
+               WHEN 'registry:io.github.cyanheads/osv-advisory-mcp-server' THEN 'osv_query_package'
+               WHEN 'registry:ai.exa/exa' THEN 'web_search_exa'
+               ELSE r.tools[1]
+           END AS tool
+    FROM ({_RANKED}) r
+    WHERE ($2 = 0 OR r.rn <= $2)
+"""
+
+
+async def bulk(conn, args: argparse.Namespace) -> int:
+    """The whole runnable library in one statement: every (card, goal) with a connector and a tool.
+
+    `ON CONFLICT DO NOTHING` keeps the curated top-20 rows the per-row pass already wrote (their tool
+    choice is better than `tools[1]`). Run the per-row pass afterwards to curate the top of each Goal.
+    """
+    cap = 0 if args.all else max(0, int(args.limit_per_goal))
+    if args.dry_run:
+        n = await conn.fetchval(
+            f"""WITH picked AS ({_PICKED})
+                SELECT count(*) FROM picked p JOIN goals g ON g.id = p.goal_id
+                WHERE g.provenance = 'tool_goal_taxonomy' AND g.t_invalid IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM procedures pr
+                                  WHERE pr.source_key = 'tool_card:' || p.goal_id::text || ':' || p.card_id
+                                    AND pr.t_invalid IS NULL)""",
+            args.goal, cap)
+        print(f"would create: {n} (runnable card->goal edges, cap per goal {cap or 'none'})")
+        return 0
+    status = await conn.execute(
+        f"""INSERT INTO procedures
+                (id, procedure_id, name, goal, achieves_goal_id, steps, provenance, domain,
+                 domain_payload, source_key, created_by, verification_state, availability,
+                 visibility, version)
+            SELECT p.pid, p.pid, COALESCE(NULLIF(p.title, ''), p.name), g.canonical_name, p.goal_id,
+                   jsonb_build_array(jsonb_build_object(
+                       'order', 0,
+                       'goal', 'Use ' || p.tool || ' on ' || COALESCE(p.server, p.name),
+                       'binding', jsonb_build_object('kind', 'tool', 'tool', p.tool,
+                                                     'server_url', p.extra->>'connector_url'))),
+                   'tool_card', 'tool',
+                   jsonb_build_object('card_id', p.card_id, 'server', p.server, 'tool', p.tool,
+                                      'goal_id', p.goal_id::text, 'goal_score', p.score),
+                   'tool_card:' || p.goal_id::text || ':' || p.card_id,
+                   'materialize_tool_procedures', 'candidate', 'active', 'public', 1
+            FROM ({_PICKED}) p
+            JOIN goals g ON g.id = p.goal_id
+            WHERE g.provenance = 'tool_goal_taxonomy' AND g.t_invalid IS NULL
+            ON CONFLICT (source_key) WHERE source_key IS NOT NULL AND t_invalid IS NULL DO NOTHING""",
+        args.goal, cap)
+    print(f"bulk insert: {status}  (cap per goal {cap or 'none'})")
+    return 0
+
+
 async def run(args: argparse.Namespace) -> int:
     dsn = dsn_from_env()
     if not dsn:
@@ -108,6 +182,9 @@ async def run(args: argparse.Namespace) -> int:
             deleted = await conn.execute(
                 "DELETE FROM procedures WHERE provenance = 'tool_card' AND t_invalid IS NULL")
             print(f"deleted generated procedures: {deleted.split()[-1]}")
+
+        if args.all:
+            return await bulk(conn, args)
 
         made = skipped = 0
         for goal in goals:
@@ -180,6 +257,8 @@ async def run(args: argparse.Namespace) -> int:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Turn tool cards into one-step Ways for their Goals.")
     ap.add_argument("--apply", action="store_true", help="write the procedures (default: dry run)")
+    ap.add_argument("--all", action="store_true",
+                    help="materialize the whole runnable library in one bulk insert (ignores --limit-per-goal)")
     ap.add_argument("--dry-run", action="store_true", help="show what would be written")
     ap.add_argument("--limit-per-goal", type=int, default=20, help="top cards per Goal (default 20)")
     ap.add_argument("--goal", default=None, help="only this Goal uuid or a canonical-name substring")
