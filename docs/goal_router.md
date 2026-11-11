@@ -1061,7 +1061,7 @@ Update only your own row. `—` means unclaimed.
 | P1-11 | Approval surface | — | open | |
 | P2-01 | Corpus and contracts | anuj-claude | done | #30 |
 | P2-02 | Procedure runner | anuj-claude | done | #32 |
-| P2-03 | Tool runner | anuj-claude | in progress | #35 |
+| P2-03 | Tool runner | anuj-claude | done | #35 |
 | P2-04 | Scorers | anuj-claude | done | #31 |
 | P2-05 | Orchestrator | — | blocked on P2-02..04 | |
 | P2-06 | Comparison store | — | blocked on P2-05 | |
