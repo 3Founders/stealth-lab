@@ -8,7 +8,7 @@ The only prompt the next instance needs is:
 Then read this handoff before touching anything. Main moves fast: **`git pull --rebase origin main` first**, check the
 status table and the open issues, and only then claim a milestone.
 
-Handoff commit: `2ffb2bcf` (in sync with `origin/main` at the time of writing).
+State described here: `2ffb2bcf`. This handoff file landed in `dfd2f4bd`; run `git pull --rebase origin main` first.
 
 ---
 
