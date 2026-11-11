@@ -1063,7 +1063,7 @@ Update only your own row. `—` means unclaimed.
 | P2-02 | Procedure runner | anuj-claude | done | #32 |
 | P2-03 | Tool runner | anuj-claude | done | #35 |
 | P2-04 | Scorers | anuj-claude | done | #31 |
-| P2-05 | Orchestrator | anuj-claude | in progress | #36 |
+| P2-05 | Orchestrator | anuj-claude | done | #36 |
 | P2-06 | Comparison store | — | blocked on P2-05 | |
 | P2-07 | Statistics and report | — | blocked on P2-06 | |
 | P3-01 | Trust posterior | — | blocked on Phase 2 | |
