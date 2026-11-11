@@ -205,7 +205,7 @@ def test_use_tool_accepts_the_name_forms_a_client_with_an_old_tool_list_sends(mo
 
     seen = []
 
-    async def fake_call(ctx, server_name, tool, arguments, data_class):
+    async def fake_call(ctx, server_name, tool, arguments, data_class, cert_id="", task_id=""):
         seen.append((server_name, tool, arguments))
         return "ok"
     monkeypatch.setattr(srv, "_gateway_call", fake_call)

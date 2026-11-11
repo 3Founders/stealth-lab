@@ -23,13 +23,13 @@ what was wrong; do not redo it. `197` is new and must be applied with `187-196`.
 |---|---|
 | **Phase 1 — Foundation** | **Done except P1-09.** P1-01…P1-08, P1-10, P1-11 are merged. Hinoki (P1-09) is blocked on the API base/schema, not the credential. |
 | **Phase 2 — Evidence** | **Done.** P2-01…P2-07 are merged: corpus, procedure runner, tool runner, scorers, orchestrator, comparison store, paired statistics and per-goal report. |
-| **Phase 3 — Market** | **Started.** P3-01 (trust posterior) is merged. P3-02 (provider-funded trials) is in progress by `anuj-claude` (#40). P3-03…P3-07 are open/blocked. |
+| **Phase 3 — Market** | **Done.** P3-01…P3-07 are merged: trust posterior, funded trials, trust ranking, graduation/retirement, verification market, pricing/metering and the market report. |
 
 Current board (from `docs/goal_router.md`):
 
-- **Done:** P1-01, P1-02, P1-03, P1-04, P1-05, P1-06, P1-07, P1-08, P1-10, P1-11; P2-01…P2-07; P3-01.
-- **In progress:** P3-02 (`anuj-claude`, #40).
-- **Blocked:** P1-09 (Hinoki API base/schema), P3-03 (on P3-02), P3-04 (on P3-03), P3-05, P3-06, P3-07.
+- **Done:** P1-01…P1-08, P1-10, P1-11; P2-01…P2-07; P3-01…P3-07.
+- **In progress:** none.
+- **Blocked:** P1-09 (Hinoki API base/schema) only.
 
 ---
 
@@ -267,8 +267,8 @@ cd ..\desktop; npx tsc --noEmit
 1. **Fix #34 and #29** — **done in `1839f665`** (fail-closed gate, environment-first DSN, adapter path,
    signing secret, append-only trigger).
 2. **Integrate the desktop approval card** — **done** in `desktop/app/page.tsx` (polls `/api/tools/approve`).
-3. **P3-06** pricing/metering (in progress, #45, holds `server.py`); then **P3-07** market report.
-4. **P1-09** when the Hinoki API base/schema is known.
+3. **P3-02…P3-07** — **done** (`a46be874`…`c673810f`); Phase 3 exit criteria verified on `main`.
+4. **P1-09** — the only row left, blocked on the Hinoki API base/schema (#26). Do not invent an endpoint.
 
 ---
 
@@ -277,22 +277,26 @@ cd ..\desktop; npx tsc --noEmit
 Recent commits on `main`:
 
 ```
-2ffb2bcf docs(goal_router): claim P3-02 (#40)
+bc937aaa feat(desktop): render pending tool approvals above the composer
+c673810f goal-router P3-07: the tool market report
+299af453 goal-router P3-06: priced tools metered against the person's own plan wallet
+b96b949c goal-router P3-05: verification market (signed results, earned weight, anchors, audits)
+eae5709f goal-router P3-04: graduation and retirement from evidence
+1839f665 fix(tool_routing): fail-closed gate, adapter dispatch, signing guard (#34, #29)
+522f1887 run_compare: the baseline retries a rate limit or a busy model ...
+3882975f goal-router P3-03: rank a goal's tools by verified reuse
+a46be874 goal-router P3-02: provider-funded trials
 80fddfbf goal-router P3-01: trust posterior from verified reuse
 88443b14 goal-router P2-07: paired statistics and the per-goal report
-a641af20 goal-router P2-06: comparison store
-90780f64 goal-router P2-05: run_compare orchestrator
-72b0c4fb goal-router P2-03: tool runner through the real gate
-38072077 docs(goal_router): Hinoki key is set; P1-09 still needs the API base/schema
-c43cbb09 feat(tool_routing): tool approvals, gate branch and web/desktop cards (P1-11)
-4bd42342 feat(tool_routing): deterministic gate wired into use_tool (P1-04)
-106e11f4 feat(tool_routing): policy store, intent certificates and signed audit
-474cd11f feat(tool_routing): recommend_goal CLI, security subgoals and manual pins
 ```
 
-Open issues: #26 (Hinoki), #45 (P3-06 claim). #29 and #34 are fixed in `1839f665` and closed; #40-#43
-(P3-02…P3-05) are merged and closed. The only open PRs are dependabot dependency bumps; no goal-router PR
-is open.
+Open issues: #26 (Hinoki) only. #29/#34 are fixed in `1839f665` and closed; #40-#46 (P3-02…P3-07) are
+merged and closed. The only open PRs are dependabot dependency bumps; no goal-router PR is open.
+
+Phase exit criteria re-checked on `main` after `bc937aaa`: corpus 60/6 with verifiers, stats selfcheck ok,
+security and web prompts route to the right Goal, R0 passes and R3 refuses without a certificate in
+`enforce`, the audit chain verifies, `tool_trust`/`trials`/`lifecycle`/`verification`/`tool_market_report`
+all run. The one gap is the P1-09 tool for the security subgoal (Hinoki).
 
 ---
 
