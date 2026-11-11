@@ -1098,7 +1098,7 @@ Update only your own row. `—` means unclaimed.
 | P3-02 | Provider-funded trials | anuj-claude | done | #40 |
 | P3-03 | Ranking integration | anuj-claude | done | #41 |
 | P3-04 | Graduation and retirement | anuj-claude | done | #42 |
-| P3-05 | Verification market | anuj-claude | in progress | #43 |
+| P3-05 | Verification market | anuj-claude | done | #43 |
 | P3-06 | Pricing and metering (`server.py`) | — | blocked on P1-04 | |
 | P3-07 | Market report | — | blocked on Phase 3 | |
 
