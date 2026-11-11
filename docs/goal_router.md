@@ -1,7 +1,9 @@
 # Goal-first routing: phases, sub-milestones, and file ownership
 
-Status: active plan, 2026-11-11. Phase 1 is open for parallel work.
+Status: active plan, 2026-11-11. Phase 1 is complete except P1-09 (blocked on Hinoki's API base/schema); Phase 2 is
+complete; Phase 3 is in progress (P3-01 done, P3-02 in progress).
 This document is the map. The GitHub issue is the lock (see [Claiming](#claiming-a-sub-milestone)).
+Current state and open review findings: [handoff_goal_router_2026-11-11.md](handoff_goal_router_2026-11-11.md).
 
 ## If you are an agent: start here
 
