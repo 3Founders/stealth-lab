@@ -1022,7 +1022,7 @@ Update only your own row. `—` means unclaimed.
 | P1-09 | Hinoki adapter | — | blocked: no Hinoki API or credential | #26 |
 | P1-10 | Run recording | anuj-claude | done | #25 |
 | P1-11 | Approval surface | — | open | |
-| P2-01 | Corpus and contracts | anuj-claude | in progress (needs only P1-10, done) | #30 |
+| P2-01 | Corpus and contracts | anuj-claude | done | #30 |
 | P2-02 | Procedure runner | — | blocked on P2-01 | |
 | P2-03 | Tool runner | — | blocked on P2-01 | |
 | P2-04 | Scorers | — | blocked on P2-01 | |
