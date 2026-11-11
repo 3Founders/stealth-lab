@@ -192,12 +192,13 @@ cd ..\desktop; npx tsc --noEmit
 
 - `186` card→goal, `187` security subgoals, `188` policies, `189` certificates, `190` audit, `191` task runs +
   comparison results, `192` trust view, `196` approvals, `193` trials, `194` verification, `195` listings,
-  `197` append-only audit, `198` OSV policy, `199` procedure↔card mapping.
+  `197` append-only audit, `198` OSV policy, `199` procedure↔card mapping, `200` goal tool rankings.
 
 **Scripts**
 
 - `recommend_goal.py`, `search_goals.py`, `map_tool_cards_to_goals.py`, `report_goal_coverage.py`.
 - `materialize_tool_procedures.py` — turns tool cards into one-step Ways (procedures) for their Goals.
+- `refresh_goal_rankings.py` — recomputes the materialized per-Goal tool order (db/200); run after new evidence.
 - `check_policy.py`, `issue_cert.py`, `check_cert.py`, `check_gate.py`, `verify_audit_chain.py`, `audit_demo.py`,
   `approve_tool.py`.
 - `backend/scripts/compare/` — corpus, procedure_runner, tool_runner, scoring, run_compare, store, stats, report.

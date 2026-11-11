@@ -114,6 +114,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Tool arm | **built (P2-03)** | `scripts/compare/tool_runner.py` |
 | Tool-vs-procedure comparison | **built (P2-01…P2-07)**; reports in `docs/compare_*.md` | `scripts/compare/*`. The procedure arm now runs a tool-backed one-step Way through the same gate as the tool arm; the existing reports predate the materialized ways, so re-run them |
 | Trust, trials, lifecycle, verification, pricing | **built (P3-01…P3-07)** | `trust.py`, `trials.py`, `lifecycle.py`, `verification.py`, `pricing.py`, `scripts/tool_market_report.py` |
+| Per-goal ranking | **materialized (db/200)** | `goal_tool_rankings`; `scripts/refresh_goal_rankings.py`. The router reads one row per card and applies only the trial overlay; a Goal with no rows falls back to the live ranker |
 
 Known local constraint: goal semantic/FTS search warns that the search group's members are unconfigured. Exact
 `goal_names` lookup works and hydrates from the home shard; the K000 full-text fallback in `goal_router.py` keeps the

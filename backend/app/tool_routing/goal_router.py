@@ -362,22 +362,31 @@ async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] 
                  request_id: Optional[str] = None) -> dict[str, list[ToolHit]]:
     if not goal_ids:
         return {}
+    ranked = trust_ranking()
+    per_goal = CANDIDATES_PER_GOAL if ranked else MAX_TOOLS_PER_GOAL
     try:
         rows = await pool.fetch(
             """
-            SELECT g.goal_id::text AS goal_id, t.id, t.name, t.server, t.title, t.description,
-                   t.source, g.score
-            FROM tool_card_goals g
-            JOIN tool_cards t ON t.id = g.card_id
-            WHERE g.goal_id = ANY($1::uuid[])
-            ORDER BY g.score DESC, NULLIF(t.extra->>'stars', '')::int DESC NULLS LAST
+            WITH ranked_cards AS (
+                SELECT g.goal_id::text AS goal_id, t.id, t.name, t.server, t.title, t.description,
+                       t.source, g.score,
+                       row_number() OVER (PARTITION BY g.goal_id
+                                          ORDER BY g.score DESC,
+                                                   NULLIF(t.extra->>'stars', '')::int DESC NULLS LAST,
+                                                   t.id) AS rn
+                FROM tool_card_goals g
+                JOIN tool_cards t ON t.id = g.card_id
+                WHERE g.goal_id = ANY($1::uuid[])
+            )
+            SELECT goal_id, id, name, server, title, description, source, score
+            FROM ranked_cards
+            WHERE rn <= $2
+            ORDER BY goal_id, rn
             """,
-            list(goal_ids),
+            list(goal_ids), per_goal,
         )
     except Exception:  # noqa: BLE001 -- an older database without db/186: goals still work
         return {}
-    ranked = trust_ranking()
-    per_goal = CANDIDATES_PER_GOAL if ranked else MAX_TOOLS_PER_GOAL
     out: dict[str, list[ToolHit]] = {}
     for row in rows:
         bucket = out.setdefault(str(row["goal_id"]), [])
@@ -393,8 +402,25 @@ async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] 
             score=float(row["score"] or 0.0),
         ))
     if ranked:
+        from app.tool_routing import ranking as _ranking
+
+        stored = await _ranking.stored(pool, list(out))
+        # The trial overlay is the only per-request part: one query for all Goals, then a trial card
+        # only for a Goal that actually has an active trial.
+        trials = await _optional_fetch(pool, "SELECT card_id, goal FROM tool_trials WHERE status = 'active'")
+        trial_goals = {str(r["goal"]) for r in trials}
         for goal_id in list(out):
-            out[goal_id] = await _rank(pool, goal_id, out[goal_id], owner_id=owner_id, request_id=request_id)
+            if stored.get(goal_id):
+                out[goal_id] = _ranking.tools(stored[goal_id], out[goal_id])
+                key = _goal_key(goal_id)
+                if owner_id and request_id and (key in trial_goals or goal_id in trial_goals):
+                    trial = await _trial_card(pool, key, set(), owner_id, request_id)
+                    if trial is not None:
+                        out[goal_id].insert(min(1, len(out[goal_id])), trial)
+                        out[goal_id] = out[goal_id][:MAX_TOOLS_PER_GOAL]
+            else:
+                out[goal_id] = await _rank(pool, goal_id, out[goal_id], owner_id=owner_id,
+                                           request_id=request_id)
     return out
 
 
