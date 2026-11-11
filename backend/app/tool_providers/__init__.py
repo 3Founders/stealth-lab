@@ -5,6 +5,9 @@ An adapter is a module with:
     SERVERS: tuple[str, ...]            the tool-card ids / server names it answers for
     RISK: str                           "R0".."R4", the tier it declares
     TOOLS: dict[str, dict]              tool name -> {"description", "params": {name: required?}}
+    ALIASES: dict[str, str]             other names for the same tools (optional)
+    BASE_URL: str                       the host it calls; the gate checks it against the policy's egress list
+    READ_ONLY_TOOLS: tuple[str, ...]    tools a valid certificate may run without an approval (optional; R2+ only)
     def available() -> bool             its key is configured
     async def call(tool, arguments) -> dict
         {"ok": bool, "status": "ok" | "failed:<why>", "text": str, "cost_usd": float | None,

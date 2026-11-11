@@ -3,6 +3,6 @@
 R0: read-only public web data. The results are third-party data: every answer is labelled untrusted and scanned for
 prompt-injection shapes (app/services/untrusted.py), which flags, never cleans.
 """
-from app.tool_providers.exa.client import RISK, SERVERS, TOOLS, available, call
+from app.tool_providers.exa.client import ALIASES, BASE_URL, RISK, SERVERS, TOOLS, available, call
 
-__all__ = ["RISK", "SERVERS", "TOOLS", "available", "call"]
+__all__ = ["ALIASES", "BASE_URL", "RISK", "SERVERS", "TOOLS", "available", "call"]
