@@ -6,8 +6,25 @@ import { app, Menu, shell, type BrowserWindow, type MenuItemConstructorOptions }
 
 const SITE = "https://www.kell.org.in"
 
+type FontChoice = "default" | "inter" | "poppins"
+let fontChoice: FontChoice = "default"
+
+/** Keep the View > Font radio marks in step with the page (it owns the saved choice and tells us on start). */
+export function setFontChoice(font: FontChoice) {
+  fontChoice = font
+  const menu = Menu.getApplicationMenu()
+  for (const f of ["default", "inter", "poppins"] as const) {
+    const item = menu?.getMenuItemById(`font-${f}`)
+    if (item) item.checked = f === font
+  }
+}
+
 export function setAppMenu(win: () => BrowserWindow | undefined) {
   const tell = (what: "open-folder" | "new-session") => () => win()?.webContents.send("kell:menu", what)
+  const chooseFont = (font: FontChoice) => {
+    setFontChoice(font)
+    win()?.webContents.send("kell:font", font)
+  }
   const dev: MenuItemConstructorOptions[] = app.isPackaged ? [] : [{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }]
   const template: MenuItemConstructorOptions[] = [
     { label: "&File", submenu: [
@@ -21,6 +38,12 @@ export function setAppMenu(win: () => BrowserWindow | undefined) {
       { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" },
     ] },
     { label: "&View", submenu: [
+      { label: "Font", submenu: [
+        { id: "font-default", label: "Default", type: "radio", checked: fontChoice === "default", click: () => chooseFont("default") },
+        { id: "font-inter", label: "Inter", type: "radio", checked: fontChoice === "inter", click: () => chooseFont("inter") },
+        { id: "font-poppins", label: "Poppins", type: "radio", checked: fontChoice === "poppins", click: () => chooseFont("poppins") },
+      ] },
+      { type: "separator" },
       { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }, { type: "separator" }, { role: "togglefullscreen" }, ...dev,
     ] },
     { label: "&Window", submenu: [{ role: "minimize" }, { role: "close" }] },

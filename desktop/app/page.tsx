@@ -11,6 +11,7 @@ import ThemeToggle, { ThemeWatcher } from "@/components/ThemeToggle"
 import { useSpringScroll } from "@/components/chat/useSpringScroll"
 import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
+import { applyFont, readFont, saveFont } from "@/lib/font"
 
 // The Electron preload's bridge (electron/preload.ts). Absent in a plain browser (`next dev`): sign-in links then open a tab
 // and the rooms are a link to the website's chat.
@@ -32,6 +33,7 @@ type KellDesktop = {
   openSignIn: (url: string) => Promise<boolean>
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void; showMenu?: () => void
   pickFiles?: () => Promise<string[]>; pathForFile?: (file: File) => string; openPath?: (path: string) => Promise<string>
+  onFont?: (cb: (font: string) => void) => () => void; setFont?: (font: string) => void
   window?: { minimize: () => void; toggleMaximize: () => void; close: () => void }
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
@@ -160,10 +162,13 @@ const signInFrom = (raw: string): { server: string; link: string } | null => {
   return { server, link }
 }
 
-type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission"; text: string; at?: number; server?: string
+type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission" | "goal"; text: string; at?: number; server?: string
               state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string
               files?: Attachment[] }
 type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string; state?: "running" | "done" | "failed"; hint?: string }
+/** A /goal condition: one per session, judged after every turn by a separate cheap model (app/api/goal). */
+type GoalState = { condition: string; started: number; turns: number; reason: string; state: "active" | "paused" | "met" | "impossible"
+                   sessionID: string | null; max: number; spendAtStart: number; noProgress: number }
 // One row per step (one model round trip). The engine splits it across events: session.step.started names the model (keyed
 // by assistantMessageID), session.step.ended carries tokens and cost for the same message. Neither event carries a rung.
 type LedgerRow = { id: string; model?: string; providerID?: string; tokens?: string; cost?: number }
@@ -225,6 +230,8 @@ export default function Home() {
   const [widths, setWidths] = useState({ left: 260, right: 340 })
   const [leftOpen, setLeftOpen] = useState(true)
   const [rightOpen, setRightOpen] = useState(true)
+  const [resizing, setResizing] = useState<"left" | "right" | null>(null)
+  const shellRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     try {
       const w = JSON.parse(window.localStorage.getItem("kell.layout") || "null")
@@ -259,22 +266,55 @@ export default function Home() {
     setLeftOpen(next.left); setRightOpen(next.right)
     try { window.localStorage.setItem("kell.sidebars", JSON.stringify(next)) } catch { /* storage blocked */ }
   }
+  // The right panel gets the same treatment as the website's docs panel (docs/ios_animation.md §4.4): a hairline you can
+  // drag or nudge with the arrow keys, a width written straight to the DOM in an animation frame (no React render per
+  // pointer move), transitions off while dragging, and a shield so a file view or frame cannot swallow the pointer. The
+  // right panel can now grow to the window edge (leaving 360px for the chat) instead of stopping at 640px, and its handle
+  // is present in the narrow drawer layout too.
+  const columnMin = (side: "left" | "right") => (side === "left" ? 190 : 300)
+  const columnMax = (side: "left" | "right") => {
+    if (typeof window === "undefined") return side === "left" ? 480 : 640
+    if (side === "left") return Math.max(190, Math.min(480, window.innerWidth - (rightOpen ? widths.right : 0) - 360))
+    if (window.innerWidth <= 1100) return Math.max(300, Math.round(window.innerWidth * 0.92))   // the drawer may cover most of the chat
+    return Math.max(300, window.innerWidth - (leftOpen ? widths.left : 0) - 360)
+  }
+  const saveWidths = (next: { left: number; right: number }) => {
+    try { window.localStorage.setItem("kell.layout", JSON.stringify(next)) } catch { /* storage blocked */ }
+  }
+  const nudgeColumn = (side: "left" | "right", delta: number) => {
+    setWidths((w) => {
+      const next = { ...w, [side]: Math.round(Math.min(columnMax(side), Math.max(columnMin(side), w[side] + delta))) }
+      saveWidths(next)
+      return next
+    })
+  }
   const dragColumn = (side: "left" | "right") => (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     const el = e.currentTarget
     el.setPointerCapture(e.pointerId)
     const startX = e.clientX
     const start = widths[side]
-    let last = widths
+    const min = columnMin(side), max = columnMax(side)
+    let last = start, frame = 0
+    setResizing(side)
+    document.body.style.userSelect = "none"
+    const paint = () => {
+      frame = 0
+      const shell = shellRef.current
+      if (shell) shell.style.setProperty(side === "left" ? "--dk-left" : "--dk-right", `${last}px`)
+    }
     const move = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
-      const w = Math.round(side === "left" ? Math.min(480, Math.max(190, start + dx)) : Math.min(640, Math.max(240, start - dx)))
-      last = { ...widths, [side]: w }
-      setWidths(last)
+      last = Math.round(Math.min(max, Math.max(min, side === "left" ? start + dx : start - dx)))
+      if (!frame) frame = requestAnimationFrame(paint)
     }
     const up = () => {
       el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up)
-      try { window.localStorage.setItem("kell.layout", JSON.stringify(last)) } catch { /* storage blocked */ }
+      if (frame) cancelAnimationFrame(frame)
+      document.body.style.userSelect = ""
+      setResizing(null)
+      setWidths((w) => ({ ...w, [side]: last }))
+      saveWidths({ ...widths, [side]: last })
     }
     el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up)
   }
@@ -301,6 +341,8 @@ export default function Home() {
   const linesRef = useRef(lines)
   linesRef.current = lines
   const [steps, setSteps] = useState<Step[]>([])
+  const stepsRef = useRef(steps)
+  stepsRef.current = steps
   const [ledger, setLedger] = useState<LedgerRow[]>([])
   const [sessionID, setSessionID] = useState<string | null>(null)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
@@ -319,6 +361,31 @@ export default function Home() {
   const [spend, setSpend] = useState(0)
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
+  // /goal: the condition, its evaluator history, and the guards that keep one evaluator call in flight at a time.
+  const [goal, setGoal] = useState<GoalState | null>(null)
+  const goalRef = useRef<GoalState | null>(null)
+  goalRef.current = goal
+  const spendRef = useRef(0)
+  spendRef.current = spend
+  const goalBusy = useRef(false)
+  const goalAfterTurn = useRef<(sid: string | null, failed: boolean) => void>(() => {})
+  const goalCommand = useRef<(raw: string) => void>(() => {})
+  // A goal belongs to the session it was set in; on reopening that session (or the app) it comes back, as /goal does.
+  useEffect(() => {
+    if (!sessionID) return
+    try {
+      const raw = localStorage.getItem("kell.goal")
+      if (!raw) return
+      const saved = JSON.parse(raw) as GoalState
+      if (saved && saved.sessionID === sessionID && (saved.state === "active" || saved.state === "paused")) setGoal({ ...saved, noProgress: saved.noProgress ?? 0 })
+    } catch { /* no saved goal */ }
+  }, [sessionID])
+  useEffect(() => {
+    try {
+      if (goal?.sessionID) localStorage.setItem("kell.goal", JSON.stringify(goal))
+      else if (!goal) localStorage.removeItem("kell.goal")
+    } catch { /* storage blocked */ }
+  }, [goal])
   const [big, setBig] = useState(false)                  // the message box: bigger / smaller, like the website chat
   const textRef = useRef<HTMLTextAreaElement>(null)
   // Up-arrow history: the prompts already sent in THIS chat (the session's user lines), not a global list.
@@ -391,6 +458,14 @@ export default function Home() {
       else if (last && desktop()) void openProject(last)    // the app reopens the project you had open, with its sessions
     })
     fetch("/api/settings").then((r) => r.json()).then(setSettings).catch(() => undefined)
+  }, [])
+  // Typeface (View > Font): apply the saved choice, tell the native menu which one it is, then follow later menu clicks.
+  useEffect(() => {
+    const font = readFont()
+    applyFont(font)
+    const d = desktop()
+    d?.setFont?.(font)
+    return d?.onFont?.((f) => saveFont(f === "inter" || f === "poppins" ? f : "default"))
   }, [])
   useEffect(() => { scrollToEnd({ instant: true }) }, [scrollToEnd, sessionID])
   useEffect(() => { histPos.current = null; histSaved.current = "" }, [sessionID])
@@ -609,17 +684,19 @@ export default function Home() {
     </div>
   ) : null
 
-  const send = async (again?: string, filesOverride?: Attachment[]) => {
+  const send = async (again?: string, filesOverride?: Attachment[], asGoal = false) => {
     const body = again ?? text
     const outgoing = again === undefined ? attachments : (filesOverride ?? [])
+    if (!asGoal && /^\/goal\b/i.test(body.trim())) { goalCommand.current(body.trim()); return }
     if ((!body.trim() && !outgoing.length) || !directory) return
-    if (busy) {                                              // still working: keep it for when this turn ends
+    if (busyRef.current) {                                    // still working: keep it for when this turn ends
       setQueued((q) => [...q, { text: body, files: outgoing }])
       if (again === undefined) { setText(""); setAttachments([]); histPos.current = null }
       return
     }
     const sent = body
-    setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
+    if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
+    else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
     if (again === undefined) { setText(""); setAttachments([]); histPos.current = null }   // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
@@ -636,6 +713,7 @@ export default function Home() {
     let sid = sessionID
     let buffer = ""
     let ended = false
+    let failed = false
     const before = lines.length
     const reader = r.body.getReader()
     const dec = new TextDecoder()
@@ -685,8 +763,9 @@ export default function Home() {
           setLines((l) => l.some((x) => x.requestID === d.id) ? l
             : [...l, { who: "permission", text: String(d.message || what || "a tool call"), sessionID: d.sessionID, requestID: String(d.id), at: Date.now() }])
         }
-        else if (t === "need_plan") { setLines((l) => [...l, { who: "plan", text: "", at: Date.now() }]); setBusy(false) }
+        else if (t === "need_plan") { failed = true; setLines((l) => [...l, { who: "plan", text: "", at: Date.now() }]); setBusy(false) }
         else if (t === "error") {
+          failed = true
           if (needsWebSignIn(ev.error)) { setEngine({ up: false, error: String(ev.error) }); appendAssistant("Sign in to run models: the buttons are on the left.") }
           else appendAssistant(`\n(error: ${ev.error})`)
           setBusy(false)
@@ -695,11 +774,13 @@ export default function Home() {
       }
     }
     // A turn that ends with nothing said is never silent: say so (2026-11-06: a failed model call showed an empty turn).
-    setLines((l) => l.slice(before + 1).some((x) => x.who !== "user") ? l
+    setLines((l) => l.slice(before + 1).some((x) => x.who === "assistant" || x.who === "signin" || x.who === "permission" || x.who === "plan") ? l
       : [...l, { who: "assistant", text: ended ? "kell got no answer from the model for this. Try again, or check Settings > Models."
                                                : "The connection to the engine ended before an answer came. Try again.", at: Date.now() }])
     setBusy(false)
     busyRef.current = false
+    // Let React flush the last line, then let an active goal judge the turn (app/api/goal). A failed turn pauses it.
+    setTimeout(() => goalAfterTurn.current(sid, failed), 80)
     // The session's snapshot record lands shortly after the last stream event, and how long is not fixed: check now, then
     // poll a few times, so the panel fills itself instead of waiting for a Refresh click.
     loadChanges(sid)
@@ -707,6 +788,90 @@ export default function Home() {
     loadSessions()
     setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
   }
+
+  // /goal: one condition per session. The command sets, checks, pauses, resumes or clears it; after every turn the
+  // evaluator (app/api/goal) returns met / not_yet / impossible, and not_yet starts the next turn with its reason.
+  const goalLine = (text: string) => setLines((l) => [...l, { who: "goal", text, at: Date.now() }])
+  const handleGoalCommand = (raw: string) => {
+    const arg = raw.replace(/^\/goal\b/i, "").trim()
+    const g = goalRef.current
+    if (!arg) {
+      goalLine(g
+        ? `Goal ${g.state}: ${g.condition}\n${g.turns} turn${g.turns === 1 ? "" : "s"} evaluated · $${Math.max(0, spendRef.current - g.spendAtStart).toFixed(4)}${g.reason ? `\nLast check: ${g.reason}` : ""}`
+        : "No goal set. Use /goal <condition> to set one.")
+      return
+    }
+    if (/^(clear|stop|off|reset|none|cancel)$/i.test(arg)) {
+      if (!g) { goalLine("No goal set."); return }
+      setGoal(null)
+      goalLine(`Goal cleared: ${g.condition}`)
+      return
+    }
+    if (/^pause$/i.test(arg)) {
+      if (!g) { goalLine("No goal set."); return }
+      setGoal({ ...g, state: "paused" })
+      goalLine("Goal paused. /goal resume to carry on.")
+      return
+    }
+    if (/^resume$/i.test(arg)) {
+      if (!g) { goalLine("No goal set."); return }
+      setGoal({ ...g, state: "active" })
+      goalLine(`Goal resumed: ${g.condition}`)
+      if (!busyRef.current) void send(g.condition, [], true)
+      return
+    }
+    if (g && g.state === "active") { goalLine("A goal is already active. /goal clear first, or set a new condition to replace it."); return }
+    if (!directory) { goalLine("Open a project first: a goal runs in the open folder."); return }
+    const bound = Number(arg.match(/stop after (\d+) turns?/i)?.[1] || 20)
+    const max = Math.max(1, Math.min(100, bound))
+    setGoal({ condition: arg, started: Date.now(), turns: 0, reason: "", state: "active", sessionID, max, spendAtStart: spendRef.current, noProgress: 0 })
+    if (!busyRef.current) void send(arg, [], true)   // busy: the evaluator after this turn starts it
+  }
+  goalCommand.current = handleGoalCommand
+
+  goalAfterTurn.current = (sid, failed) => { void (async () => {
+    const g = goalRef.current
+    if (!g || g.state !== "active" || goalBusy.current) return
+    if (failed) {
+      setGoal({ ...g, state: "paused", reason: "The last turn failed." })
+      goalLine("Goal paused: the last turn failed. Fix it, then /goal resume.")
+      return
+    }
+    if (sid && g.sessionID !== sid) setGoal({ ...g, sessionID: sid })
+    goalBusy.current = true
+    setGoal((x) => (x ? { ...x, reason: "checking…" } : x))
+    try {
+      const tools = stepsRef.current.map((s) => `TOOL ${s.label}${s.hint ? ` ${s.hint}` : ""} ${s.state || "running"}`).join("\n")
+      const transcript = (linesRef.current.filter((l) => l.who !== "goal").slice(-40).map((l) => `${l.who.toUpperCase()}: ${l.text}`).join("\n")
+        + (tools ? `\n\nTool calls this turn:\n${tools}` : "")).slice(-30_000)
+      const r = await fetch("/api/goal", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ condition: g.condition, transcript }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || `the evaluator answered ${r.status}`)
+      const now = goalRef.current
+      if (!now || now.state !== "active") return
+      const reason = String(j.reason || "").slice(0, 800)
+      if (j.verdict === "met") { setGoal({ ...now, state: "met", reason }); goalLine(`Goal met: ${now.condition}${reason ? `\n${reason}` : ""}`); return }
+      if (j.verdict === "impossible") { setGoal({ ...now, state: "impossible", reason }); goalLine(`Goal impossible: ${reason}`); return }
+      const turns = now.turns + 1
+      const noProgress = stepsRef.current.some((s) => s.kind === "tool") ? 0 : (now.noProgress || 0) + 1
+      if (noProgress >= 3) { setGoal({ ...now, state: "paused", turns, reason, noProgress }); goalLine(`Goal paused: no tool use for ${noProgress} turns in a row. ${reason}`); return }
+      if (turns >= now.max) { setGoal({ ...now, state: "paused", turns, reason, noProgress }); goalLine(`Goal paused after ${turns} turns (the bound in the condition). ${reason}`); return }
+      setGoal({ ...now, turns, reason, noProgress })
+      goalLine(`Not yet (turn ${turns}/${now.max}): ${reason || "the condition does not hold yet"}`)
+      goalBusy.current = false                   // the next turn's end must be free to evaluate again
+      void send(`Continue working toward this goal: ${now.condition}\n\nThe evaluator's latest check: ${reason || "not met yet"}\n\nKeep going until the condition is demonstrated, then say what proves it.`, [], true)
+      return
+    } catch (err) {
+      const now = goalRef.current
+      if (now && now.state === "active") {
+        const why = String((err as Error)?.message || err)
+        setGoal({ ...now, state: "paused", reason: why })
+        goalLine(`Goal paused: ${why}`)
+      }
+    } finally {
+      goalBusy.current = false
+    }
+  })() }
 
   /** Stop the turn at its next safe point (reqs §5). Work that already ran is not undone, and the note says so. */
   const stop = async () => {
@@ -1035,6 +1200,7 @@ export default function Home() {
     { id: "code", title: "Go to the coding agent", run: () => setPane("code") },
     { id: "rooms", title: "Go to the team rooms", run: () => setPane("rooms") },
     { id: "console", title: "Open the console", run: () => void openConsole() },
+    { id: "goal", title: "Set a goal", hint: "/goal <condition> — kell keeps working until it holds", run: () => { setText("/goal "); textRef.current?.focus() } },
     { id: "signin", title: "Sign in", run: () => void signIn() },
     { id: "signout", title: "Sign out", run: () => void signOut() },
     { id: "help", title: "Help: how kell works", run: () => window.open("https://www.kell.org.in/docs", "_blank", "noopener") },
@@ -1163,11 +1329,27 @@ export default function Home() {
           )}
         </div>
       )}
-      <div className="dg-shell" hidden={pane !== "code"} data-left={leftOpen ? "open" : "closed"} data-right={rightOpen ? "open" : "closed"} data-menu={leftOpen ? "open" : "closed"}
+      <div className="dg-shell" ref={shellRef} hidden={pane !== "code"} data-left={leftOpen ? "open" : "closed"} data-right={rightOpen ? "open" : "closed"} data-menu={leftOpen ? "open" : "closed"}
+        data-resizing={resizing ?? undefined}
         style={{ "--dk-left": `${widths.left}px`, "--dk-right": `${widths.right}px` } as React.CSSProperties}>
         <div className="dg-scrim" onClick={() => setLeftOpen(false)} aria-hidden="true" />
-        <div className="dk-resize" data-side="left" role="separator" aria-orientation="vertical" aria-label="Drag to resize the project list" onPointerDown={dragColumn("left")} />
-        <div className="dk-resize" data-side="right" role="separator" aria-orientation="vertical" aria-label="Drag to resize the changes panel" onPointerDown={dragColumn("right")} />
+        <div className="dk-resize" data-side="left" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Drag to resize the project list"
+          aria-valuenow={widths.left} aria-valuemin={columnMin("left")}
+          onPointerDown={dragColumn("left")}
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
+            e.preventDefault()
+            nudgeColumn("left", (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 40 : 10))
+          }} />
+        <div className="dk-resize" data-side="right" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Drag to resize the changes panel"
+          aria-valuenow={widths.right} aria-valuemin={columnMin("right")}
+          onPointerDown={dragColumn("right")}
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
+            e.preventDefault()
+            // The right handle is on the panel's left edge: left widens it, right narrows it.
+            nudgeColumn("right", (e.key === "ArrowLeft" ? 1 : -1) * (e.shiftKey ? 40 : 10))
+          }} />
         <aside className="dg-side" aria-label="Project, models and account">
           <div className="dg-brand">
             <img className="wm-light" src="/kel-wordmark.png" alt="keळ" style={{ height: 38, width: "auto" }} />
@@ -1215,6 +1397,25 @@ export default function Home() {
             </div>
           )}
 
+          {/* The project's files: a folder opens on click and asks the app for its entries then; a file opens in the
+              right panel's file view. */}
+          {directory && (
+            <>
+              <div className="dk-sec-head">
+                <h2>Files</h2>
+                <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the file list" title="Refresh the file list"
+                  onClick={() => setTreeEpoch((n) => n + 1)}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+                </button>
+              </div>
+              <div className="dk-tree" key={`${directory}:${treeEpoch}`}>
+                <TreeLevel directory={directory} rel="" depth={0} onOpen={openFile} selected={filePath || undefined} />
+              </div>
+            </>
+          )}
+
+          {/* Once a project is open its files come first; the projects you have opened sit below them. With no project
+              open there is no Files section, so this is still the first list under the project picker. */}
           <h2>Projects</h2>
           {recents.length === 0 ? <p className="dk-note">Projects you open show here.</p> : (
             <ul className="dk-recents" aria-label="Recent projects">
@@ -1246,23 +1447,6 @@ export default function Home() {
                 )
               })}
             </ul>
-          )}
-
-          {/* The project's files: a folder opens on click and asks the app for its entries then; a file opens in the
-              right panel's file view. */}
-          {directory && (
-            <>
-              <div className="dk-sec-head">
-                <h2>Files</h2>
-                <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the file list" title="Refresh the file list"
-                  onClick={() => setTreeEpoch((n) => n + 1)}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
-                </button>
-              </div>
-              <div className="dk-tree" key={`${directory}:${treeEpoch}`}>
-                <TreeLevel directory={directory} rel="" depth={0} onOpen={openFile} selected={filePath || undefined} />
-              </div>
-            </>
           )}
 
           <div className="dk-foot">
@@ -1419,6 +1603,17 @@ export default function Home() {
                       </div>
                     )
                   }
+                  if (l.who === "goal") {
+                    return (
+                      <div className="dg-run" data-agent="true" key={i}>
+                        <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                        <div className="dg-col">
+                          <div className="dg-meta"><b>Kell</b><span className="dg-badge">goal</span><time>{time(l.at)}</time></div>
+                          <div className="dk-goal-line">{l.text}</div>
+                        </div>
+                      </div>
+                    )
+                  }
                   const live = busy && l.who === "assistant" && i === lines.length - 1   // the reply still arriving
                   const mine = l.who === "user"
                   return (
@@ -1486,6 +1681,20 @@ export default function Home() {
           <div className="dg-typing" role="status" aria-live="polite">
             {busy && <><span className="dg-pulse" aria-hidden="true" /> Kell is working</>}
           </div>
+          {goal && (
+            <div className="dk-goal" data-state={goal.state} role="status" aria-label="Goal">
+              <span className="dk-goal-mark" aria-hidden="true">◎</span>
+              <b>/goal {goal.state}</b>
+              <span className="dk-goal-text" title={goal.condition}>{goal.condition}</span>
+              <span className="dk-goal-meta">{goal.turns}/{goal.max} turns · ${Math.max(0, spend - goal.spendAtStart).toFixed(4)}</span>
+              {goal.reason && <span className="dk-goal-why">{goal.reason}</span>}
+              <span className="dk-goal-actions">
+                {goal.state === "active" && <button type="button" onClick={() => handleGoalCommand("/goal pause")}>Pause</button>}
+                {goal.state === "paused" && <button type="button" onClick={() => handleGoalCommand("/goal resume")}>Resume</button>}
+                <button type="button" onClick={() => handleGoalCommand("/goal clear")}>Clear</button>
+              </span>
+            </div>
+          )}
           <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
             <span className="dg-composer-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the message box" onPointerDown={startComposerResize} />
             {attachments.length > 0 && attachmentChips(attachments, true)}
@@ -1544,6 +1753,8 @@ export default function Home() {
         </section>
 
         <aside className="dk-panel" aria-label="File, changes, steps and tools">
+          {/* While the divider is dragged, a transparent shield keeps a file view or an embedded frame from swallowing the pointer. */}
+          {resizing === "right" && <div className="dk-shield" aria-hidden="true" />}
           {/* The file view: the file picked in the sidebar's tree, read-only, with its size and a copy button. */}
           {filePath && (
             <section className="dk-viewer" aria-label={`File ${filePath}`}>

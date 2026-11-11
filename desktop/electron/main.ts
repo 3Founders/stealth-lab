@@ -8,7 +8,7 @@
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron"
 import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
-import { popupAppMenu, setAppMenu } from "./menu"
+import { popupAppMenu, setAppMenu, setFontChoice } from "./menu"
 import { BOOT } from "./memory"
 import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import { createServer } from "node:http"
@@ -110,6 +110,8 @@ if (!app.requestSingleInstanceLock()) {
     })
     ipcMain.handle("kell:open-signin", (_e, url: string) => openSignIn(String(url)))
     ipcMain.on("kell:menu-popup", () => popupAppMenu(win))    // The team rooms (electron/rooms.ts) and the one account sign-in shared by the coding lane and the rooms.
+    // The page owns the saved typeface; the menu only shows which one is checked and sends a click back to the page.
+    ipcMain.on("kell:font-choice", (_e, font: string) => setFontChoice(font === "inter" || font === "poppins" ? font : "default"))
     ipcMain.on("kell:rooms-bounds", (_e, rect) => { if (win) setRoomsBounds(win, rect && typeof rect === "object" ? rect : null) })
     ipcMain.on("kell:rooms-reload", () => reloadRooms())
     ipcMain.on("kell:rooms-email", () => openRoomsEmailSignIn())

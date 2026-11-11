@@ -13,6 +13,13 @@ contextBridge.exposeInMainWorld("kellDesktop", {
   pickFiles: (): Promise<string[]> => ipcRenderer.invoke("kell:pick-files"),
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   openPath: (path: string): Promise<string> => ipcRenderer.invoke("kell:open-path", String(path)),
+  // The typeface (View > Font): the page applies it and tells the menu; the menu tells the page when a choice is clicked.
+  setFont: (font: string) => ipcRenderer.send("kell:font-choice", String(font)),
+  onFont: (cb: (font: string) => void) => {
+    const h = (_e: unknown, font: string) => cb(String(font))
+    ipcRenderer.on("kell:font", h)
+    return () => { ipcRenderer.removeListener("kell:font", h) }
+  },
   // The app draws its own window (no Windows frame), so it also draws minimize / maximize / close (the page's top bar).
   window: { minimize: () => ipcRenderer.send("kell:win", "minimize"), toggleMaximize: () => ipcRenderer.send("kell:win", "maximize"),
             close: () => ipcRenderer.send("kell:win", "close") },

@@ -44,6 +44,30 @@ canvas are exactly the site's.
 | `services/authn.py::supabase_token_allowed` | Rejects an MCP token on the website API and a website session on MCP. This is why there are two tokens. |
 | `mcp_server/oauth_resource.py` | The MCP side of the OAuth flow `kell login` uses. |
 
+## /goal (0.1.17)
+
+`/goal <condition>` sets one completion condition for the session. After every turn `app/api/goal` asks the cheap model
+on the same kell gateway to judge the transcript: **met**, **not_yet**, or **impossible**. `not_yet` starts another turn
+with the evaluator's reason; met/impossible clears the goal. `/goal` shows status, `/goal pause`/`resume`/`clear` manage
+it, and a condition may say `stop after N turns` (default 20). It stops on three turns with no tool use, and a failed
+turn pauses it. This mirrors Claude Code's `/goal` (`code.claude.com/docs/en/goal`), with kell's own engine and cheap
+model instead of Claude Code's Stop hook. The goal is session-scoped and restored with the session.
+
+## Right panel resize (0.1.17)
+
+The changes panel uses the same recipe as the website's docs panel (`docs/ios_animation.md` §4.4): drag the hairline or
+use the arrow keys (Shift for 40 px), the width is written to the DOM in an animation frame with transitions off while
+dragging, a shield covers the content, and the width is remembered. It can grow to the window edge (leaving 360 px for
+the chat) instead of stopping at 640 px, and the handle also works in the narrow drawer layout.
+
+## Typeface (View > Font, 0.1.16)
+
+`View > Font` offers **Default** (the existing Bahnschrift/Barlow stack), **Inter** and **Poppins**. The fonts are
+self-hosted with Fontsource (`@fontsource-variable/inter`, `@fontsource/poppins`); the CSS is loaded once and the browser
+downloads a face only when text uses that family, so the family that is not chosen costs no font bytes. The choice is one
+localStorage key (`kell.font`), restored before paint by `public/font-init.js`, mirrored to `desktop-prefs.json` like
+every other setting, and shown as a radio mark in the native menu.
+
 ## Two tokens, on purpose
 
 | Token | Made by | Used for |
