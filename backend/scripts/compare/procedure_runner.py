@@ -25,11 +25,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from dotenv import dotenv_values
+from dotenv import dotenv_values, load_dotenv
 
 from scripts.compare.contracts import RunRecord, Task
 from scripts.compare.corpus import load
 from scripts.compare.scoring import score, sha
+
+# The same environment the other scripts load: KELL_DEV / TOOL_CERT_SECRET / TOOL_GATE, so the
+# comparison harness can issue a certificate and call the gate on this checkout.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 TOOL_GOAL_NS = uuid.UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8")   # scripts/map_tool_cards_to_goals.py
 STEP_TIMEOUT_S = 120.0
@@ -57,18 +61,19 @@ async def resolve_goal(pool: Any, task: Task) -> tuple[Optional[str], Optional[s
 
 async def pick_procedure(pool: Any, goal_id: Optional[str], wanted: Optional[str]) -> Optional[dict]:
     if wanted:
-        row = await pool.fetchrow("SELECT id::text AS id, name, steps FROM procedures WHERE id = $1::uuid "
-                                  "AND t_invalid IS NULL", wanted)
+        row = await pool.fetchrow("SELECT id::text AS id, name, steps, domain_payload FROM procedures "
+                                  "WHERE id = $1::uuid AND t_invalid IS NULL", wanted)
         return dict(row) if row else None
     if not goal_id:
         return None
     row = await pool.fetchrow(
         """
-        SELECT id::text AS id, name, steps
+        SELECT id::text AS id, name, steps, domain_payload
         FROM procedures
         WHERE achieves_goal_id = $1::uuid AND t_invalid IS NULL AND availability = 'active'
         ORDER BY (verification_state::text = 'verified') DESC,
                  COALESCE((verification_stats->>'successes')::int, 0) DESC,
+                 COALESCE((domain_payload->>'goal_score')::float, 0) DESC,
                  t_created DESC
         LIMIT 1
         """,
@@ -97,8 +102,12 @@ def output_of(data: dict, notes: Optional[str]) -> Any:
 
 
 async def run_task(pool: Any, task: Task, *, procedure_id: Optional[str] = None, timeout_s: float = 600.0,
+                   risk_ceiling: str = "R1", use_cert: bool = True,
                    store: bool = True) -> tuple[RunRecord, list[str]]:
     """-> (the RunRecord, step lines for the trace)."""
+    # A comparison measured in shadow mode would count calls the gate would have refused; the tool arm
+    # forces enforce for the same reason. An explicit TOOL_GATE still wins.
+    os.environ.setdefault("TOOL_GATE", "enforce")
     started = datetime.now(timezone.utc)
     t0 = time.monotonic()
     goal_key, goal_id = await resolve_goal(pool, task)
@@ -111,51 +120,99 @@ async def run_task(pool: Any, task: Task, *, procedure_id: Optional[str] = None,
         trace.append(f"no active procedure for goal {goal_key}")
     else:
         nodes = nodes_for(proc["steps"] if isinstance(proc["steps"], list) else json.loads(proc["steps"] or "[]"))
-        unbound = [n for n in nodes if not n.binding]
-        if not nodes:
-            error_class = "empty_procedure"
-            trace.append("procedure has no steps")
-        elif unbound:
-            error_class = "unbound"
-            for n in nodes:
-                trace.append(f"step {n.order + 1}: {'unbound' if not n.binding else 'bound:' + str(n.binding.get('kind'))}"
-                             f"  {n.goal[:80]}")
-        else:
-            from app.execution.step_binding import execute_node
+        payload = proc.get("domain_payload") or {}
+        if isinstance(payload, str):
+            payload = json.loads(payload or "{}")
+        one_tool = (len(nodes) == 1 and nodes[0].binding
+                    and str(nodes[0].binding.get("kind") or "") in ("tool", "mcp_tool")
+                    and payload.get("card_id"))
+        if one_tool:
+            # A tool card materialized as a one-step Way (scripts/materialize_tool_procedures.py).
+            # Authorize it through the same gate, then dispatch through the same adapter/gateway path
+            # as the tool arm: the step executor would call the MCP server directly and skip the gate.
+            from app.tool_routing import certificates, gate
+            from scripts.compare.tool_runner import OWNER, run_call
 
-            context: dict[str, Any] = {"task": task.prompt, "inputs": list(task.input_refs), "previous": []}
-            for n in nodes:
-                remaining = timeout_s - (time.monotonic() - t0)
-                if remaining <= 0:
-                    error_class = "timeout"
-                    break
-                try:
-                    result = await asyncio.wait_for(execute_node(pool, n, context),
-                                                    timeout=min(STEP_TIMEOUT_S, remaining))
-                except asyncio.TimeoutError:
-                    error_class = "timeout"
-                    trace.append(f"step {n.order + 1}: timeout")
-                    break
-                except Exception as exc:  # noqa: BLE001 -- a crashing step is the arm's error, recorded
-                    error_class = f"step_crash:{type(exc).__name__}"
-                    trace.append(f"step {n.order + 1}: crashed {type(exc).__name__}")
-                    break
-                data = dict(result.data or {})
-                cost += float(data.get("cost_usd") or 0.0)
-                tokens_in += int(data.get("tokens_in") or 0)
-                tokens_out += int(data.get("tokens_out") or 0)
-                trace.append(f"step {n.order + 1}: {result.status} via {n.binding.get('kind')}  {n.goal[:60]}")
-                if result.status != "success":
-                    error_class = str(data.get("error_class") or "step_failed")
-                    break
-                if cost > task.budget_usd:
-                    error_class = "budget"
-                    trace.append(f"budget {task.budget_usd} exceeded ({cost:.4f})")
-                    break
-                answer = output_of(data, result.notes)
-                context["previous"].append(answer)
+            binding = nodes[0].binding
+            tool = str(binding.get("tool") or binding.get("mcp_tool") or "")
+            card = await pool.fetchrow(
+                "SELECT id, server, tools, extra FROM tool_cards WHERE id = $1", payload["card_id"])
+            arguments = {"query": task.prompt}
+            if card is None:
+                error_class = "no_tool"
+                trace.append(f"card {payload['card_id']} is gone")
+            elif not tool:
+                error_class = "no_tool"
+                trace.append("step binding names no tool")
             else:
-                error_class = None
+                cert_id = None
+                if use_cert:
+                    cert_id = await certificates.issue(
+                        pool, task_id=task.id, owner_id=OWNER, goal_id=goal_id, agent="compare-harness",
+                        allowed_servers=[card["server"]], allowed_tools=[tool],
+                        data_class=task.data_class, risk_ceiling=risk_ceiling, max_calls=3, ttl_s=900,
+                        issued_by="scripts/compare/procedure_runner")
+                decision = await gate.authorize(pool, gate.ToolCall(
+                    owner_id=OWNER, task_id=task.id, goal_id=goal_id, server=card["server"], tool=tool,
+                    arguments=arguments, data_class=task.data_class, agent="compare-harness", cert_id=cert_id))
+                trace.append(f"gate: {decision.effect} ({decision.reason}) risk {decision.risk}  "
+                             f"{card['server']}/{tool}")
+                if decision.effect != "allow":
+                    error_class = "gate:denied"
+                else:
+                    result = await run_call(pool, dict(card), tool, arguments)
+                    cost = float(result.get("cost_usd") or 0.0)
+                    trace.append(f"call: {result.get('status')}")
+                    if not result.get("ok"):
+                        error_class = str(result.get("status") or "failed")
+                    else:
+                        answer = str(result.get("text") or "")
+        else:
+            unbound = [n for n in nodes if not n.binding]
+            if not nodes:
+                error_class = "empty_procedure"
+                trace.append("procedure has no steps")
+            elif unbound:
+                error_class = "unbound"
+                for n in nodes:
+                    trace.append(f"step {n.order + 1}: {'unbound' if not n.binding else 'bound:' + str(n.binding.get('kind'))}"
+                                 f"  {n.goal[:80]}")
+            else:
+                from app.execution.step_binding import execute_node
+
+                context: dict[str, Any] = {"task": task.prompt, "inputs": list(task.input_refs), "previous": []}
+                for n in nodes:
+                    remaining = timeout_s - (time.monotonic() - t0)
+                    if remaining <= 0:
+                        error_class = "timeout"
+                        break
+                    try:
+                        result = await asyncio.wait_for(execute_node(pool, n, context),
+                                                        timeout=min(STEP_TIMEOUT_S, remaining))
+                    except asyncio.TimeoutError:
+                        error_class = "timeout"
+                        trace.append(f"step {n.order + 1}: timeout")
+                        break
+                    except Exception as exc:  # noqa: BLE001 -- a crashing step is the arm's error, recorded
+                        error_class = f"step_crash:{type(exc).__name__}"
+                        trace.append(f"step {n.order + 1}: crashed {type(exc).__name__}")
+                        break
+                    data = dict(result.data or {})
+                    cost += float(data.get("cost_usd") or 0.0)
+                    tokens_in += int(data.get("tokens_in") or 0)
+                    tokens_out += int(data.get("tokens_out") or 0)
+                    trace.append(f"step {n.order + 1}: {result.status} via {n.binding.get('kind')}  {n.goal[:60]}")
+                    if result.status != "success":
+                        error_class = str(data.get("error_class") or "step_failed")
+                        break
+                    if cost > task.budget_usd:
+                        error_class = "budget"
+                        trace.append(f"budget {task.budget_usd} exceeded ({cost:.4f})")
+                        break
+                    answer = output_of(data, result.notes)
+                    context["previous"].append(answer)
+                else:
+                    error_class = None
 
     sc = None
     if error_class is None:
@@ -191,6 +248,7 @@ async def main_async(args: argparse.Namespace) -> int:
     pool = await asyncpg.create_pool(url, min_size=1, max_size=2, timeout=30)
     try:
         record, trace = await run_task(pool, task, procedure_id=args.procedure, timeout_s=args.timeout_s,
+                                       risk_ceiling=args.risk_ceiling, use_cert=not args.no_cert,
                                        store=not args.no_store)
     finally:
         await pool.close()
@@ -206,6 +264,8 @@ def main() -> None:
     ap.add_argument("--task", required=True)
     ap.add_argument("--procedure", help="a procedure id instead of the Goal's best")
     ap.add_argument("--timeout-s", type=float, default=600.0)
+    ap.add_argument("--risk-ceiling", default="R1", help="the intent certificate's risk ceiling")
+    ap.add_argument("--no-cert", action="store_true", help="ask the gate without an intent certificate")
     ap.add_argument("--no-store", action="store_true")
     ap.add_argument("--dsn", default="")
     raise SystemExit(asyncio.run(main_async(ap.parse_args())))

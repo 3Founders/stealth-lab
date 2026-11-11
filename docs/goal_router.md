@@ -101,6 +101,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Intent certificates | **built (P1-06)** | `intent_certificates` (db/189), `certificates.py`, `scripts/issue_cert.py`, `scripts/check_cert.py` |
 | Signed audit | **built (P1-07)** | `tool_call_audit` (db/190), `audit.py`, `signing.py`, `scripts/verify_audit_chain.py` |
 | Card → goal mapping | exists, 125,656 rows | `db/186_tool_card_goals.sql`, `scripts/map_tool_cards_to_goals.py` |
+| Ways from tools | **materialized: 372 one-step procedures** | `scripts/materialize_tool_procedures.py`; each tool card is a Way whose step binds the card. Re-run is idempotent |
 | Tool gateway | exists, phase 1 | `app/tool_routing/gateway.py`, `_gateway_call` in `app/mcp_server/server.py` |
 | OAuth / consent | exists, off by default | `tool_oauth_*`, `oauth_client.py`, `TOOL_GATEWAY_OAUTH` |
 | Outcome recording | partial | `tool_observations` (db/162), `store.record_outcome` |
@@ -111,7 +112,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Gate core | **built (P1-04)** | `gate.py`, `TOOL_GATE=off / shadow / enforce`, wired in `_gateway_call`/`use_tool` |
 | Approvals | **built (P1-11)** | `tool_approvals` (db/196), `approvals.py`, `scripts/approve_tool.py`, `/v1/tools/approvals` |
 | Tool arm | **built (P2-03)** | `scripts/compare/tool_runner.py` |
-| Tool-vs-procedure comparison | **built (P2-01…P2-07)**; reports in `docs/compare_*.md` | `scripts/compare/*`. The procedure arm is unbound: no procedures exist for the tool goals, so every procedure run is `no_procedure` and the reports say so |
+| Tool-vs-procedure comparison | **built (P2-01…P2-07)**; reports in `docs/compare_*.md` | `scripts/compare/*`. The procedure arm now runs a tool-backed one-step Way through the same gate as the tool arm; the existing reports predate the materialized ways, so re-run them |
 | Trust, trials, lifecycle, verification, pricing | **built (P3-01…P3-07)** | `trust.py`, `trials.py`, `lifecycle.py`, `verification.py`, `pricing.py`, `scripts/tool_market_report.py` |
 
 Known local constraint: goal semantic/FTS search warns that the search group's members are unconfigured. Exact

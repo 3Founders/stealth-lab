@@ -22,7 +22,7 @@ what was wrong; do not redo it. `197` is new and must be applied with `187-196`.
 | Phase | State |
 |---|---|
 | **Phase 1 — Foundation** | **Done except P1-09.** P1-01…P1-08, P1-10, P1-11 are merged. Hinoki (P1-09) is blocked on the API base/schema, not the credential. |
-| **Phase 2 — Evidence** | **Done.** P2-01…P2-07 are merged: corpus, procedure runner, tool runner, scorers, orchestrator, comparison store, paired statistics and per-goal report. Caveat the reports state themselves: no procedures exist for the 25+5 tool goals, so the procedure arm is unbound (`no_procedure`) and the comparison is preliminary. |
+| **Phase 2 — Evidence** | **Done.** P2-01…P2-07 are merged: corpus, procedure runner, tool runner, scorers, orchestrator, comparison store, paired statistics and per-goal report. The old reports predate the materialized ways (372 one-step tool procedures); the procedure arm now runs the top one through the same gate as the tool arm, so re-run the comparison. |
 | **Phase 3 — Market** | **Done.** P3-01…P3-07 are merged: trust posterior, funded trials, trust ranking, graduation/retirement, verification market, pricing/metering and the market report. |
 
 Current board (from `docs/goal_router.md`):
@@ -197,6 +197,7 @@ cd ..\desktop; npx tsc --noEmit
 **Scripts**
 
 - `recommend_goal.py`, `search_goals.py`, `map_tool_cards_to_goals.py`, `report_goal_coverage.py`.
+- `materialize_tool_procedures.py` — turns tool cards into one-step Ways (procedures) for their Goals.
 - `check_policy.py`, `issue_cert.py`, `check_cert.py`, `check_gate.py`, `verify_audit_chain.py`, `audit_demo.py`,
   `approve_tool.py`.
 - `backend/scripts/compare/` — corpus, procedure_runner, tool_runner, scoring, run_compare, store, stats, report.
@@ -249,7 +250,11 @@ cd ..\desktop; npx tsc --noEmit
 9. **`comparison_results` / `tool_trust` were applied manually.** Run `db/191` and `db/192` on every environment.
 10. **P2-03 is Anuj's runner.** Do not re-add a second `tool_runner.py`; our duplicate is in
     `.scratch/tool_runner_ours.py` (untracked, do not commit).
-11. **P3-02 is in progress by Anuj.** Do not duplicate; wait for #40 or coordinate.
+11. **The four non-CVE security subgoals have no Ways.** The generic `security` Goal has 20 one-step
+    ways; `security_secret_scan`, `security_sast`, `security_auth_review` and `security_pentest` have 0
+    cards, so 0 ways. The mapper's `TOOL_GOAL_TITLES` still lists only the original 25, and no card is
+    tagged with a subgoal. Pin a real scanner/reviewer to each (or finish the model-backed reviewer)
+    before those prompts can show a tool.
 12. **Test rows are real rows.** The audit chain includes `demo`/`dev-local` receipts; certificates and one pending
     approval exist. Clean them if you set a real `TOOL_CERT_SECRET`.
 

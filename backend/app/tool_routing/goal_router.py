@@ -193,7 +193,10 @@ async def _ways(pool: Any, hits: Sequence[dict[str, Any]]) -> dict[str, list[Way
                 WHERE achieves_goal_id = $1::uuid
                   AND t_invalid IS NULL
                   AND availability = 'active'
-                ORDER BY t_created DESC
+                ORDER BY (verification_state = 'verified') DESC,
+                         COALESCE((verification_stats->>'successes')::int, 0) DESC,
+                         COALESCE((domain_payload->>'goal_score')::float, 0) DESC,
+                         t_created DESC
                 LIMIT $2
                 """,
                 hit["goal_id"], MAX_WAYS_PER_GOAL,
