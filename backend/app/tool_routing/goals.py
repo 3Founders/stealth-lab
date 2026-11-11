@@ -74,10 +74,51 @@ TOOL_GOALS: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
+# Security subgoals (P1-01, docs/goal_router.md). Narrower than the `security` goal so that
+# "scan dependencies for CVEs" does not collapse into "pentest this repo". Ids are stable and
+# never reused. The canonical Goals are seeded by db/187_tool_goals_security.sql; the mapper can
+# use these markers once it is pointed at subgoals.
+SECURITY_SUBGOALS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "security_dependency_cve": (
+        "find known vulnerabilities (CVEs) in this repository's dependencies and lockfiles",
+        ("cve", "vulnerability", "vulnerabilities", "dependency", "dependencies", "osv", "snyk",
+         "advisory", "advisories", "lockfile", "sca", "software composition"),
+    ),
+    "security_secret_scan": (
+        "find hardcoded secrets, keys, tokens and credentials in a repository or diff",
+        ("secret", "secrets", "credential", "credentials", "api key", "token", "hardcoded",
+         "gitleaks", "trufflehog", "entropy"),
+    ),
+    "security_sast": (
+        "statically analyze source code for security weaknesses without running it",
+        ("sast", "static analysis", "codeql", "semgrep", "taint", "injection", "xss", "ssrf",
+         "path traversal", "unsafe"),
+    ),
+    "security_auth_review": (
+        "review authentication and authorization for privilege escalation and broken access control",
+        ("auth", "authentication", "authorization", "oauth", "jwt", "session", "privilege",
+         "access control", "idor", "rbac", "tenant"),
+    ),
+    "security_pentest": (
+        "test a repository or application for exploitable vulnerabilities and produce findings",
+        ("pentest", "penetration", "exploit", "exploitable", "red team", "attack", "payload",
+         "vulnerability scan", "bug bounty"),
+    ),
+}
+
+ALL_GOALS: dict[str, tuple[str, tuple[str, ...]]] = {**TOOL_GOALS, **SECURITY_SUBGOALS}
+
+
 def goal_ids() -> list[str]:
+    """The 25 tool goals the catalog taxonomy uses (stable)."""
     return list(TOOL_GOALS)
 
 
+def security_goal_ids() -> list[str]:
+    """The security subgoals added by P1-01 (stable)."""
+    return list(SECURITY_SUBGOALS)
+
+
 def goal_text(goal: str) -> str:
-    desc, _words = TOOL_GOALS[goal]
+    desc, _words = ALL_GOALS[goal]
     return desc

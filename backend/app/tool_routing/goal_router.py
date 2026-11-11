@@ -64,6 +64,7 @@ class GoalHit:
     home_shard: str
     ways: list[WayHit] = field(default_factory=list)
     tools: list[ToolHit] = field(default_factory=list)
+    trace: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _hit(row: Any, score: float, matched_by: str) -> dict[str, Any]:
@@ -251,12 +252,16 @@ async def route_goal(
     scope: Optional[AccessScope] = None,
     include_ways: bool = True,
     include_tools: bool = True,
+    explain: bool = False,
 ) -> list[GoalHit]:
     """Match a task to Goals, then attach their ways and mapped tools.
 
     `query_embedding` is optional: without it the router uses exact/alias + full-text only.
     Pass the same embedding model that populated `goal_search_index.embedding` (the search
     group records the model), or the vector leg will not be comparable.
+
+    `explain=True` fills `GoalHit.trace` with one entry per leg that returned the Goal:
+    `{leg, rank, score, name}`. It is for the recommend_goal CLI and costs nothing when off.
     """
     text = " ".join(str(query or "").split())[:2000]
     if not text:
@@ -264,17 +269,34 @@ async def route_goal(
     scope = scope or AccessScope.unrestricted()
 
     found: dict[str, dict[str, Any]] = {}
+    traces: dict[str, list[dict[str, Any]]] = {}
+
+    def note(row: Any, leg: str, rank: int, score: float) -> None:
+        if explain:
+            traces.setdefault(str(row["id"]), []).append({
+                "leg": leg,
+                "rank": rank,
+                "score": float(score),
+                "name": str(row["canonical_name"] or ""),
+            })
 
     normalized = normalize_goal_name(text)
-    for row in await _exact(pool, normalized, max(limit * 2, 10)):
+    for rank, row in enumerate(await _exact(pool, normalized, max(limit * 2, 10))):
         exact = normalize_goal_name(str(row["canonical_name"])) == normalized
-        _merge(found, row, EXACT_SCORE if exact else ALIAS_SCORE, "exact" if exact else "alias")
+        score = EXACT_SCORE if exact else ALIAS_SCORE
+        _merge(found, row, score, "exact" if exact else "alias")
+        note(row, "exact" if exact else "alias", rank, score)
 
     for rank, row in enumerate(await _k000_full_text(pool, text, max(limit * 4, 20))):
-        _merge(found, row, 1.25 / (RRF_K + rank + 1), "fts")
+        score = 1.25 / (RRF_K + rank + 1)
+        _merge(found, row, score, "fts")
+        note(row, "k000_fts", rank, score)
 
+    search_leg = "fts+vector" if query_embedding is not None else "fts"
     for rank, row in enumerate(await _search(pool, text, max(limit * 4, 20), query_embedding, scope)):
-        _merge(found, row, 1.0 / (RRF_K + rank + 1), "fts")
+        score = 1.0 / (RRF_K + rank + 1)
+        _merge(found, row, score, search_leg)
+        note(row, search_leg, rank, score)
 
     ranked = sorted(found.values(), key=lambda h: (-h["score"], h["canonical_name"]))[: max(1, int(limit))]
     if not ranked:
@@ -294,6 +316,7 @@ async def route_goal(
             home_shard=h["home_shard"],
             ways=ways.get(h["goal_id"], []),
             tools=tools.get(h["goal_id"], []),
+            trace=traces.get(h["goal_id"], []) if explain else [],
         )
         for h in ranked
     ]

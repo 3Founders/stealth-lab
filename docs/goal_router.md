@@ -92,6 +92,9 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Goal index and search | exists | `goal_search_index`, `goal_names`, `app/services/goals.py` |
 | Goal-first router | exists, first cut | `app/tool_routing/goal_router.py` |
 | Goal CLI | exists, read-only | `backend/scripts/search_goals.py` |
+| Recommend-goal CLI | **built (P1-02)** | `backend/scripts/recommend_goal.py`; `search_goals.py` is a wrapper |
+| Security subgoals | **built (P1-01)** | `app/tool_routing/goals.py`, `db/187_tool_goals_security.sql` |
+| Manual pins | **built (P1-03)** | `map_tool_cards_to_goals.py --pin`, `report_goal_coverage.py`; Exa pinned to `web` at 9.0 |
 | Card → goal mapping | exists, 125,656 rows | `db/186_tool_card_goals.sql`, `scripts/map_tool_cards_to_goals.py` |
 | Tool gateway | exists, phase 1 | `app/tool_routing/gateway.py`, `_gateway_call` in `app/mcp_server/server.py` |
 | OAuth / consent | exists, off by default | `tool_oauth_*`, `oauth_client.py`, `TOOL_GATEWAY_OAUTH` |
@@ -161,6 +164,7 @@ class ToolCall:
     arguments: dict
     data_class: str = "PUBLIC_SOURCE"
     agent: str = "kell"
+    cert_id: str | None = None
 
 @dataclass
 class Decision:
@@ -956,9 +960,9 @@ Update only your own row. `—` means unclaimed.
 
 | ID | Milestone | Owner | State | PR / issue |
 |---|---|---|---|---|
-| P1-01 | Security and intent Goals | — | open | |
-| P1-02 | Recommend-goal script (start here) | — | open | |
-| P1-03 | Mapping v2 and manual pins | — | open | |
+| P1-01 | Security and intent Goals | opencode | done | this commit |
+| P1-02 | Recommend-goal script (start here) | opencode | done | this commit |
+| P1-03 | Mapping v2 and manual pins | opencode | done | this commit |
 | P1-04 | Gate core (`server.py`) | — | open | |
 | P1-05 | Policy store | — | open | |
 | P1-06 | Intent certificates | — | open | |

@@ -35,6 +35,7 @@ import asyncpg
 from dotenv import dotenv_values
 
 from app.tool_routing.goals import TOOL_GOALS
+from report_goal_coverage import report as coverage_report
 
 WORD = re.compile(r"[a-z0-9]+")
 STOP = {
@@ -170,7 +171,11 @@ async def main() -> None:
     ap.add_argument("--max-per-card", type=int, default=3)
     ap.add_argument("--min-score", type=float, default=3.0)
     ap.add_argument("--lexical", action="store_true", help="also map to specific issue-shaped Goals")
-    ap.add_argument("--replace", action="store_true", help="delete existing rows first")
+    ap.add_argument("--replace", action="store_true",
+                    help="delete generated rows first; manual pins are kept")
+    ap.add_argument("--pin", nargs=3, metavar=("CARD", "GOAL", "SCORE"),
+                    help="pin one card to one goal (source=manual); survives --replace")
+    ap.add_argument("--report", action="store_true", help="print coverage after mapping")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -180,6 +185,16 @@ async def main() -> None:
 
     conn = await asyncpg.connect(dsn, timeout=30)
     try:
+        pin: tuple[str, str, float] | None = None
+        if args.pin:
+            card_id, goal_id, score = args.pin
+            if not await conn.fetchval("SELECT 1 FROM tool_cards WHERE id = $1", card_id):
+                raise SystemExit(f"no tool card {card_id!r}")
+            if not await conn.fetchval(
+                    "SELECT 1 FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", goal_id):
+                raise SystemExit(f"no active goal {goal_id!r}")
+            pin = (card_id, goal_id, float(score))
+
         if args.dry_run:
             tool_goals = {gid: tool_goal_id(gid) for gid in TOOL_GOAL_TITLES}
         else:
@@ -234,16 +249,31 @@ async def main() -> None:
         if args.dry_run:
             for card_id, goal_id, score, source in rows[:20]:
                 print(f"  {card_id}  ->  {goal_id}  ({score}, {source})")
+            if pin:
+                print(f"  would pin {pin[0]} -> {pin[1]} ({pin[2]}, manual)")
+            if args.report:
+                await coverage_report(conn)
             return
         if args.replace:
-            await conn.execute("DELETE FROM tool_card_goals")
+            await conn.execute("DELETE FROM tool_card_goals WHERE source <> 'manual'")
         await conn.executemany("""
             INSERT INTO tool_card_goals (card_id, goal_id, score, source)
             VALUES ($1, $2::uuid, $3, $4)
             ON CONFLICT (card_id, goal_id) DO UPDATE
                 SET score = EXCLUDED.score, source = EXCLUDED.source
+                WHERE tool_card_goals.source <> 'manual'
         """, rows)
+        if pin:
+            await conn.execute("""
+                INSERT INTO tool_card_goals (card_id, goal_id, score, source)
+                VALUES ($1, $2::uuid, $3, 'manual')
+                ON CONFLICT (card_id, goal_id) DO UPDATE
+                    SET score = EXCLUDED.score, source = 'manual'
+            """, *pin)
+            print(f"pinned {pin[0]} -> {pin[1]} ({pin[2]}, manual)")
         print(f"wrote {len(rows)} mappings")
+        if args.report:
+            await coverage_report(conn)
     finally:
         await conn.close()
 
