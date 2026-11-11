@@ -4,14 +4,16 @@
 // canvas and the encrypted sync are exactly the website's, with nothing re-implemented here. The page lays out a
 // placeholder and reports its rectangle; the view sits on top of it and hides when the page shows the coding lane.
 //
-// One account for the whole app. The coding lane signs in with `kell login` (OAuth with PKCE, the token saved in
-// ~/.stealthlab/config.json) in the person's default browser (Google refuses embedded windows); the rooms sign in with the
-// website's own session (Supabase, in the site's localStorage, partition persist:kell-web). Both are the same Supabase
-// account. Signing out clears both. If the two ever name different accounts (someone signed in as another person inside
+// One account for the whole app. The rooms sign in first, with the website's own session (Supabase PKCE, in the site's
+// localStorage, partition persist:kell-web). The coding lane's `kell login` (OAuth with PKCE, the token saved in
+// ~/.stealthlab/config.json) then runs in a window on that SAME partition, so Supabase's consent page already knows the
+// person and one "Allow" finishes it: one credential entry signs in both lanes (owner, 2026-11-11). The two tokens stay
+// separate by design (the model gateway takes only website sessions, the MCP server only OAuth-flow tokens), and neither
+// is copied. Signing out clears both. If the two ever name different accounts (someone signed in as another person inside
 // the rooms), the page says so and offers to sign out of both.
 //
-// Links: the site and the sign-in providers it uses stay in the view; a tool's sign-in link opens the app's tool sign-in
-// window (electron/signin.ts); anything else goes to the system browser.
+// Links: the site and the sign-in providers it uses stay in the view; a tool's sign-in link opens the person's default
+// browser (electron/signin.ts); anything else goes there too.
 import { BrowserWindow, WebContentsView, session, shell } from "electron"
 import { createServer, type Server, type ServerResponse } from "node:http"
 import { createHash, randomBytes } from "node:crypto"
@@ -34,19 +36,43 @@ export function staysInView(raw: string): boolean {
   if (h === site || h === "kell.org.in" || h === "www.kell.org.in") return SITE_PATHS.test(u.pathname)
   return h.endsWith(".supabase.co") || h === "accounts.google.com" || h === "github.com"
 }
-// The site's own links back to the website (the logo, "Back to home"): hidden in the app. Navigation is blocked too (below), so this is
-// only so nothing points somewhere it cannot go.
-// With the logo row and the "Back to home" row gone, the sidebar's collapse button (absolutely placed at its top) sat on the Search
-// box; the sidebar keeps that top row empty for it instead.
-const HIDE_SITE_LINKS = `.back-btn, a[aria-label^="keळ, back to the site"], a[href="/"], .dg-side > .dg-brand, .dg-side > .dg-backrow { display: none !important; }
-.dg-side { padding-top: 48px !important; }`
+// The site's "Back to home" row is hidden in the app (the rooms are the whole app there), but the kell wordmark stays: it is
+// the brand of the tab, and hiding it left the room list with no logo at all (owner, 2026-11-11). The wordmark's link is
+// made inert rather than removed, so it cannot navigate the view away from the chat; the site still owns the artwork and
+// swaps it for dark mode.
+const HIDE_SITE_LINKS = `.back-btn, .dg-side > .dg-backrow { display: none !important; }
+.dg-side > .dg-brand { display: block !important; }
+.dg-side > .dg-brand a { pointer-events: none !important; cursor: default; }`
 
 type Rect = { x: number; y: number; width: number; height: number }
 let view: WebContentsView | undefined
 let owner: BrowserWindow | undefined
+let visible = false
+let idleTimer: ReturnType<typeof setTimeout> | undefined
+let webTokenCache: { token: string; exp: number } | null = null
 
-function route(url: string, done: (r: { url: string; ok: boolean }) => void): "stay" | "away" {
-  if (isSignInLink(url)) { openSignIn(owner, url, done); return "away" }
+// RAM: a hidden WebContentsView is a full Chromium renderer (the website's chat). Keeping it alive while the person
+// works in the coding lane costs ~100–200 MB. Five minutes after the Rooms tab is hidden, drop it; the next visit
+// recreates it. The website session token is cached in the main process so a model call does not need the view.
+const ROOMS_IDLE_DISPOSE_MS = 5 * 60_000
+function disposeView() {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined }
+  if (!view) return
+  try { if (!view.webContents.isDestroyed()) view.webContents.close() } catch { /* already gone */ }
+  try { owner?.contentView.removeChildView(view) } catch { /* already removed */ }
+  view = undefined
+}
+function scheduleDispose() {
+  if (idleTimer) clearTimeout(idleTimer)
+  idleTimer = setTimeout(() => {
+    idleTimer = undefined
+    if (!visible) disposeView()
+  }, ROOMS_IDLE_DISPOSE_MS)
+  ;(idleTimer as { unref?: () => void }).unref?.()
+}
+
+function route(url: string): "stay" | "away" {
+  if (isSignInLink(url)) { void openSignIn(url); return "away" }
   if (staysInView(url)) return "stay"
   if (/^https?:/.test(url)) void shell.openExternal(url)
   return "away"
@@ -59,12 +85,6 @@ function ensureView(win: BrowserWindow): WebContentsView {
   view = new WebContentsView({ webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: false } })
   const wc = view.webContents
   wc.setUserAgent(plainUserAgent(wc.getUserAgent()))   // Google refuses sign-in in a user agent that names Electron
-  // A tool's sign-in started in the rooms opens the app's sign-in window; when it finishes, the rooms page hears it
-  // (RoomView listens for kell:tool-signin-done) and runs the request again. Only the rooms: the coding page would otherwise
-  // resume its own session for a sign-in it never asked for.
-  const toolDone = (r: { url: string; ok: boolean }) => {
-    if (r.ok && !wc.isDestroyed()) void wc.executeJavaScript(`window.dispatchEvent(new CustomEvent("kell:tool-signin-done"))`).catch(() => undefined)
-  }
   // Tells the site it runs inside the app, so a sign-in window it could not open itself is not reported as a blocked pop-up.
   wc.on("dom-ready", () => {
     void wc.executeJavaScript("window.__kellDesktop = true").catch(() => undefined)
@@ -80,10 +100,10 @@ function ensureView(win: BrowserWindow): WebContentsView {
   wc.on("did-navigate", (_e, url) => { if (url.startsWith("http") && !staysInView(url)) void wc.loadURL(`${SITE}/chat`) })
   wc.on("devtools-opened", () => wc.closeDevTools())
   wc.setWindowOpenHandler(({ url }) => {
-    if (route(url, toolDone) === "stay") void wc.loadURL(url)
+    if (route(url) === "stay") void wc.loadURL(url)
     return { action: "deny" }
   })
-  wc.on("will-navigate", (e, url) => { if (route(url, toolDone) === "away") e.preventDefault() })
+  wc.on("will-navigate", (e, url) => { if (route(url) === "away") e.preventDefault() })
   view.setVisible(false)
   win.contentView.addChildView(view)
   void wc.loadURL(`${SITE}/chat`)
@@ -92,7 +112,14 @@ function ensureView(win: BrowserWindow): WebContentsView {
 
 /** Show the rooms over the page's placeholder (rect in CSS pixels of the window), or hide them (null). */
 export function setRoomsBounds(win: BrowserWindow, rect: Rect | null) {
-  if (!rect) { view?.setVisible(false); return }
+  if (!rect) {
+    visible = false
+    view?.setVisible(false)
+    scheduleDispose()
+    return
+  }
+  visible = true
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined }
   const v = ensureView(win)
   v.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)) })
   v.setVisible(true)
@@ -124,6 +151,9 @@ export function setRoomsTheme(theme: "light" | "dark") {
  *  Rooms tab was ever opened. */
 export async function roomsAccessToken(win: BrowserWindow | undefined): Promise<string | null> {
   if (!win || win.isDestroyed()) return null
+  // A token read moments ago is reused, so a model call does not force the hidden rooms renderer to exist after the
+  // Rooms tab has been closed and disposed.
+  if (webTokenCache && webTokenCache.exp * 1000 - Date.now() > 60_000) return webTokenCache.token
   const wc = ensureView(win).webContents
   const loaded = () => new Promise<void>((ok) => {
     if (!wc.isLoading() && wc.getURL().startsWith(SITE)) return ok()
@@ -153,12 +183,19 @@ export async function roomsAccessToken(win: BrowserWindow | undefined): Promise<
       await new Promise((r) => setTimeout(r, 700))
     }
   }
+  if (s && s.exp * 1000 - Date.now() > 0) webTokenCache = { token: s.token, exp: s.exp }
   return s && s.exp * 1000 - Date.now() > 0 ? s.token : null
 }
 
 /** Who the rooms are signed in as: the website session's user id and email, or null. Read for display and for the
  *  same-account check only; the rooms API verifies the session itself. */
-export async function roomsAccount(): Promise<{ id: string; email: string | null } | null | undefined> {
+export async function roomsAccount(win?: BrowserWindow): Promise<{ id: string; email: string | null } | null | undefined> {
+  // The Rooms tab asks before the view is shown (the page gates the view on the answer), so the view is created hidden
+  // here when it does not exist yet. It loads the site, and the next poll reads the session.
+  if (!view || view.webContents.isDestroyed()) {
+    if (!win || win.isDestroyed()) return undefined
+    ensureView(win)
+  }
   if (!view || view.webContents.isDestroyed()) return undefined
   // Not known yet while the site is still loading (a blank page has no session to read): undefined, not "signed out".
   if (view.webContents.isLoading() || !view.webContents.getURL().startsWith(SITE)) return undefined
@@ -177,17 +214,54 @@ export async function roomsAccount(): Promise<{ id: string; email: string | null
   }
 }
 
-/** The one sign-in: open `kell login`'s authorize link in the person's DEFAULT BROWSER (2026-11-06). Google refuses to sign in
- *  inside an embedded window, whatever user agent it sends ("This browser or app may not be secure"), so the link goes where
- *  Google accepts it. The CLI waits on a loopback address (http://127.0.0.1:<port>/callback), which any local browser can
- *  reach, and saves its token itself; the page polls /api/settings until that token is there. Resolves true once the browser
- *  was opened. The rooms view keeps its own website session (see the header): it is signed in inside the rooms, where
- *  GitHub works, or the rooms are opened in the browser. */
-export function openAccountSignIn(_parent: BrowserWindow | undefined, url: string): Promise<boolean> {
+/** The coding lane's half of the one sign-in: `kell login`'s authorize link, opened in a window that shares the rooms'
+ *  cookie store (PARTITION). This is what makes one sign-in cover both lanes (owner, 2026-11-11).
+ *
+ *  Why not the default browser: Supabase's consent page (/oauth/consent) identifies the person with the WEBSITE session
+ *  from the site's localStorage (prod_frontend/lib/oauth-consent.ts). That session lives in the rooms partition. In the
+ *  default browser it is absent, so the person is sent to sign in a second time. In this window the consent page already
+ *  knows them: one "Allow" and the CLI's loopback callback completes the token, with no second credential.
+ *
+ *  Why a separate window and not the rooms view: the CLI waits on http://127.0.0.1:<port>/callback, which must actually
+ *  be fetched. The rooms view deliberately sends every address outside the chat to the browser; this window is allowed to
+ *  follow the loopback callback, show the CLI's "signed in" page for a moment, and close. Google still refuses embedded
+ *  windows, but by the time this opens the person is already signed in on the website, so no Google page is involved.
+ *  Resolves true once the callback was reached; the page polls /api/settings for the saved token. */
+export function openAccountSignIn(parent: BrowserWindow | undefined, url: string): Promise<boolean> {
   let u: URL
   try { u = new URL(url) } catch { return Promise.resolve(false) }
   if (u.protocol !== "https:") return Promise.resolve(false)
-  return shell.openExternal(u.toString()).then(() => true, () => false)
+  return new Promise<boolean>((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const win = new BrowserWindow({
+      parent: parent && !parent.isDestroyed() ? parent : undefined,
+      width: 520, height: 720, minWidth: 380, minHeight: 480, show: true,
+      title: "Sign in to kell", autoHideMenuBar: true, backgroundColor: "#f8f6ef",
+      webPreferences: { partition: PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    })
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      try { if (!win.isDestroyed()) win.close() } catch { /* already gone */ }
+      resolve(ok)
+    }
+    timer = setTimeout(() => finish(false), 300_000)
+    win.on("closed", () => { if (!settled) { settled = true; if (timer) clearTimeout(timer); resolve(false) } })
+    const wc = win.webContents
+    wc.setWindowOpenHandler(() => ({ action: "deny" }))
+    const callback = (target: string) => {
+      // kell login's listener: the request itself must go through, so this only closes the window afterwards.
+      if (!/^http:\/\/127\.0\.0\.1:\d+\//.test(target)) return
+      setTimeout(() => finish(true), 1_500)
+    }
+    wc.on("did-navigate", (_e, target) => callback(target))
+    wc.on("did-navigate-in-page", (_e, target) => callback(target))
+    // A redirect can supersede the first load and reject it; that is not a failed sign-in, so the window stays until the
+    // callback or the timeout. A closed window resolves false through the handler above.
+    void win.loadURL(u.toString()).catch(() => undefined)
+  })
 }
 
 /** Sign the rooms in with the app's OWN session, no token copied (2026-11-06; RFC 8252 + Supabase PKCE). The two tokens stay
@@ -237,6 +311,7 @@ export function signInRooms(win: BrowserWindow, provider: RoomsProvider): Promis
         const s = await r.json()
         if (!r.ok || typeof s?.access_token !== "string" || typeof s?.refresh_token !== "string" || !s?.user?.id) throw new Error("exchange refused")
         if (!s.expires_at) s.expires_at = Math.floor(Date.now() / 1000) + Number(s.expires_in || 3600)
+        webTokenCache = { token: s.access_token, exp: Number(s.expires_at) }
         const wc = ensureView(win).webContents
         if (wc.isLoading() || !wc.getURL().startsWith(SITE)) await new Promise<void>((ok) => { wc.once("did-finish-load", () => ok()); setTimeout(ok, 15_000) })
         await wc.executeJavaScript(`localStorage.setItem(${JSON.stringify(`sb-${ref}-auth-token`)}, ${JSON.stringify(JSON.stringify(s))})`)
@@ -264,6 +339,7 @@ export function signInRooms(win: BrowserWindow, provider: RoomsProvider): Promis
 /** Sign the rooms out: the site's session and its local copies (cached chat keys included) go, so a next account never
  *  sees the last one's data. The provider's own cookies (Google, GitHub) stay, like in a browser. */
 export async function signOutRooms() {
+  webTokenCache = null
   const s = session.fromPartition(PARTITION)
   for (const origin of new Set([SITE, "https://kell.org.in", "https://www.kell.org.in"])) {
     await s.clearStorageData({ origin, storages: ["localstorage", "indexdb", "cookies", "serviceworkers", "cachestorage"] }).catch(() => undefined)

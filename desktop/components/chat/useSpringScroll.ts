@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { SPRINGS, SpringValue } from "@/lib/chat/spring";
 
 const NEAR_END = 120; // px from the bottom that still counts as "reading the latest"
@@ -20,6 +20,7 @@ const reduced = () => typeof matchMedia === "function" && matchMedia("(prefers-r
 export function useSpringScroll(viewport: RefObject<HTMLDivElement | null>, content: RefObject<HTMLDivElement | null>, resetKey: string) {
   const scroll = useRef<SpringValue | null>(null);
   const atEnd = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);   // for the "scroll to latest" button; the ref is the hot path
 
   const toEnd = useCallback(() => {
     const el = viewport.current;
@@ -29,7 +30,7 @@ export function useSpringScroll(viewport: RefObject<HTMLDivElement | null>, cont
   const scrollToEnd = useCallback((opts: { instant?: boolean } = {}) => {
     const el = viewport.current;
     if (!el) return;
-    if (opts.instant || reduced()) { scroll.current?.cancel(); el.scrollTop = toEnd(); atEnd.current = true; return; }
+    if (opts.instant || reduced()) { scroll.current?.cancel(); el.scrollTop = toEnd(); atEnd.current = true; setAtBottom(true); return; }
     if (!scroll.current) scroll.current = new SpringValue(el.scrollTop, SPRINGS.smooth, (x) => { if (viewport.current) viewport.current.scrollTop = x; });
     else if (!scroll.current.running) scroll.current.set(el.scrollTop);
     scroll.current.retarget(toEnd);
@@ -48,24 +49,27 @@ export function useSpringScroll(viewport: RefObject<HTMLDivElement | null>, cont
       const nearEnd = el.scrollHeight - el.clientHeight - top <= NEAR_END;
       // Moving up by any real amount is the reader taking over, even while still within NEAR_END. This is what stops
       // the next streamed token from yanking the view back to the bottom.
-      if (top < lastTop - 1) atEnd.current = false;
-      else if (nearEnd) atEnd.current = true;
+      let next = atEnd.current;
+      if (top < lastTop - 1) next = false;
+      else if (nearEnd) next = true;
+      if (next !== atEnd.current) { atEnd.current = next; setAtBottom(next); }
       lastTop = top;
     };
     const stop = () => scroll.current?.cancel();
+    const leave = () => { if (atEnd.current) { atEnd.current = false; setAtBottom(false) } };
     const onWheel = (e: WheelEvent) => {
       stop();
-      if (e.deltaY < 0) atEnd.current = false; // scrolling up: follow no more until the reader returns to the bottom
+      if (e.deltaY < 0) leave(); // scrolling up: follow no more until the reader returns to the bottom
     };
     const onKey = (e: KeyboardEvent) => {
-      if (["ArrowUp", "PageUp", "Home"].includes(e.key)) atEnd.current = false;
+      if (["ArrowUp", "PageUp", "Home"].includes(e.key)) leave();
       stop();
     };
     let touchY: number | null = null;
     const onTouchStart = (e: TouchEvent) => { touchY = e.touches[0]?.clientY ?? null; stop(); };
     const onTouchMove = (e: TouchEvent) => {
       const y = e.touches[0]?.clientY;
-      if (touchY !== null && y !== undefined && y > touchY + 1) atEnd.current = false; // finger down = content up
+      if (touchY !== null && y !== undefined && y > touchY + 1) leave(); // finger down = content up
       touchY = y ?? touchY;
     };
 
@@ -85,5 +89,5 @@ export function useSpringScroll(viewport: RefObject<HTMLDivElement | null>, cont
     };
   }, [viewport, content, resetKey]); // the content element is replaced when the room changes
 
-  return { scrollToEnd, follow };
+  return { scrollToEnd, follow, atEnd: atBottom };
 }

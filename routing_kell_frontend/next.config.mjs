@@ -15,6 +15,13 @@ export const SENSITIVE_PAGE_SOURCES = ["/oauth/consent", "/sign-in", "/account/:
 
 export default {
   reactStrictMode: true,
+  // RAM/CPU: the chat page is the heavy client surface. Keep production source maps out of the browser, and let Next
+  // tree-shake the barrel packages the layout and chat import (Supabase, Sentry, KaTeX, Marked, Lenis, the message
+  // scroller) instead of pulling a package's whole entry graph into the initial chunk.
+  productionBrowserSourceMaps: false,
+  experimental: {
+    optimizePackageImports: ["@supabase/supabase-js", "@sentry/browser", "katex", "marked", "lenis", "@shadcn/react"],
+  },
   // `irm .../install.ps1 | iex` and `curl .../install.sh | bash` need the
   // installers as text, not a download (see scripts/sync-installers.mjs).
   // The chat was first shipped at /delegator; keep old links and bookmarks working.

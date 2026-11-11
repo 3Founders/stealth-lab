@@ -1,12 +1,13 @@
 // Sign in and out, from the app: one account for the coding lane and the team rooms (electron/rooms.ts).
 //
 //   POST {}     start `kell login --no-browser` in the same profile the app uses and return its authorize link
-//               { url }; the page opens it in the rooms' cookie store, so the one sign-in on kell's consent page also
-//               signs the rooms in. The CLI waits for the loopback callback itself and writes the token to
-//               ~/.stealthlab/config.json, which every part of the app (engine plugin, console helper, settings) reads.
-//               { already: true } when a token is already saved, unless the body says { again: true }: the rooms are not
-//               signed in yet (the coding lane signed in earlier through a browser), so the same sign-in runs once more
-//               and the CLI's token is replaced with one for the same account.
+//               { url }. The page opens it in a window on the rooms' cookie store (electron/rooms.ts
+//               openAccountSignIn), so Supabase's consent page already knows the person from the website session and one
+//               "Allow" finishes the coding sign-in; no second credential. The CLI waits for the loopback callback itself
+//               and writes the token to ~/.stealthlab/config.json, which every part of the app (engine plugin, console
+//               helper, settings) reads.
+//               { already: true } when a token is already saved, unless the body says { again: true }: the rooms signed in
+//               as a different account, so the same sign-in runs once more and the CLI's token is replaced.
 //   DELETE      `kell logout`: forget the saved token (the page signs the rooms out too).
 //
 // The token is never read, returned or logged here: the route only checks that config.json has one.

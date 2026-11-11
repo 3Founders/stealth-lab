@@ -224,6 +224,16 @@
 .dk-switch [role="tablist"] button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent;
   color: var(--grey); cursor: pointer; }
 .dk-switch [role="tablist"] button[aria-selected="true"] { background: var(--yellow); color: #171717; border-color: var(--ink); }
+/* The import action beside the Code / Rooms tabs: a quiet ghost button, not a third tab. */
+.dk-import-open { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12.5px;
+  padding: 6px 11px; border: 1px solid var(--rule-strong); border-radius: 8px; color: var(--grey); background: var(--paper); cursor: pointer;
+  -webkit-app-region: no-drag; white-space: nowrap;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-import-open:hover { background: var(--soft, rgba(0,0,0,.06)); border-color: var(--ink); color: var(--ink); }
+.dk-import-open:active { transform: scale(.96); }
+.dk-import-open:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+@media (max-width: 640px) { .dk-import-open .lbl { display: none; } .dk-import-open { padding: 6px 8px; } }
 .dk-who { margin-left: auto; font-size: 12.5px; color: var(--grey); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dk-who b { color: var(--ink); font-weight: 500; }
 .dk-mismatch { margin: 8px 12px 0; display: grid; gap: 8px; flex: none; }
@@ -410,28 +420,47 @@
 .dk-palette-foot { padding: 8px 14px; border-top: 1px solid var(--rule); color: var(--grey); font-size: 11.5px; display: flex; gap: 6px; align-items: center; }
 .dk-palette-foot kbd { font-family: inherit; font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--rule-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--paper); }
 
-/* Import OpenCode CLI chats: the button under the project's sessions, and the small picker over the app. */
+/* Import chats from other agents (Claude Code, Codex, OpenCode): the sidebar link, the top-bar button, and the picker
+   over the app. The popup follows the iOS-style motion in docs/ios_animation.md: dg-fade on the scrim, dg-glass-in on
+   the panel (transform + opacity only), --dg-smooth/--dg-micro, and nothing at all under reduced motion. */
 .dk-sess-import { all: unset; box-sizing: border-box; align-self: flex-start; margin: 4px 4px 0; padding: 4px 8px; border-radius: 6px; color: var(--grey); font-size: 12px; cursor: pointer;
   transition: background-color var(--dg-micro-d) var(--dg-micro), color var(--dg-micro-d) var(--dg-micro); }
 .dk-sess-import:hover { background: rgba(0,0,0,.045); color: var(--ink); }
 .dk-sess-import:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
 .dk-import-backdrop { position: fixed; inset: 0; z-index: 85; background: rgba(23,23,23,.28); display: grid; place-items: center; padding: 16px;
   -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: dg-fade var(--dg-smooth-d) var(--dg-smooth) both; }
-.dk-import { width: min(560px, 100%); max-height: min(72vh, 600px); display: flex; flex-direction: column; gap: 10px; padding: 16px;
+.dk-import { width: min(620px, 100%); max-height: min(76vh, 660px); display: flex; flex-direction: column; gap: 10px; padding: 16px;
   border: 1px solid var(--rule-strong); border-radius: 16px; background: var(--surface);
   box-shadow: 0 24px 70px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.12);
   animation: dg-glass-in var(--dg-smooth-d) var(--dg-smooth) both; }
 .dk-import-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dk-import-head h2 { margin: 0; font-size: 18px; }
-.dk-import-tools { display: flex; gap: 6px; }
-.dk-import-list { list-style: none; margin: 0; padding: 4px; overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 2px; }
-.dk-import-list label { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+/* The source picker: the same segmented recipe as the Code / Rooms tabs, sized for a dialog. */
+.dk-import-src { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); align-self: flex-start; }
+.dk-import-src button { all: unset; box-sizing: border-box; font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid transparent; border-radius: 7px;
+  color: var(--grey); cursor: pointer;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-import-src button:hover:not(:disabled) { color: var(--ink); background: var(--soft, rgba(0,0,0,.06)); }
+.dk-import-src button[aria-selected="true"] { background: var(--yellow); color: #171717; border-color: var(--ink); }
+.dk-import-src button:active:not(:disabled) { transform: scale(.97); }
+.dk-import-src button:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-import-src button:disabled { opacity: .5; cursor: default; }
+.dk-import-dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-import-empty { padding: 14px 4px; }
+.dk-import-tools { display: flex; align-items: center; gap: 6px; }
+.dk-import-tools .dk-note { margin: 0 0 0 auto; }
+.dk-import-list { list-style: none; margin: 0; padding: 4px; overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 2px; min-height: 0; }
+.dk-import-list label { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-import-list label:hover { background: rgba(0,0,0,.045); }
 .dk-import-list input { accent-color: var(--ink); }
-.dk-import-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-import-list .t { min-width: 0; display: grid; gap: 2px; }
+.dk-import-list .t .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-import-list .t small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--grey); font-size: 11.5px; }
 .dk-import-list time { color: var(--grey); font-size: 11.5px; white-space: nowrap; }
 .dk-import-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
-@media (prefers-reduced-motion: reduce) { .dk-import-backdrop, .dk-import { animation: none !important; } .dk-sess-import { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .dk-import-backdrop, .dk-import { animation: none !important; } .dk-sess-import, .dk-import-open, .dk-import-src button, .dk-import-list label { transition: none; } }
 
 /* Stop, while a turn runs. */
 .dk-stop { all: unset; box-sizing: border-box; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; cursor: pointer;

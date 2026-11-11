@@ -1,15 +1,13 @@
 "use client";
 import { MessageScroller, useMessageScrollerScrollable } from "@shadcn/react/message-scroller";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
-import SearchPalette from "@/components/chat/SearchPalette";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
 import { quoteText, withReplyContext } from "@/lib/chat/reply";
 import { tempLabel, toTurns } from "@/lib/chat/temporary";
-import CanvasPanel from "@/components/chat/CanvasPanel";
-import DocPanel from "@/components/chat/DocPanel";
 import { docsApi, type DocInfo } from "@/lib/chat/docs-api";
 import ThemeToggle from "@/components/ThemeToggle";
 import { CanvasContext } from "@/components/chat/CanvasCard";
@@ -43,19 +41,26 @@ import { groupMessages, initials, routeMessage } from "@/lib/chat/ui";
 import { getAccessToken, signOut } from "@/lib/session";
 import PersonAvatar from "@/components/chat/PersonAvatar";
 import ProfileWidget from "@/components/chat/ProfileWidget";
-import ManageRooms from "@/components/chat/ManageRooms";
 import { PanelCloseIcon, RemoveIcon, CanvasIcon } from "@/components/chat/icons";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
-import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog";
+import type { SectionId } from "@/components/chat/SettingsDialog";
 import { getToolPrefs, setToolPrefs } from "@/lib/chat/tool-prefs";
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
 import { fallbackName, personHandle } from "@/lib/chat/events";
 import MessageText from "@/components/chat/MessageText";
 import MessageActions from "@/components/chat/MessageActions";
 import Markdown from "@/components/chat/Markdown";
-import AddAgentDialog from "@/components/chat/AddAgentDialog";
 import { withoutDataImages } from "@/lib/chat/images";
 import { DEFAULT_PREFS, chime, closeAllOs, closeOs, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs, unlockAudio } from "@/lib/chat/notify";
+
+// RAM/JS: the panels below are opened by a click and can be large (the document panel alone is ~36 KB of source).
+// Keep them out of the first chat chunk; each loads the first time it is shown.
+const SearchPalette = dynamic(() => import("@/components/chat/SearchPalette"), { ssr: false });
+const ManageRooms = dynamic(() => import("@/components/chat/ManageRooms"), { ssr: false });
+const SettingsDialog = dynamic(() => import("@/components/chat/SettingsDialog"), { ssr: false });
+const AddAgentDialog = dynamic(() => import("@/components/chat/AddAgentDialog"), { ssr: false });
+const DocPanel = dynamic(() => import("@/components/chat/DocPanel"), { ssr: false });
+const CanvasPanel = dynamic(() => import("@/components/chat/CanvasPanel"), { ssr: false });
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
 const handleOf = (a: { name: string; owner?: string; handle: string }): string => (a.owner ? `@${a.owner}/${a.name}` : a.handle);
@@ -407,9 +412,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, [roomsAgent, note, push, broker, addSignIns]);
   askKellRef.current = askKell;
   // One click, like the app: a tool's sign-in opens in a small window. When it is done (the window closes, or the kell app says its own
-  // sign-in window finished) that tool is ticked; once every tool on the card is, the request that hit the sign-in wall runs again, once
-  // ("Run it now" does it sooner, with the ones you did). A short wait lets the callback finish sealing the token first. Only a sign-in you
-  // opened counts: coming back to the tab without one ran the request again by itself, and the room got the same answer twice (2026-11-05).
+  // sign-in window finished) the tool is ticked only if kell says the sign-in really finished: closing the window, or coming back to
+  // the tab, without signing in used to tick it anyway (2026-11-09). Once every tool on the card is, the request that hit the sign-in
+  // wall runs again, once ("Run it now" does it sooner, with the ones you did). Only a sign-in you opened counts: coming back to the
+  // tab without one ran the request again by itself, and the room got the same answer twice (2026-11-05).
   const signInWindow = useRef<Window | null>(null);
   const retrySignIn = useCallback(() => {
     const p = signInRetry.current;
@@ -423,23 +429,49 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (roomRef.current === p.room) void askKellRef.current?.(p.room, p.text, p.who);
     }, 900);
   }, []);
-  const signedIn = useCallback((link: string) => {
+  /** Ask kell whether the sign-in (or the consent) really finished. The callback may still be sealing the token when the window closes,
+   *  so a few short waits. Nothing is ticked unless kell says the token or the grant is there: a closed window, or a check that
+   *  could not be made, is never a sign-in. */
+  const verifySignIn = useCallback(async (server: string, link: string): Promise<boolean> => {
+    if (!server) return false;
+    for (let i = 0; i < 6; i++) {
+      try {
+        if ((await roomsAgent.toolSignInStatus(server, link)).signedIn) return true;
+      } catch { /* not signed in yet, or the check failed: keep the card, never tick it */ }
+      if (i < 5) await new Promise((resolve) => setTimeout(resolve, 700));
+    }
+    return false;
+  }, [roomsAgent]);
+  const signedIn = useCallback(async (link: string) => {
     signInOpened.current = null;
     const card = signInCard.current;
     const cur = card ? lineStore.current[card.room] ?? [] : [];
     const line = cur.find((l) => l.kind === "notice" && l.id === card?.id);
-    if (!card || !line || line.kind !== "notice" || !line.signIns) { retrySignIn(); return; }
-    const items = line.signIns.map((x) => (x.link === link ? { ...x, done: true } : x));
-    lineStore.current = { ...lineStore.current, [card.room]: cur.map((l) => (l === line ? { ...line, signIns: items } : l)) };
+    const item = line && line.kind === "notice" ? line.signIns?.find((x) => x.link === link) : undefined;
+    if (!card || !line || line.kind !== "notice" || !line.signIns || !item) { retrySignIn(); return; }
+    // A tool with no server name (an older server) cannot be checked: keep the old behaviour for it.
+    if (item.server && !(await verifySignIn(item.server, item.link))) {
+      note(`Not signed in to ${toolLabel(item.server)} yet. Press Sign in again when you are done.`, card.room);
+      return;
+    }
+    // Re-read the card: it may have changed while the check ran (a fresh link, or a second sign-in).
+    const now = lineStore.current[card.room] ?? [];
+    const cardNow = now.find((l) => l.kind === "notice" && l.id === card.id);
+    if (!cardNow || cardNow.kind !== "notice" || !cardNow.signIns) return;
+    const items = cardNow.signIns.map((x) => (x.link === link || (item.server && x.server === item.server) ? { ...x, done: true } : x));
+    lineStore.current = { ...lineStore.current, [card.room]: now.map((l) => (l === cardNow ? { ...cardNow, signIns: items } : l)) };
     bump((n) => n + 1);
     if (items.every((x) => x.done)) retrySignIn();
-  }, [retrySignIn]);
+  }, [retrySignIn, verifySignIn, note]);
   const openToolSignIn = useCallback((link: string) => {
     signInOpened.current = link;
     const w = window.open(link, "kell-tool-signin", "popup,width=520,height=720");
-    // Inside the kell app the app opens its own sign-in window instead (w is null) and sends kell:tool-signin-done.
+    // Inside the kell app the app opens the person's own browser instead (w is null) and the page checks the sign-in on focus.
     if (!w) {
-      if (!(window as unknown as { __kellDesktop?: boolean }).__kellDesktop) note(`Your browser blocked the sign-in window. Allow pop-ups for keळ, or open this link: ${link}`);
+      if (!(window as unknown as { __kellDesktop?: boolean }).__kellDesktop) {
+        signInOpened.current = null;
+        note(`Your browser blocked the sign-in window. Allow pop-ups for keळ, or open this link: ${link}`);
+      }
       return;
     }
     signInWindow.current = w;
@@ -447,7 +479,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (!w.closed) return;
       window.clearInterval(t);
       signInWindow.current = null;
-      if (signInOpened.current === link) signedIn(link);
+      if (signInOpened.current === link) void signedIn(link);
     }, 600);
   }, [note, signedIn]);
   // A link that expired (they last 10 minutes): the sign-in window says so and tells this page, which makes a new link and loads it in the SAME
@@ -462,7 +494,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (!card || !item?.server) return;
       try {
         const fresh = await roomsAgent.toolSignIn(item.server);
-        if (fresh.signedIn) { signInWindow.current?.close(); signedIn(old); return; }
+        if (fresh.signedIn) { signInWindow.current?.close(); void signedIn(old); return; }
         if (!fresh.link) return;
         const cur = lineStore.current[card.room] ?? [];
         lineStore.current = { ...lineStore.current, [card.room]: cur.map((l) => (l.kind === "notice" && l.id === card.id && l.signIns
@@ -478,10 +510,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   useEffect(() => {
     const back = () => {
       if (document.visibilityState === "hidden" || !signInOpened.current) return;
-      if (signInWindow.current && !signInWindow.current.closed) return;   // still signing in: the window's close will tick it
-      signedIn(signInOpened.current);
+      if (signInWindow.current && !signInWindow.current.closed) return;   // still signing in: the window's close will check it
+      void signedIn(signInOpened.current);
     };
-    const fromApp = () => { if (signInOpened.current) signedIn(signInOpened.current); };
+    const fromApp = () => { if (signInOpened.current) void signedIn(signInOpened.current); };
     document.addEventListener("visibilitychange", back);
     window.addEventListener("focus", back);
     window.addEventListener("kell:tool-signin-done", fromApp);
@@ -778,7 +810,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           ? (
             <MessageScroller.Item key={l.id} className="dg-signin-card" role="status">
               <div className="dg-signin-head">
-                <b>{l.signIns.length === 1 ? `Sign in to ${toolLabel(l.signIns[0].server)} to run it` : `${l.signIns.length} tools need your sign-in`}</b>
+                <b>{l.signIns.length === 1
+                  ? (l.signIns[0].server ? `Sign in to ${toolLabel(l.signIns[0].server)} to continue` : "Sign in to continue")
+                  : `You can use these ${l.signIns.length} options. Sign in to continue.`}</b>
                 <span>Once per tool, only you see this. Your request runs again by itself after.</span>
               </div>
               <ol>
@@ -1463,23 +1497,27 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
         <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
         </div>
-        <AddAgentDialog
-          open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full}
-          name={addName} onName={setAddName} about={addAbout} onAbout={setAddAbout} error={formError} onSubmit={(e) => void submitAgent(e)}
-          onOnboard={onboardAgent}
-        />
+        {adding && (
+          <AddAgentDialog
+            open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full}
+            name={addName} onName={setAddName} about={addAbout} onAbout={setAddAbout} error={formError} onSubmit={(e) => void submitAgent(e)}
+            onOnboard={onboardAgent}
+          />
+        )}
         <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : sync.live ? "Live" : "Synced"} agents={count} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
       </aside>
 
-      {info[room]?.id && !tempRef.current.has(room)
+      {canvasOpen && (info[room]?.id && !tempRef.current.has(room)
         ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} socket={{ token: getAccessToken }} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t, sel) => { selectionRef.current = sel ?? ""; setDraft((d) => ({ text: t, n: d.n + 1 })); }} onQuick={(t) => void submit(t)} />
-        : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />}
-      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
-      <ManageRooms
-        open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
-        roles={Object.fromEntries(Object.entries(info).map(([k, v]) => [k, v.role]))} rapi={rapi}
-        roomId={(label) => engineRef.current?.roomId(label)} onDissolve={async (label) => { await deleteRoom(label); }} onCreate={createRoomNamed}
-      />
+        : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />)}
+      {searchOpen && <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />}
+      {manageOpen && (
+        <ManageRooms
+          open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
+          roles={Object.fromEntries(Object.entries(info).map(([k, v]) => [k, v.role]))} rapi={rapi}
+          roomId={(label) => engineRef.current?.roomId(label)} onDissolve={async (label) => { await deleteRoom(label); }} onCreate={createRoomNamed}
+        />
+      )}
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
           <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
@@ -1577,16 +1615,18 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
       <input ref={encFile} type="file" accept=".kellbackup,application/json" hidden onChange={(e) => void restoreEncrypted(e)} />
-      <SettingsDialog
-        open={settings.open} section={settings.section} room={room}
-        onSection={(section) => setSettings((x) => ({ ...x, section }))} onClose={() => setSettings((x) => ({ ...x, open: false }))}
-        chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} notifyPrefs={prefs} onNotifyPrefs={setPrefs}
-        memory={{ api: mapi }}
-        data={{ encrypted: { onDownload: () => void downloadEncrypted(), onImport: () => encFile.current?.click() }, onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe(),
-          folder: { supported: folderBackupSupported(), name: folder, onChoose: () => void chooseBackupFolder(), onRestore: () => void restoreFromFolder(), onStop: () => { void forgetFolder(folderStore, subject); setFolder(null); } } }}
-        agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH, allowSignInTools, onAllowSignInTools: setAllowSignInToolsSaved, instructions: everyChat, onInstructions: saveEveryChat }}
-        account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}
-      />
+      {settings.open && (
+        <SettingsDialog
+          open={settings.open} section={settings.section} room={room}
+          onSection={(section) => setSettings((x) => ({ ...x, section }))} onClose={() => setSettings((x) => ({ ...x, open: false }))}
+          chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} notifyPrefs={prefs} onNotifyPrefs={setPrefs}
+          memory={{ api: mapi }}
+          data={{ encrypted: { onDownload: () => void downloadEncrypted(), onImport: () => encFile.current?.click() }, onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe(),
+            folder: { supported: folderBackupSupported(), name: folder, onChoose: () => void chooseBackupFolder(), onRestore: () => void restoreFromFolder(), onStop: () => { void forgetFolder(folderStore, subject); setFolder(null); } } }}
+          agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH, allowSignInTools, onAllowSignInTools: setAllowSignInToolsSaved, instructions: everyChat, onInstructions: saveEveryChat }}
+          account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}
+        />
+      )}
     </div>
     </CanvasContext.Provider>
     </FilesContext.Provider>

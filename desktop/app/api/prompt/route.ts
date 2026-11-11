@@ -1,10 +1,37 @@
 // POST { sessionID?, directory, text }: sends one prompt and streams the session's events as SSE until the turn ends
 // (session.idle for it). Event payloads go through as-is; the UI maps types to bubbles, chips and the model strip.
+import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { engineStatus, clientFor } from "@/lib/engine"
 import { pooledEngineConfig, ownKeyLane, walletRemaining, isNeedPlan } from "@/lib/pooled"
 import { TOOL_RULES } from "@/lib/tools"
+import { appendMessage, ensureSession, getAssistantMessages, getSession } from "@/lib/localdb"
+import { summarize } from "@/lib/summarize"
 
 export const dynamic = "force-dynamic"
+
+type InFile = { name?: string; path?: string; dataUrl?: string; mime?: string; rel?: string; size?: number }
+const TEXT_EXT = /\.(txt|md|markdown|json|jsonl|ya?ml|toml|ini|cfg|conf|env|csv|tsv|xml|html?|css|scss|less|m?js|cjs|jsx|tsx?|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|php|sh|bash|zsh|ps1|sql|graphql|gql|vue|svelte|astro|lua|r|scala|clj|exs?|dart|tf|hcl|properties|lock|log)$/i
+const isText = (f: InFile) => /^text\//.test(String(f.mime || "")) || /(json|xml|yaml|javascript|typescript|x-sh|x-python)/.test(String(f.mime || "")) || TEXT_EXT.test(String(f.name || ""))
+
+/** Files the composer attached: project text files become a path reference (cheapest); everything else is attached. */
+function filesOf(raw: unknown): { text: string; files: any[] } {
+  const list: InFile[] = Array.isArray(raw) ? raw.filter((f: any) => f && typeof f === "object").slice(0, 10) : []
+  const refs: string[] = []
+  const files: any[] = []
+  for (const f of list) {
+    const name = String(f.name || "attachment")
+    // A text file inside the project is already readable by the agent: send its path, never its bytes.
+    if (f.rel && isText(f)) { refs.push(`- ${f.rel}`); continue }
+    if (f.path) {
+      const uri = pathToFileURL(path.resolve(f.path)).href
+      files.push({ uri, source: { type: "uri", uri }, name })
+      continue
+    }
+    if (f.dataUrl && String(f.dataUrl).length <= 12_000_000) files.push({ uri: String(f.dataUrl), source: { type: "inline" }, name })
+  }
+  return { text: refs.length ? `\n\nAttached files (read them if needed):\n${refs.join("\n")}` : "", files }
+}
 
 /** A failed turn's reason in one line: the engine's own message where it gave one, else what it sent. */
 const reasonOf = (d: any): string => {
@@ -32,6 +59,17 @@ export async function POST(req: Request) {
         const sessionID: string = body.sessionID ||
           (await client.session.create({ location: { directory: e.directory }, metadata: { kell: true } })).id
         enc({ type: "session", sessionID })
+        // Write the person's message to the app's own store before the engine runs. History is an addition: a local
+        // write failure must never stop the turn.
+        try {
+          ensureSession({ id: sessionID, engineId: sessionID, source: "kell", directory: e.directory })
+          // Keep attachment metadata only: a data: URL belongs in the engine request, not in the history row.
+          const meta = Array.isArray(body.files)
+            ? body.files.map(({ dataUrl: _drop, ...f }: any) => f)
+            : undefined
+          appendMessage(sessionID, { role: "user", text: String(body.text || ""), attachments: meta })
+        } catch { /* the turn still runs */ }
+        let assistant = ""
         const pump = (async () => {
           try {
             for await (const ev of client.event.subscribe()) {
@@ -50,6 +88,7 @@ export async function POST(req: Request) {
                 break
               }
               if (k.endsWith("failed") && isNeedPlan(JSON.stringify(d))) { enc({ type: "need_plan" }); enc({ type: "done", outcome: "need_plan" }); break }
+              if (k === "session.text.delta") assistant += String(d.delta ?? d.text ?? "")
               enc({ type: k, data: d })
             }
           } catch (err: any) {
@@ -60,12 +99,35 @@ export async function POST(req: Request) {
         })()
         // This app's rules for its engine (lib/tools.ts), as the session's instruction; kell's plugin adds the task lookup and the tool note
         // itself. An engine that refuses the entry still runs the prompt.
-        const text = String(body.text || "")
+        const attached = filesOf(body.files)
+        // Imported Claude/Codex transcripts keep their full replies in the local store for the UI. The engine never
+        // received those assistant turns (its import only materialises user messages), so give it a bounded summary
+        // instead of the full text: context without shipping the whole transcript to a provider.
+        let prior = ""
+        try {
+          const local = getSession(sessionID)
+          if (local && local.source !== "kell") {
+            const bits: string[] = []
+            let used = 0
+            for (const m of getAssistantMessages(sessionID, 12)) {
+              const b = m.summary || summarize(m.text)
+              if (!b || used + b.length > 3000) continue
+              bits.push(b); used += b.length
+            }
+            if (bits.length) prior = `\n\nPrior assistant work (compressed; full transcript is in the local app):\n${bits.map((b) => `- ${b}`).join("\n")}`
+          }
+        } catch { /* history is an addition */ }
+        const text = String(body.text || "") + attached.text + prior
         try {
           await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools", value: TOOL_RULES } as any)
         } catch { /* the prompt still runs */ }
-        await client.session.prompt({ sessionID, text })
-        await pump
+        try {
+          await client.session.prompt({ sessionID, text, ...(attached.files.length ? { files: attached.files } : {}) })
+          await pump
+        } finally {
+          // One assistant row per turn, assembled from the stream. A failed turn keeps the user row and any text received.
+          try { if (assistant.trim()) appendMessage(sessionID, { role: "assistant", text: assistant, summary: summarize(assistant) }) } catch { /* history is an addition */ }
+        }
       },
     })
     return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } })

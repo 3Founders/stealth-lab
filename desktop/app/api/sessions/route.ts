@@ -13,6 +13,15 @@ type Line = { who: "user" | "assistant"; text: string; at?: number }
 // prompt writes a `kell-tools` instruction entry into its session; that is the marker. The answer is cached, so a
 // refresh only asks about ids the app has not seen before.
 const kellSessions = new Map<string, boolean>()
+const KELL_SESSIONS_MAX = 500
+function rememberKellSession(id: string, ok: boolean): boolean {
+  kellSessions.set(id, ok)
+  if (kellSessions.size > KELL_SESSIONS_MAX) {
+    const oldest = kellSessions.keys().next().value
+    if (oldest !== undefined) kellSessions.delete(oldest)
+  }
+  return ok
+}
 async function isKellSession(client: any, id: string, metadata: any): Promise<boolean> {
   if (metadata?.kell === true) return true
   const known = kellSessions.get(id)
@@ -20,11 +29,9 @@ async function isKellSession(client: any, id: string, metadata: any): Promise<bo
   try {
     const entries = await client.experimental.session.instructions.entry.list({ sessionID: id })
     const ok = Array.isArray(entries) && entries.some((e: any) => e?.key === "kell-tools")
-    kellSessions.set(id, ok)
-    return ok
+    return rememberKellSession(id, ok)
   } catch {
-    kellSessions.set(id, false)
-    return false
+    return rememberKellSession(id, false)
   }
 }
 

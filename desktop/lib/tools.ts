@@ -58,6 +58,18 @@ export async function askTools(need: string): Promise<{ goal: string | null; too
 export const needsSignIn = (t: RouterTool): boolean =>
   /sign-?in|log ?in|api key|consent/i.test(String(t.available || "")) || !!(t.requires_auth || t.oauth || t.needs_key)
 
+/** Whether one tool's sign-in or consent has actually finished, asked of kell without starting a new one: the gateway reads the
+ *  sealed OAuth token or the recorded grant. A closed browser is not a sign-in, so the page asks this before carrying on. The
+ *  coding lane's MCP token is what authenticates here (the website gate refuses it; /v1/tools/signin/status is the web twin). */
+export async function toolSignInStatus(server: string, link = ""): Promise<boolean> {
+  try {
+    const reply = await post("/tools/signin/status", { server, link }, 10_000)
+    return reply?.signed_in === true
+  } catch {
+    return false
+  }
+}
+
 // The room agent's TOOLS_ON and WORK_RULES (backend/app/services/room_agent.py), for a coding agent: local work stays on the engine's
 // own tools, outside tools are for what lives outside the folder. The sign-in sentence matches page.tsx, which turns a sign-in answer
 // into a button. The delegate line: the session's model already is kell's cheapest, and a delegated answer was paid for twice and then

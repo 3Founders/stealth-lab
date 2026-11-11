@@ -200,6 +200,33 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             return _json(request, {"server": name, "signed_in": True})          # the listing worked: no sign-in is needed (any more)
         return _error(request, str(answer)[:300] or "could not make a sign-in link", 409)
 
+    @server.custom_route("/v1/tools/signin/status", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def tool_signin_status_route(request: Request) -> Response:
+        """Whether one tool's sign-in or consent has actually finished. A closed window or a returning tab is not proof, so the page asks
+        this instead of ticking the tool on the way back. The link says which kind it was (a consent page, or an OAuth flow); the check
+        reads the grant or a usable token, never calls the tool server, so it is safe to ask while the person is still in the browser.
+        Body {"server": "<registry name>", "link"?: "<the link the person was sent to>"} -> {"server", "signed_in": true|false}."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001
+            data = {}
+        name = str(data.get("server") or "").strip()[:200] if isinstance(data, dict) else ""
+        link = str(data.get("link") or "").strip()[:2000] if isinstance(data, dict) else ""
+        if not name:
+            return _error(request, "say which tool: {\"server\": \"<name>\"}", 400)
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        from app.tool_routing import gateway as _gateway
+
+        signed = await _gateway.signin_finished(pool, subject, name, link)
+        return _json(request, {"server": name, "signed_in": bool(signed)})
+
     @server.custom_route("/v1/rooms/{room_id}/agent/stop", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_stop(request: Request) -> Response:
         """The Stop button: cancels the caller's own running answers in this room (one agent when {"agent": "name"} is sent). Nothing of theirs is posted

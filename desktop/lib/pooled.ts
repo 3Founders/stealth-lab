@@ -91,6 +91,9 @@ function buildConfig(models: Model[], baseUrl: string, token: string, extraHeade
       },
     },
     model: `kell/${strong.id}`,
+    // RAM: the desktop app does not use OpenCode's language servers (the agent runs lint/typecheck itself), and V2
+    // starts none by default; this keeps a user's global config from turning them on.
+    lsp: false,
   }
 
   // kell's plugin (lib/kellplugin.ts): its hooks give every prompt what Claude Code's give it -- find_ways with .kell/, the survey, the

@@ -2170,6 +2170,37 @@ async def tools_route(request: Request) -> JSONResponse:
     return JSONResponse(external or {"tools": []})
 
 
+@server.custom_route("/tools/signin/status", methods=["POST"], include_in_schema=False)
+async def tools_signin_status_route(request: Request) -> JSONResponse:
+    """Whether this caller's sign-in (OAuth token) or consent (grant) for one tool has finished.
+
+    The desktop app asks this after opening the sign-in link in the person's browser (no callback comes back to the app). It
+    authenticates with the coding lane's MCP token, which the website gate refuses on purpose; the same check is served to the
+    website as /v1/tools/signin/status (room_agent_routes). Light: it reads the grant or a usable token, never calls the tool
+    server. Body {"server": "<registry name>", "link"?: "<the link the person was sent to>"} -> {"server", "signed_in": true|false}.
+    """
+    denied = await _route_gate(request)
+    if denied is not None:
+        return denied
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    name = str(body.get("server") or "").strip()[:200] if isinstance(body, dict) else ""
+    link = str(body.get("link") or "").strip()[:2000] if isinstance(body, dict) else ""
+    if not name:
+        return JSONResponse({"error": "say which tool: {\"server\": \"<name>\"}"}, status_code=400)
+    token = await _route_token(request)
+    subject = token.subject if token is not None and token.subject else None
+    pool = _LIFESPAN_STATE.get("pool")
+    if not subject or pool is None:
+        return JSONResponse({"server": name, "signed_in": False})
+    from app.tool_routing import gateway as _gateway
+
+    signed = await _gateway.signin_finished(pool, subject, name, link)
+    return JSONResponse({"server": name, "signed_in": bool(signed)})
+
+
 app = _oauth.wrap_app(
     server.streamable_http_app(transport_security=_transport_security(), stateless_http=MCP_STATELESS),
     settings, server_origin=_ISSUER_URL, public_origin=_PUBLIC_ORIGIN)

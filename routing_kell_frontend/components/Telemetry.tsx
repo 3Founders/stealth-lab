@@ -4,13 +4,15 @@
 import { useEffect } from "react";
 import { useReportWebVitals } from "next/web-vitals";
 import { analyticsEnabled, PLAUSIBLE_DOMAIN, PLAUSIBLE_SRC, track, type PlausibleFn } from "@/lib/analytics";
-import { initMonitoring } from "@/lib/monitoring";
 
 const VITALS = new Set(["LCP", "CLS", "INP", "TTFB"]);
 
 export default function Telemetry() {
   useEffect(() => {
-    void initMonitoring();
+    // Monitoring is an error path, not part of the first paint: load its chunk when the browser is idle.
+    const start = () => { void import("@/lib/monitoring").then((m) => m.initMonitoring()); };
+    if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(start, { timeout: 3000 });
+    else window.setTimeout(start, 1);
     if (!analyticsEnabled() || document.querySelector("script[data-kel-analytics]")) return;
     // the standard Plausible queue stub, so track() calls made before the script finishes loading are not lost
     if (!window.plausible) {

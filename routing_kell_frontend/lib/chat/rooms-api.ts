@@ -107,6 +107,19 @@ export function roomsApi(deps: RoomsDeps) {
       if (!res.ok) throw new RoomsApiError(j.error?.message || "Couldn't make a new sign-in link.", res.status);
       return { link: j.link, signedIn: j.signed_in === true };
     },
+    /** Whether one tool's sign-in or consent has actually finished (a token sealed, or a grant recorded), without starting a new one.
+     *  A closed window is not proof: the page asks this before ticking a tool. The link says which kind it was. */
+    toolSignInStatus: async (server: string, link?: string): Promise<{ signedIn: boolean }> => {
+      const token = await deps.token();
+      if (!token) throw new RoomsApiError("Sign in again to sync your rooms.", 401);
+      const res = await doFetch(`${base}/v1/tools/signin/status`, {
+        method: "POST", cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ server, link }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { signed_in?: boolean; error?: { message?: string } };
+      if (!res.ok) throw new RoomsApiError(j.error?.message || "Couldn't check the sign-in.", res.status);
+      return { signedIn: j.signed_in === true };
+    },
     /** The Stop button, said to the server: cancels this person's running answers in the room (one agent when named). Closing the connection alone does
      *  not stop an answer, because a closed tab must not lose a reply that is already paid for. Never throws: the page has already stopped listening. */
     stopAgent: async (id: string, agentName?: string): Promise<void> => {

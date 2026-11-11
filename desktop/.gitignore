@@ -5,4 +5,5 @@ next-env.d.ts
 *.tsbuildinfo
 electron/dist
 release
+release-*
 release-build

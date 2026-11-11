@@ -14,6 +14,8 @@ export default function SmoothScroll() {
   const pathname = usePathname();
 
   useEffect(() => {
+    // The chat is an app surface with its own scroller: a page-level Lenis rAF loop there is pure CPU and memory.
+    if (pathname.startsWith("/chat")) return;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let lenis: Lenis | null = null;
     let raf = 0;

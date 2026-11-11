@@ -32,15 +32,16 @@ const unpackedRoot = () => {
 
 const exes = () => [
   process.env.KELL_OC_ENGINE || "",
-  // `kell setup --client opencode` (isolated profile) and the global install, both Windows and unix layouts
-  path.join(process.env.KELL_OC_PROFILE || path.join(process.env.HOME || process.env.USERPROFILE || "", ".stealthlab", "opencode"), "cli", "node_modules", "@opencode", "cli", "bin", platformBin()),
-  path.join(process.env.APPDATA || "", "npm", "node_modules", "@opencode", "cli", "bin", platformBin()),
-  // the copy this app ships: the platform binary beside the asar when packaged (preferred), the launcher package in the
-  // dev tree
+  // the copy this app ships (preferred): the platform binary beside the asar when packaged, the launcher package in the
+  // dev tree. Pinning the bundled copy keeps the engine on the version the app tested and stops a global OpenCode
+  // install (with its own plugins, LSPs and MCPs) from being loaded into this app.
   path.join(unpackedRoot(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
   path.join(unpackedRoot(), "node_modules", "@opencode", "cli", "bin", platformBin()),
   path.join(appRoot(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
   path.join(appRoot(), "node_modules", "@opencode", "cli", "bin", platformBin()),
+  // `kell setup --client opencode` (isolated profile) and the global install, both Windows and unix layouts
+  path.join(process.env.KELL_OC_PROFILE || path.join(process.env.HOME || process.env.USERPROFILE || "", ".stealthlab", "opencode"), "cli", "node_modules", "@opencode", "cli", "bin", platformBin()),
+  path.join(process.env.APPDATA || "", "npm", "node_modules", "@opencode", "cli", "bin", platformBin()),
 ].filter(Boolean)
 
 export const findEngineExe = () => exes().find((e) => { try { return fs.statSync(e).isFile() } catch { return false } }) || ""
@@ -88,7 +89,22 @@ export async function engineStart(directory: string): Promise<Engine> {
     state.child = spawn(exe, ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: directory, stdio: [null, "pipe", "pipe"],
       windowsHide: true,        // a console program started from a GUI app opens a visible black window on Windows without this
-      env: { ...process.env, ...(pooled ? { ...pooled.env, OPENCODE_CONFIG_CONTENT: pooled.content, OPEN_MODEL_API_KEY: pooled.key } : {}) },
+      env: {
+        ...process.env,
+        ...(pooled ? { ...pooled.env, OPENCODE_CONFIG_CONTENT: pooled.content, OPEN_MODEL_API_KEY: pooled.key } : {}),
+        // RAM: a desktop coding session does not need a file watcher, a language server, update checks or sharing. The
+        // watcher alone can keep one watch per indexed directory; LSPs and per-session MCPs multiply across sessions.
+        OPENCODE_DISABLE_FILEWATCHER: "1",
+        OPENCODE_FILEWATCHER_DISABLE: "1",
+        OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1",
+        OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
+        OPENCODE_DISABLE_AUTOUPDATE: "1",
+        OPENCODE_DISABLE_SHARE: "1",
+        OPENCODE_DISABLE_PRUNE: "1",
+        OPENCODE_DISABLE_TERMINAL_TITLE: "1",
+        OPENCODE_EXPERIMENTAL_INSTANCE_IDLE_TIMEOUT_MS: "3600000",
+        SHELLCHECK_EXTERNAL_SOURCES: "false",
+      },
     })
     const timer = setTimeout(() => { if (!engine) no(new Error("engine did not report a port in 30 s")) }, 30_000)
     state.child.stdout?.on("data", (c: Buffer) => read(c.toString(), false))

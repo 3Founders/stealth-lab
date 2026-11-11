@@ -161,6 +161,7 @@ Fallbacks, all in chat.css:
 | Icon buttons (account, refresh, undo, close, help, window buttons, tree refresh) | hover tint, press scale | background, border, colour and `transform: scale(.94)` on `--dg-micro` |
 | Help menu | drops in from the button | `dg-drop` on `--dg-micro`, `transform-origin: top right` |
 | Account card | pops in | `dg-pop` on `--dg-bouncy`, `transform-origin: bottom left` |
+| Import chats (top bar and sidebar) | the picker rises in over a blurred scrim; the source tabs use the Code / Rooms segmented recipe | scrim `dg-fade`, panel `dg-glass-in` on `--dg-smooth`; tabs, buttons and list rows on `--dg-micro`; the import block carries its own reduced-motion rule |
 | Sidebar drag handles | hairline appears on hover | `background-color` .15 s (the only non-spring timing left, and it is a 1 px line) |
 
 Two bugs found while writing this (both fixed 2026-11-08):

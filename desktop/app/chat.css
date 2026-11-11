@@ -1,6 +1,18 @@
 /* The Chat sandbox: a chat shell in the console's own palette (paper, ink, yellow, cobalt). Scoped by the dg- prefix. */
 .dg-page { /* spring timing functions and durations (--dg-micro, --dg-smooth, --dg-bouncy, each with -d) are set inline from lib/chat/spring.ts */
-  --dg-micro: cubic-bezier(.22, 1, .36, 1); --dg-micro-d: 160ms; --dg-smooth: cubic-bezier(.22, 1, .36, 1); --dg-smooth-d: 300ms; --dg-bouncy: cubic-bezier(.34, 1.4, .64, 1); --dg-bouncy-d: 360ms; interpolate-size: allow-keywords; /* the chat takes the window: the site nav floats above, the page has no heading of its own */ padding: 24px var(--pad); }
+  --dg-micro: cubic-bezier(.22, 1, .36, 1); --dg-micro-d: 160ms; --dg-smooth: cubic-bezier(.22, 1, .36, 1); --dg-smooth-d: 300ms; --dg-bouncy: cubic-bezier(.34, 1.4, .64, 1); --dg-bouncy-d: 360ms; interpolate-size: allow-keywords; /* the chat takes the window: the site nav floats above, the page has no heading of its own */ padding: 24px var(--pad);
+  /* Code surfaces are their own token set, not the page colour: a block must read as code at a glance and keep
+     4.5:1 contrast in both themes. Light follows the GitHub light pair; dark is a warm near-black to sit beside
+     the app's warm paper, with an off-white (not pure white) foreground. */
+  --dg-code-bg: #f1f3f5; --dg-code-ink: #1f2328; --dg-code-border: rgba(23, 23, 23, .14); --dg-code-inline: rgba(23, 23, 23, .07); }
+:root[data-theme="dark"] .dg-page {
+  --dg-code-bg: #12110d; --dg-code-ink: #e9e4d9; --dg-code-border: rgba(241, 238, 229, .16); --dg-code-inline: rgba(255, 255, 255, .10);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dg-page {
+    --dg-code-bg: #12110d; --dg-code-ink: #e9e4d9; --dg-code-border: rgba(241, 238, 229, .16); --dg-code-inline: rgba(255, 255, 255, .10);
+  }
+}
 .dg-shell { min-height: 0; display: grid; grid-template-columns: 260px 1fr; grid-template-rows: minmax(0, 1fr); border: 0; border-radius: 0; overflow: hidden; background: var(--surface); font-size: 15px; }
 .dg-shell { transition: box-shadow var(--dg-smooth-d) var(--dg-smooth); }
 .dg-shell[data-paused="true"] { box-shadow: inset 0 3px 0 #b3261e; }
@@ -70,9 +82,9 @@
 .dg-payload[open] summary::before { transform: rotate(90deg); }
 .dg-payload::details-content { block-size: 0; overflow: hidden; transition: block-size var(--dg-smooth-d) var(--dg-smooth), content-visibility var(--dg-smooth-d) allow-discrete; }
 .dg-payload[open]::details-content { block-size: auto; }
-.dg-payload code { color: var(--grey); font-size: 12px; }
+.dg-payload code { color: var(--dg-code-ink); font-size: 12px; }
 .dg-hop { margin-left: auto; font-size: 11.5px; color: var(--grey); }
-.dg-payload pre { margin: 0; padding: 8px 12px 10px; border-top: 1px solid var(--rule); overflow-x: auto; font-size: 12px; line-height: 1.45; }
+.dg-payload pre { margin: 0; padding: 8px 12px 10px; border-top: 1px solid var(--dg-code-border); background: var(--dg-code-bg); color: var(--dg-code-ink); overflow-x: auto; font-size: 12px; line-height: 1.45; }
 .dg-notice { animation: dg-pop var(--dg-bouncy-d) var(--dg-bouncy) both; text-align: center; font-size: 12.5px; color: #6b4e00; background: var(--soft); border-radius: 999px; padding: 4px 14px; align-self: center; }
 .dg-jump { animation: dg-pop var(--dg-bouncy-d) var(--dg-bouncy) both; transition: background-color var(--dg-micro-d) var(--dg-micro), transform var(--dg-micro-d) var(--dg-micro); position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); font: inherit; font-size: 13px; background: var(--ink); color: var(--paper); border: 0; border-radius: 999px; padding: 6px 14px; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.2); }
 
@@ -571,6 +583,22 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-img-ask:hover { background: var(--yellow); }
 @media (prefers-reduced-motion: reduce) { .dg-pic, .dg-img img { animation: none; transition: none; } }
 
+/* Files attached in the composer and shown under a sent message. A chip is a link: a project file opens in the app's
+   viewer, an outside file in the OS's default app. The drop overlay is a pointer-events-none hint over the transcript. */
+.dg-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.dg-composer .dg-atts { flex-basis: 100%; order: -1; margin: 0 0 4px; }
+.dg-att { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; border: 1px solid var(--rule); border-radius: 999px; background: var(--surface); overflow: hidden; }
+.dg-att-open { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 8px; font-size: 12px; color: var(--ink); cursor: pointer; }
+.dg-att-open:hover { background: var(--soft); }
+.dg-att-open .nm { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-att-open .sz { color: var(--grey); font-size: 10.5px; }
+.dg-att-x { all: unset; box-sizing: border-box; display: grid; place-items: center; width: 22px; height: 22px; color: var(--grey); cursor: pointer; font-size: 14px; }
+.dg-att-x:hover { color: #b3261e; background: rgba(0, 0, 0, .05); }
+.dg-composer .dg-attach-file { width: 26px; min-width: 26px; height: 26px; padding: 0; display: grid; place-items: center; background: transparent; color: var(--ink); box-shadow: none; }
+.dg-composer .dg-attach-file:not(:disabled):hover { background: var(--yellow); color: var(--on-yellow, #171717); }
+.dg-drop { position: absolute; inset: 8px; z-index: 25; display: grid; place-items: center; border: 2px dashed var(--cobalt); border-radius: 14px; background: color-mix(in srgb, var(--paper) 82%, transparent); color: var(--ink); font-size: 14px; pointer-events: none; -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
+.dg-queued-files { color: var(--grey); font-size: 11.5px; }
+
 /* An HTML artifact (a slide deck, a small site) posted as a fenced ```html block: a card; Render opens a sandboxed frame. */
 .dg-agent-models { border-top: 1px solid var(--rule, #e5e5e5); padding-top: 10px; margin-top: 4px; }
 .dg-agent-models summary { cursor: pointer; }
@@ -621,9 +649,9 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-md .dg-md-h { font-size: 1.05em; line-height: 1.3; margin: 2px 0 0; }
 .dg-md ul, .dg-md ol { margin: 0; padding-left: 20px; display: grid; gap: 3px; }
 .dg-md li { line-height: 1.42; font-weight: 400; }
-.dg-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: rgba(0,0,0,.06); border-radius: 4px; padding: 0 4px; }
-.dg-md pre.dg-md-pre { margin: 0; padding: 10px 12px; background: #f4f5f7; border: 1px solid var(--rule); border-radius: 8px; overflow-x: auto; }
-.dg-md pre.dg-md-pre code { background: none; padding: 0; font-size: .9em; }
+.dg-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: var(--dg-code-inline); color: var(--dg-code-ink); border-radius: 4px; padding: 0 4px; }
+.dg-md pre.dg-md-pre { margin: 0; padding: 10px 12px; background: var(--dg-code-bg); color: var(--dg-code-ink); border: 1px solid var(--dg-code-border); border-radius: 8px; overflow-x: auto; tab-size: 2; }
+.dg-md pre.dg-md-pre code { background: none; color: inherit; padding: 0; font-size: .9em; }
 .dg-md blockquote { margin: 0; padding-left: 10px; border-left: 3px solid var(--rule-strong); color: var(--text-2); }
 .dg-md a { color: var(--cobalt); text-decoration: underline; }
 .dg-md hr { border: 0; border-top: 1px solid var(--rule); margin: 2px 0; }

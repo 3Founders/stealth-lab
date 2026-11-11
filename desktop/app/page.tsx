@@ -16,9 +16,22 @@ import { springVars } from "@/lib/chat/spring"
 // and the rooms are a link to the website's chat.
 type Rect = { x: number; y: number; width: number; height: number }
 type RoomsWho = { id: string; email: string | null } | null
+type ImportSource = "claude" | "codex" | "opencode"
+
+/** A file staged in the composer. `rel` is set only for a file inside the open project; `path` for a local file. */
+type Attachment = { id: string; name: string; size: number; mime: string; path?: string; dataUrl?: string; rel?: string }
+type QueuedPrompt = { text: string; files: Attachment[] }
+
+/** The other agents whose chats can be brought into this project, in the order the popup offers them. */
+const IMPORT_SOURCES: { id: ImportSource; label: string; note: string }[] = [
+  { id: "claude", label: "Claude Code", note: "Chats started with the claude CLI in this folder." },
+  { id: "codex", label: "Codex", note: "Chats started with the codex CLI in this folder." },
+  { id: "opencode", label: "OpenCode", note: "Chats started with the opencode CLI in this folder." },
+]
 type KellDesktop = {
-  openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void
+  openSignIn: (url: string) => Promise<boolean>
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void; showMenu?: () => void
+  pickFiles?: () => Promise<string[]>; pathForFile?: (file: File) => string; openPath?: (path: string) => Promise<string>
   window?: { minimize: () => void; toggleMaximize: () => void; close: () => void }
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
@@ -143,12 +156,13 @@ const signInFrom = (raw: string): { server: string; link: string } | null => {
   if (!/(sign_in_required|consent_required)\\*"\s*:\s*true/.test(raw)) return null
   const link = raw.match(/link\\*"\s*:\s*\\*"(https:[^"\\\s]+)/)?.[1]
   if (!link) return null
-  const server = raw.match(/server\\*"\s*:\s*\\*"([^"\\]+)/)?.[1] || "this tool"
+  const server = raw.match(/server\\*"\s*:\s*\\*"([^"\\]+)/)?.[1] || ""
   return { server, link }
 }
 
 type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission"; text: string; at?: number; server?: string
-              state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string }
+              state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string
+              files?: Attachment[] }
 type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string; state?: "running" | "done" | "failed"; hint?: string }
 // One row per step (one model round trip). The engine splits it across events: session.step.started names the model (keyed
 // by assistantMessageID), session.step.ended carries tokens and cost for the same message. Neither event carries a rung.
@@ -182,39 +196,30 @@ export default function Home() {
   const [opening, setOpening] = useState(false)
   // Projects opened before, newest first (this device only), shown in the sidebar instead of the model list.
   const [recents, setRecents] = useState<string[]>([])
-  useEffect(() => { try { const r = JSON.parse(window.localStorage.getItem("kell.projects") || "[]"); if (Array.isArray(r)) setRecents(r.filter((x) => typeof x === "string").slice(0, 12)) } catch { /* none */ } }, [])
-  const remember = (dir: string) => setRecents((r) => {
-    const next = [dir, ...r.filter((x) => x.toLowerCase() !== dir.toLowerCase())].slice(0, 12)
-    try {
-      window.localStorage.setItem("kell.projects", JSON.stringify(next))
-      const hidden = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]")
-      if (Array.isArray(hidden) && hidden.includes(dir.toLowerCase()))       // opened again: it may come back from the engine's list too
-        window.localStorage.setItem("kell.projects.hidden", JSON.stringify(hidden.filter((x) => x !== dir.toLowerCase())))
-    } catch { /* storage blocked */ }
-    return next
-  })
-  // The folders the engine has worked in fill the list after the ones opened here (2026-11-07: the list started empty after a
-  // restart), except ones taken off it with ×.
-  const mergeProjects = (dirs: string[]) => setRecents((r) => {
-    let hidden: string[] = []
-    try { const h = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]"); if (Array.isArray(h)) hidden = h } catch { /* none */ }
-    const have = new Set(r.map((x) => x.toLowerCase()))
-    const extra = dirs.filter((d) => !have.has(d.toLowerCase()) && !hidden.includes(d.toLowerCase()))
-    if (!extra.length) return r
-    const next = [...r, ...extra].slice(0, 12)
-    try { window.localStorage.setItem("kell.projects", JSON.stringify(next)) } catch { /* storage blocked */ }
-    return next
-  })
-  // × also keeps a project off the list when the engine's own project list is merged in (mergeProjects).
-  const forget = (dir: string) => setRecents((r) => {
-    const next = r.filter((x) => x !== dir)
-    try {
-      window.localStorage.setItem("kell.projects", JSON.stringify(next))
-      const hidden = JSON.parse(window.localStorage.getItem("kell.projects.hidden") || "[]")
-      window.localStorage.setItem("kell.projects.hidden", JSON.stringify([...new Set([dir.toLowerCase(), ...(Array.isArray(hidden) ? hidden : [])])].slice(0, 100)))
-    } catch { /* storage blocked */ }
-    return next
-  })
+  // The recent-project list is the app's own store (app/api/projects, ~/.stealthlab/chats.db), not localStorage: the
+  // app's origin changes every start and the old boot script cleared the page's copy (2026-11-11).
+  useEffect(() => {
+    fetch("/api/projects").then((r) => r.json()).then((j) => {
+      if (Array.isArray(j.projects)) setRecents(j.projects.filter((x: unknown) => typeof x === "string").slice(0, 20))
+    }).catch(() => undefined)
+  }, [])
+  const remember = (dir: string) => {
+    setRecents((r) => [dir, ...r.filter((x) => x.toLowerCase() !== dir.toLowerCase())].slice(0, 20))
+    void fetch("/api/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: dir }) })
+      .then((r) => r.json()).then((j) => { if (Array.isArray(j.projects)) setRecents(j.projects) }).catch(() => undefined)
+  }
+  // The folders the engine has worked in fill the list after the ones opened here, except ones taken off it with ×.
+  const mergeProjects = (dirs: string[]) => {
+    if (!dirs.length) return
+    // The server knows which ones were taken off the list with ×, so the answer (not the engine's list) is what shows.
+    void fetch("/api/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paths: dirs }) })
+      .then((r) => r.json()).then((j) => { if (Array.isArray(j.projects)) setRecents(j.projects) }).catch(() => undefined)
+  }
+  const forget = (dir: string) => {
+    setRecents((r) => r.filter((x) => x !== dir))
+    void fetch(`/api/projects?path=${encodeURIComponent(dir)}`, { method: "DELETE" })
+      .then((r) => r.json()).then((j) => { if (Array.isArray(j.projects)) setRecents(j.projects) }).catch(() => undefined)
+  }
   // The two side columns can be dragged wider or narrower, and either one can be collapsed; the widths and which
   // sidebars are open are kept on this device (kell.layout / kell.sidebars).
   const [widths, setWidths] = useState({ left: 260, right: 340 })
@@ -293,18 +298,24 @@ export default function Home() {
     return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc) }
   }, [helpOpen])
   const [lines, setLines] = useState<Line[]>([])
+  const linesRef = useRef(lines)
+  linesRef.current = lines
   const [steps, setSteps] = useState<Step[]>([])
   const [ledger, setLedger] = useState<LedgerRow[]>([])
   const [sessionID, setSessionID] = useState<string | null>(null)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
   const [sessions, setSessions] = useState<{ id: string; title: string; updated: number }[]>([])
   const [sessOpen, setSessOpen] = useState(false)
-  // Import OpenCode CLI chats into this project: the sessions the sidebar deliberately hides.
+  // Import chats from other agents (Claude Code, Codex, OpenCode) into this project: the sessions the sidebar
+  // deliberately hides, plus the other agents' own stores on this machine.
   const [importOpen, setImportOpen] = useState(false)
-  const [importable, setImportable] = useState<{ id: string; title: string; updated: number }[]>([])
+  const [importSource, setImportSource] = useState<ImportSource>("claude")
+  const [importable, setImportable] = useState<{ id: string; title: string; updated: number; preview?: string }[]>([])
   const [importPick, setImportPick] = useState<Set<string>>(new Set())
   const [importBusy, setImportBusy] = useState(false)
+  const [importLoading, setImportLoading] = useState(false)
   const [importNote, setImportNote] = useState("")
+  const importSeq = useRef(0)                       // switching sources quickly: only the last read may fill the list
   const [spend, setSpend] = useState(0)
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
@@ -346,14 +357,23 @@ export default function Home() {
   // The coding lane, or the team rooms (the website's chat in a view over the placeholder below; electron/rooms.ts).
   const [pane, setPane] = useState<"code" | "rooms">("code")
   const [roomsWho, setRoomsWho] = useState<RoomsWho | undefined>(undefined)   // undefined: not read yet
+  // The site's own email/password sign-in page is showing in the rooms view (it is placed even before a session exists).
+  const [roomsForm, setRoomsForm] = useState(false)
+  // An explicit rooms sign-in should also provision the coding token, without asking for a second credential.
+  const pendingCoding = useRef(false)
+  const provisioning = useRef(false)
   const roomsRef = useRef<HTMLDivElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const logContentRef = useRef<HTMLDivElement>(null)
   // The same spring scroll as the website chat: follows new text only while you are at the bottom, rubber-bands at the edges.
-  const { follow, scrollToEnd } = useSpringScroll(logRef, logContentRef, sessionID ?? "")
+  const { follow, scrollToEnd, atEnd } = useSpringScroll(logRef, logContentRef, sessionID ?? "")
   const busyRef = useRef(false)                       // a late poll must not overwrite a turn that started after it
   // Messages sent while kell is working wait here and go out one at a time, in order, as each turn ends (× drops one).
-  const [queued, setQueued] = useState<string[]>([])
+  const [queued, setQueued] = useState<QueuedPrompt[]>([])
+  // Files staged in the composer. Paths stay paths: the API decides whether a path reference or an attachment is cheaper.
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [dragFiles, setDragFiles] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   // The command palette (Ctrl/Cmd-K): app actions and "go to file", with the last few choices first.
   const [palette, setPalette] = useState(false)
   const [paletteQ, setPaletteQ] = useState("")
@@ -375,6 +395,13 @@ export default function Home() {
   useEffect(() => { scrollToEnd({ instant: true }) }, [scrollToEnd, sessionID])
   useEffect(() => { histPos.current = null; histSaved.current = "" }, [sessionID])
   useEffect(() => { follow() }, [lines, steps, busy, follow])
+  // A file dropped outside the composer must not navigate the window to file://; the drop zone still handles its own.
+  useEffect(() => {
+    const stop = (e: DragEvent) => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault() }
+    document.addEventListener("dragover", stop)
+    document.addEventListener("drop", stop)
+    return () => { document.removeEventListener("dragover", stop); document.removeEventListener("drop", stop) }
+  }, [])
 
   const loadChanges = useCallback(async (sid: string | null) => {
     // With a session: its turn's snapshot pair (OpenCode's shadow git) gives both the diff and the undo target, so the panel
@@ -393,36 +420,69 @@ export default function Home() {
 
   const loadSessions = useCallback(async () => {
     try {
-      const j = await (await fetch("/api/sessions")).json()
+      // Backfill once from the engine, then read the app's own store (docs/localdb.md).
+      await fetch("/api/local/sync", { method: "POST" }).catch(() => undefined)
+      const j = await (await fetch("/api/local/sessions")).json()
       setSessions(Array.isArray(j.sessions) ? j.sessions : [])
       const p = await (await fetch("/api/sessions?projects=1")).json()
       if (Array.isArray(p.projects)) mergeProjects(p.projects.map((x: { dir: string }) => x.dir))
     } catch { /* the lists stay as they were */ }
   }, [])
 
-  // The OpenCode CLI chats in this folder, with a checkbox each. Importing marks them as kell sessions; they then
-  // appear in the sidebar like any other and can be continued here.
-  const openImport = async () => {
-    setImportOpen(true); setImportNote(""); setImportPick(new Set()); setImportable([])
+  // Another agent's chats in this folder, with a checkbox each. OpenCode's are sessions the sidebar deliberately hides;
+  // Claude Code's and Codex's are read from their own stores on this machine. Importing marks them as kell sessions, so
+  // they appear in the sidebar like any other and can be continued here.
+  const loadImportable = useCallback(async (source: ImportSource) => {
+    const seq = ++importSeq.current
+    setImportLoading(true); setImportNote(""); setImportPick(new Set()); setImportable([])
+    const label = IMPORT_SOURCES.find((s) => s.id === source)?.label || source
     try {
-      const j = await (await fetch("/api/sessions?opencode=1")).json()
+      const url = source === "opencode"
+        ? "/api/sessions?opencode=1"
+        : `/api/import?source=${source}&directory=${encodeURIComponent(directory)}`
+      const j = await (await fetch(url)).json()
+      if (seq !== importSeq.current) return
       if (j.error) setImportNote(String(j.error))
-      setImportable(Array.isArray(j.sessions) ? j.sessions : [])
-    } catch { setImportNote("Could not read the OpenCode chats.") }
+      setImportable(Array.isArray(j.chats) ? j.chats : Array.isArray(j.sessions) ? j.sessions : [])
+    } catch { if (seq === importSeq.current) setImportNote(`Could not read the ${label} chats.`) }
+    finally { if (seq === importSeq.current) setImportLoading(false) }
+  }, [directory])
+  const openImport = (source: ImportSource = "claude") => {
+    setImportOpen(true); setImportSource(source); void loadImportable(source)
+  }
+  const pickImportSource = (source: ImportSource) => {
+    if (importBusy || source === importSource) return
+    setImportSource(source); void loadImportable(source)
   }
   const doImport = async () => {
     const ids = [...importPick]
     if (!ids.length || importBusy) return
     setImportBusy(true); setImportNote("")
     try {
-      const r = await fetch("/api/sessions/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionIDs: ids }) })
+      const r = importSource === "opencode"
+        ? await fetch("/api/sessions/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionIDs: ids }) })
+        : await fetch("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source: importSource, directory, ids }) })
       const j = await r.json()
       if (!r.ok) { setImportNote(String(j.error || "Could not import these chats.")); return }
+      const failed: { id: string; error: string }[] = Array.isArray(j.failed) ? j.failed : []
+      if (failed.length) {
+        setImportNote(`${ids.length - failed.length} imported; ${failed.length} could not be: ${String(failed[0].error || "")}`)
+        setImportPick(new Set(failed.map((f) => String(f.id))))
+        await loadSessions()
+        return
+      }
       setImportOpen(false)
       await loadSessions()
     } catch { setImportNote("Could not import these chats.") }
     finally { setImportBusy(false) }
   }
+  // The import popup closes on Escape, like every other overlay in the app; never while it is writing.
+  useEffect(() => {
+    if (!importOpen) return
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && !importBusy) setImportOpen(false) }
+    document.addEventListener("keydown", esc)
+    return () => document.removeEventListener("keydown", esc)
+  }, [importOpen, importBusy])
 
   // A past session: its conversation back on screen, and the next message continues it.
   const openSession = async (id: string) => {
@@ -430,7 +490,9 @@ export default function Home() {
     setQueued([]); setSteps([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
     setSessionID(id); setLines([])
     try {
-      const j = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`)).json()
+      // The app's own history first (docs/localdb.md); the engine is only the one-time backfill source.
+      let j = await (await fetch(`/api/local/sessions?id=${encodeURIComponent(id)}`)).json()
+      if (j.error || !Array.isArray(j.lines)) j = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`)).json()
       setLines(Array.isArray(j.lines) ? j.lines : [])
     } catch { setLines([{ who: "assistant", text: "kell could not read this session.", at: Date.now() }]) }
     loadChanges(id)
@@ -488,23 +550,84 @@ export default function Home() {
   const lastUserBefore = (i: number) => { for (let k = i - 1; k >= 0; k--) if (lines[k].who === "user") return lines[k].text; return undefined }
   const copyText = async (t: string) => { try { await navigator.clipboard.writeText(t); return true } catch { return false } }
 
-  const send = async (again?: string) => {
+  // ---- Attachments -----------------------------------------------------------------------------------------------
+  // The cheapest path wins: a text file inside the project is sent as a path reference (the agent reads it with its
+  // own tools); only images, PDFs and files outside the project are attached as bytes. Nothing is copied through the page.
+  const fileToDataUrl = (f: File) => new Promise<string>((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result || ""))
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(f)
+  })
+  const addPaths = async (paths: string[]) => {
+    if (!paths.length || !directory) return
+    try {
+      const r = await fetch("/api/attach", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory, paths }) })
+      const j = await r.json()
+      if (!r.ok) { setConsoleNote(String(j.error || "Could not attach that file")); return }
+      const next: Attachment[] = (Array.isArray(j.files) ? j.files : []).map((f: any) => ({
+        id: crypto.randomUUID(), name: String(f.name || "attachment"), size: Number(f.size) || 0,
+        mime: String(f.mime || "application/octet-stream"), path: String(f.path),
+        ...(f.rel ? { rel: String(f.rel) } : {}),
+      }))
+      setAttachments((a) => [...a, ...next].slice(0, 10))
+    } catch { setConsoleNote("Could not attach that file") }
+  }
+  const addBrowserFiles = async (files: File[]) => {
+    const next: Attachment[] = []
+    for (const f of files.slice(0, 10)) {
+      const p = desktop()?.pathForFile?.(f) || (f as any).path
+      if (p) { await addPaths([p]); continue }
+      if (f.size > 25 * 1024 * 1024) { setConsoleNote(`${f.name} is larger than 25 MB`); continue }
+      try { next.push({ id: crypto.randomUUID(), name: f.name, size: f.size, mime: f.type || "application/octet-stream", dataUrl: await fileToDataUrl(f) }) }
+      catch { setConsoleNote(`Could not read ${f.name}`) }
+    }
+    if (next.length) setAttachments((a) => [...a, ...next].slice(0, 10))
+  }
+  const pickAttachments = async () => {
+    if (desktop()?.pickFiles) { await addPaths(await desktop()!.pickFiles!()); return }
+    fileInputRef.current?.click()
+  }
+  const removeAttachment = (id: string) => setAttachments((a) => a.filter((x) => x.id !== id))
+  const openAttachment = (a: Attachment) => {
+    if (a.rel) { void openFile(a.rel); return }                 // a project file: the app's own viewer
+    if (a.path && desktop()?.openPath) { void desktop()!.openPath!(a.path); return }   // outside the project: the OS app
+    if (a.dataUrl) { const link = document.createElement("a"); link.href = a.dataUrl; link.download = a.name; link.click() }
+  }
+  const attachmentChips = (files: Attachment[], removable = false) => files.length ? (
+    <div className="dg-atts" aria-label="Attached files">
+      {files.map((f) => (
+        <span key={f.id} className="dg-att" title={f.rel || f.path || f.name}>
+          <button type="button" className="dg-att-open" onClick={() => openAttachment(f)}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
+            <span className="nm">{f.name}</span>
+            {f.size > 0 && <span className="sz">{f.size < 1024 ? `${f.size} B` : f.size < 1024 * 1024 ? `${Math.round(f.size / 1024)} KB` : `${(f.size / 1024 / 1024).toFixed(1)} MB`}</span>}
+          </button>
+          {removable && <button type="button" className="dg-att-x" aria-label={`Remove ${f.name}`} title="Remove" onClick={() => removeAttachment(f.id)}>×</button>}
+        </span>
+      ))}
+    </div>
+  ) : null
+
+  const send = async (again?: string, filesOverride?: Attachment[]) => {
     const body = again ?? text
-    if (!body.trim() || !directory) return
+    const outgoing = again === undefined ? attachments : (filesOverride ?? [])
+    if ((!body.trim() && !outgoing.length) || !directory) return
     if (busy) {                                              // still working: keep it for when this turn ends
-      setQueued((q) => [...q, body])
-      if (again === undefined) { setText(""); histPos.current = null }
+      setQueued((q) => [...q, { text: body, files: outgoing }])
+      if (again === undefined) { setText(""); setAttachments([]); histPos.current = null }
       return
     }
     const sent = body
-    setLines((l) => [...l, { who: "user", text: sent, at: Date.now() }])
+    setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
-    if (again === undefined) { setText(""); histPos.current = null }   // sending it again keeps what you were typing
+    if (again === undefined) { setText(""); setAttachments([]); histPos.current = null }   // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
     setStopNote("")
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
-    setCards([]); setCardsNote(""); loadTools(sent)
-    const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID, directory, text: sent }) })
+    setCards([]); setCardsNote(""); loadTools(sent || outgoing.map((f) => f.name).join(" "))
+    const payload = { sessionID, directory, text: sent, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
+    const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })
     if (!r.ok || !r.body) {
       const err = await r.text()
       setLines((l) => [...l, { who: "assistant", text: `kell could not reach the engine: ${err.slice(0, 200)}`, at: Date.now() }])
@@ -627,32 +750,38 @@ export default function Home() {
     setConsoleNote(j.output || j.error || "no answer")
   }
 
-  // One sign-in for the whole app: `kell login` (which writes ~/.stealthlab/config.json for the coding lane) prints its
-  // link, and the app opens it in the rooms' own cookie store, so signing in on kell's consent page signs the rooms in too.
-  // The page then polls settings until the token is there.
-  const signIn = async (again = false) => {
-    setSigninNote("Your browser opens to sign in. Finish there, then come back here.")
-    const started = await fetch("/api/signin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ again }) })
-      .then((r) => r.json()).catch(() => ({ error: "could not start kell login" }))
-    if (started?.error) { setSigninNote(String(started.error)); return }
-    if (started?.already) { setSigninNote("Already signed in."); return }
+  // One sign-in for the whole app (owner, 2026-11-11). The rooms' website session comes first
+  // (electron/rooms.ts::signInRooms): the coding lane's model calls already use it, and it is what Supabase's consent page
+  // reads. Then `kell login`'s authorize link opens in a window on the same cookie store (openAccountSignIn), so the
+  // consent page knows the person and one "Allow" writes ~/.stealthlab/config.json. No second credential is asked for.
+  const provisionCoding = useCallback(async () => {
+    if (provisioning.current) return
     const d = desktop()
-    if (d) {
-      const ok = await d.openAccount(String(started.url))
-      if (!ok) { setSigninNote("Could not open your browser. Try again."); return }
-    } else {
-      window.open(String(started.url), "_blank", "noopener")
+    if (!d) return
+    provisioning.current = true
+    setSigninNote("One more step: allow kell to use this account for coding.")
+    const started = await fetch("/api/signin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ again: true }) })
+      .then((r) => r.json()).catch(() => ({ error: "could not start kell login" }))
+    if (started?.error) { provisioning.current = false; setSigninNote(String(started.error)); return }
+    if (started?.already) {
+      provisioning.current = false
+      const s = await fetch("/api/settings").then((r) => r.json()).catch(() => null)
+      if (s) setSettings(s)
+      setSigninNote("")
+      return
     }
+    const ok = await d.openAccount(String(started.url))
+    if (!ok) { provisioning.current = false; setSigninNote("The coding sign-in was not finished. Try again."); return }
     const until = Date.now() + 300_000
     const tick = async () => {
       const s = await fetch("/api/settings").then((r) => r.json()).catch(() => null)
       if (s) setSettings(s)
-      if (s?.signedIn && (!again || s.subject)) { setSigninNote(""); setPane("rooms"); return }
-      if (Date.now() > until) { setSigninNote("Still not signed in. Try again."); return }
+      if (s?.signedIn) { provisioning.current = false; setSigninNote(""); return }
+      if (Date.now() > until) { provisioning.current = false; setSigninNote("Still not signed in. Try again."); return }
       setTimeout(tick, 1500)
     }
     setTimeout(tick, 500)
-  }
+  }, [])
 
   // The rooms' website session is the app's own (electron/rooms.ts::signInRooms): its own PKCE sign-in in the default browser,
   // so only a one-time code crosses and no token is copied from anywhere.
@@ -660,9 +789,46 @@ export default function Home() {
     const d = desktop()
     if (!d) return
     setSigninNote("Finish signing in in your browser, then come back here.")
+    pendingCoding.current = true
     const ok = await d.rooms.signIn(provider)
-    setSigninNote(ok ? "" : "The rooms were not signed in. Try again.")
-    if (ok) setRoomsWho(undefined)
+    if (!ok) { pendingCoding.current = false; setSigninNote("The rooms were not signed in. Try again."); return }
+    setRoomsWho(undefined)
+    setRoomsForm(false)
+    const s = await fetch("/api/settings").then((r) => r.json()).catch(() => null)
+    if (s) setSettings(s)
+    if (s?.signedIn) { pendingCoding.current = false; setSigninNote("Signed in."); return }
+    // The view wrote the session before signInRooms resolved; read who it is, then provision the coding token. This runs
+    // even when the person signed in from the Code tab, where the Rooms poll is not running.
+    let w = await d.rooms.account().catch(() => undefined)
+    for (let i = 0; i < 8 && !w; i++) {
+      await new Promise((r) => setTimeout(r, 500))
+      w = await d.rooms.account().catch(() => undefined)
+    }
+    if (w) { setRoomsWho(w); pendingCoding.current = false; await provisionCoding() }
+  }
+
+  // The email/password path signs in inside the rooms view. Once its session appears there, provision the coding token too,
+  // so whichever way the person signed in, they are signed in for both lanes.
+  useEffect(() => {
+    if (!pendingCoding.current || !roomsWho || !settings) return
+    pendingCoding.current = false
+    if (!settings.signedIn) void provisionCoding()
+  }, [roomsWho, settings, provisionCoding])
+
+  // The account button and the palette: the rooms first (with a provider choice), then the coding token.
+  const signIn = async () => {
+    const d = desktop()
+    if (!d) return
+    if (roomsWho) {
+      const s = await fetch("/api/settings").then((r) => r.json()).catch(() => null)
+      if (s) setSettings(s)
+      if (s?.signedIn) { setSigninNote("Already signed in."); return }
+      await provisionCoding()
+      return
+    }
+    pendingCoding.current = true
+    setPane("rooms")
+    setSigninNote("Choose how to sign in: one sign-in covers the rooms and the coding agent.")
   }
 
   // Sign out of everything: the coding lane's token and the rooms' session (and its cached copies) together, so the app
@@ -672,33 +838,63 @@ export default function Home() {
     const r = await fetch("/api/signin", { method: "DELETE" }).then((x) => x.json()).catch(() => ({ error: "could not run kell logout" }))
     await desktop()?.signOutRooms()
     setRoomsWho(null)
+    setRoomsForm(false)
+    pendingCoding.current = false
+    provisioning.current = false
     const s = await fetch("/api/settings").then((x) => x.json()).catch(() => null)
     if (s) setSettings(s)
     setSigninNote(r?.error ? String(r.error) : "Signed out.")
   }
 
-  // One click: the sign-in opens in the app's own window (electron/signin.ts) and closes itself when the tool provider
-  // sends the person back to kell; then the request that needed the tool runs again by itself.
+  // One click: the sign-in opens in the person's own browser (electron/signin.ts). No callback comes back, so the page asks
+  // kell whether it really finished (lib/tools.ts toolSignInStatus, /api/tools/signin): while the card says "open" and
+  // whenever the app regains focus. A closed browser is not a sign-in; only kell saying the token or grant is there is.
   const openToolSignIn = (link: string) => {
     setLines((l) => l.map((x) => (x.who === "signin" && x.text === link ? { ...x, state: "open" } : x)))
     const d = desktop()
-    if (d) d.openSignIn(link)
-    else window.open(link, "_blank", "noopener")
+    if (!d) { window.open(link, "_blank", "noopener"); return }
+    void d.openSignIn(link).then((ok) => {
+      if (!ok) setLines((l) => l.map((x) => (x.who === "signin" && x.text === link ? { ...x, state: "failed" } : x)))
+    })
   }
   const [resume, setResume] = useState<string | null>(null)
+  // The tools whose card is open right now; a change restarts the watch. Only a server kell named can be checked.
+  const openSignIns = lines.filter((l) => l.who === "signin" && l.state === "open" && l.server)
+  const openKey = openSignIns.map((l) => l.server).join("|")
   useEffect(() => {
-    const d = desktop()
-    if (!d) return
-    return d.onSignInDone(({ ok }) => {
-      let server = ""
-      setLines((l) => l.map((x) => {
-        if (x.who !== "signin" || x.state !== "open") return x
-        server = x.server || ""
-        return { ...x, state: ok ? "done" : "failed" }
-      }))
-      if (ok) setResume(`I signed in to ${server || "the tool"}. Carry on with what I asked.`)
-    })
-  }, [])
+    const servers = openKey ? openKey.split("|") : []
+    if (!servers.length) return
+    let live = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const until = Date.now() + 15 * 60_000           // a sign-in link lasts 10 minutes; stop asking after 15
+    const check = async () => {
+      // The link says which kind it was (a consent page or an OAuth flow); the server uses it to read the grant or a usable token.
+      const open = linesRef.current.filter((l) => l.who === "signin" && l.state === "open" && l.server)
+      const done: string[] = []
+      for (const l of open) {
+        const server = l.server
+        if (!server) continue
+        const ok = await fetch("/api/tools/signin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ server, link: l.text }) })
+          .then((r) => r.json()).then((j) => j?.signedIn === true).catch(() => false)
+        if (!live) return
+        if (ok) done.push(server)
+      }
+      if (done.length) {
+        setLines((l) => l.map((x) => (x.who === "signin" && x.server && done.includes(x.server) && x.state === "open" ? { ...x, state: "done" } : x)))
+        setResume(`I signed in to ${done.join(", ")}. Carry on with what I asked.`)
+      }
+      if (!live) return
+      if (Date.now() > until) {
+        setLines((l) => l.map((x) => (x.who === "signin" && x.state === "open" ? { ...x, state: "failed" } : x)))
+        return
+      }
+      timer = setTimeout(check, 4000)
+    }
+    const onFocus = () => { void check() }
+    window.addEventListener("focus", onFocus)
+    void check()
+    return () => { live = false; if (timer) clearTimeout(timer); window.removeEventListener("focus", onFocus) }
+  }, [openKey])
   useEffect(() => {
     if (resume && !busy) { const t = resume; setResume(null); void send(t) }
     // send is recreated each render; the resume only needs to fire once the turn has ended
@@ -709,7 +905,7 @@ export default function Home() {
     if (busy || resume || !queued.length) return
     const [next, ...rest] = queued
     setQueued(rest)
-    void send(next)
+    void send(next.text, next.files)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queued, busy, resume])
 
@@ -753,7 +949,10 @@ export default function Home() {
   }, [palette, directory, paletteQ])
 
   // The rooms view follows the placeholder's rectangle while the Rooms pane shows, and hides on the coding pane.
-  const roomsOn = pane === "rooms" && !!settings?.signedIn
+  // The rooms view is placed when the WEBSITE session exists (or while its own email/password page is showing), not when the
+  // coding token does. The website sign-in is the first step of the one sign-in; gating this on the coding token is what
+  // forced people to sign in twice (owner, 2026-11-11).
+  const roomsOn = pane === "rooms" && !!desktop() && (!!roomsWho || roomsForm)
   useEffect(() => {
     const d = desktop()
     const el = roomsRef.current
@@ -767,21 +966,26 @@ export default function Home() {
     return () => { ro.disconnect(); window.removeEventListener("resize", place); d.rooms.show(null) }
   }, [roomsOn])
 
-  // Same account in both lanes: read who the rooms are signed in as while they show (someone can sign in as another person
-  // inside them), and keep them in the app's light/dark choice.
+  // Same account in both lanes: read who the rooms are signed in as while the Rooms tab is open (someone can sign in as
+  // another person inside them). The view is created hidden for this when it does not exist yet, so the tab can decide
+  // between the provider buttons and the rooms before it shows anything.
   useEffect(() => {
     const d = desktop()
-    if (!d || !roomsOn) return
+    if (!d || pane !== "rooms") return
     let live = true
-    const read = () => d.rooms.account().then((w) => { if (live) setRoomsWho(w) }).catch(() => undefined)
+    const read = () => d.rooms.account().then((w) => {
+      if (!live) return
+      setRoomsWho(w)
+      if (w) setRoomsForm(false)
+    }).catch(() => undefined)
     void read()
-    const t = setInterval(read, 4000)
+    const t = setInterval(read, 2000)
     const theme = () => d.rooms.theme(document.documentElement.dataset.theme === "dark" ? "dark" : "light")
     theme()
     const mo = new MutationObserver(theme)
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] })
     return () => { live = false; clearInterval(t); mo.disconnect() }
-  }, [roomsOn])
+  }, [pane])
   const otherAccount = !!(settings?.signedIn && settings.subject && roomsWho && roomsWho.id !== settings.subject)
   const dw = desktop()
 
@@ -806,7 +1010,7 @@ export default function Home() {
   const editQueued = (i: number) => {
     const t = queued[i]
     setQueued((q) => q.filter((_, k) => k !== i))
-    setText(t); histPos.current = null; textRef.current?.focus()
+    setText(t.text); setAttachments(t.files); histPos.current = null; textRef.current?.focus()
   }
 
   // The command palette (Ctrl/Cmd-K): app actions, then files whose path matches (app/api/files?q=). Recent choices come
@@ -878,10 +1082,12 @@ export default function Home() {
     window.addEventListener("pointerup", up, { once: true })
   }
 
+  const importSourceInfo = IMPORT_SOURCES.find((s) => s.id === importSource) || IMPORT_SOURCES[0]
+
   return (
     <section className="dg-page dk-page" style={springVars() as React.CSSProperties}>
       <ThemeWatcher />
-      <nav className="dk-switch" aria-label="Code or rooms">
+      <nav className="dk-switch" aria-label="Code, rooms and import">
         {desktop() && (
           <button type="button" className="dk-icon dk-icon-sm dk-menubtn" aria-label="File, Edit and View menu" title="File, Edit, View and Help" onClick={() => desktop()?.showMenu?.()}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -891,6 +1097,12 @@ export default function Home() {
           <button type="button" role="tab" aria-selected={pane === "code"} onClick={() => setPane("code")}>Code</button>
           <button type="button" role="tab" aria-selected={pane === "rooms"} onClick={() => setPane("rooms")}>Rooms</button>
         </div>
+        {/* Bring another agent's chats into this project: the same popup as the sidebar's import link, with a source each. */}
+        <button type="button" className="dk-import-open" onClick={() => openImport()} aria-haspopup="dialog"
+          title="Import chats from Claude Code, Codex or OpenCode">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>
+          <span className="lbl">Import chats</span>
+        </button>
         <span className="dk-who">{settings?.signedIn ? <>Signed in as <b>{settings.account || "your kell account"}</b></> : "Not signed in"}</span>
         <span className="dk-help" ref={helpRef}>
           <button type="button" className="dk-icon dk-icon-sm" aria-label="Help" title="Help" aria-expanded={helpOpen} onClick={() => setHelpOpen((o) => !o)}>
@@ -924,26 +1136,29 @@ export default function Home() {
           <div className="dk-row" style={{ margin: 0 }}><button type="button" className="btn-ink" onClick={() => void signOut()}>Sign out of both</button></div>
         </div>
       )}
-      {roomsOn && roomsWho === null && (
-        <div className="dk-err dk-mismatch" role="status">
-          <p style={{ margin: 0 }}>You are signed in as <b>{settings?.account || "your kell account"}</b> for coding. The rooms need their own sign-in, with the same account. Choose how you signed in; it opens in your browser and nothing is copied.</p>
-          <div className="dk-row" style={{ margin: 0 }}>
-            <button type="button" className="btn-ink" onClick={() => void connectRooms("google")}>Continue with Google</button>
-            <button type="button" className="btn-ink" onClick={() => void connectRooms("github")}>Continue with GitHub</button>
-            <button type="button" className="btn-ink" onClick={() => desktop()?.rooms.emailSignIn()}>Use email and password</button>
-          </div>
-          {signinNote && <p className="dk-note">{signinNote}</p>}
-        </div>
-      )}
       {pane === "rooms" && (
         <div className="dk-rooms" ref={roomsRef} aria-label="Team rooms">
-          {(!settings?.signedIn || !desktop()) && (
+          {!desktop() && (
+            <div className="dk-rooms-in">
+              <b>Your team&rsquo;s rooms</b>
+              <p>People, the agent of your choice and your pal&rsquo;s agents, in one room.</p>
+              <p className="dk-note"><a href="https://www.kell.org.in/chat" target="_blank" rel="noopener">Open the rooms on the website</a></p>
+            </div>
+          )}
+          {desktop() && roomsWho === undefined && !roomsForm && (
+            <div className="dk-rooms-in"><b>Your team&rsquo;s rooms</b><p>Checking your sign-in…</p></div>
+          )}
+          {desktop() && roomsWho === null && !roomsForm && (
             <div className="dk-rooms-in">
               <b>Your team&rsquo;s rooms</b>
               <p>People, the agent of your choice and your pal&rsquo;s agents, in one room. Sign in once: the same account runs your coding agent here and your rooms.</p>
-              {!settings?.signedIn && <div className="dk-row" style={{ justifyContent: "center" }}><button type="button" className="btn-ink" onClick={() => void signIn()}>Sign in</button></div>}
+              <div className="dk-row" style={{ justifyContent: "center" }}>
+                <button type="button" className="btn-ink" onClick={() => void connectRooms("google")}>Continue with Google</button>
+                <button type="button" className="btn-ink" onClick={() => void connectRooms("github")}>Continue with GitHub</button>
+                <button type="button" className="btn-line"
+                  onClick={() => { pendingCoding.current = true; setRoomsForm(true); desktop()?.rooms.emailSignIn() }}>Use email and password</button>
+              </div>
               {signinNote && <p className="dk-note">{signinNote}</p>}
-              {!desktop() && <p className="dk-note"><a href="https://www.kell.org.in/chat" target="_blank" rel="noopener">Open the rooms on the website</a></p>}
             </div>
           )}
         </div>
@@ -993,7 +1208,8 @@ export default function Home() {
               <div className="dk-row" style={{ margin: 0 }}>
                 <button type="button" className="btn-ink" onClick={async () => { await connectRooms("google"); void openProject() }}>Continue with Google</button>
                 <button type="button" className="btn-ink" onClick={async () => { await connectRooms("github"); void openProject() }}>Continue with GitHub</button>
-                <button type="button" className="btn-line" onClick={() => { setPane("rooms"); desktop()?.rooms.emailSignIn() }}>Email and password</button>
+                <button type="button" className="btn-line"
+                  onClick={() => { pendingCoding.current = true; setRoomsForm(true); setPane("rooms"); desktop()?.rooms.emailSignIn() }}>Email and password</button>
               </div>
               {signinNote && <p className="dk-note">{signinNote}</p>}
             </div>
@@ -1023,7 +1239,7 @@ export default function Home() {
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
                           </button>
                         )}
-                        <button type="button" className="dk-sess-import" onClick={() => void openImport()}>Import OpenCode chats</button>
+                        <button type="button" className="dk-sess-import" onClick={() => openImport("opencode")}>Import OpenCode chats</button>
                       </div>
                     )}
                   </li>
@@ -1111,7 +1327,12 @@ export default function Home() {
             )}
           </header>
 
-          <div className="dg-scroll">
+          <div className="dg-scroll"
+            onDragEnter={(e) => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); setDragFiles(true) } }}
+            onDragOver={(e) => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy" } }}
+            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragFiles(false) }}
+            onDrop={(e) => { e.preventDefault(); setDragFiles(false); void addBrowserFiles(Array.from(e.dataTransfer.files)) }}>
+            {dragFiles && <div className="dg-drop" aria-hidden="true"><span>Drop files to attach</span></div>}
             <div className="dg-viewport" ref={logRef} aria-label="Messages">
               <div className="dg-content" ref={logContentRef}>
                 {lines.length === 0 && !busy && (
@@ -1184,13 +1405,13 @@ export default function Home() {
                         <div className="dg-col">
                           <div className="dg-meta"><b>Kell</b><span className="dg-badge">sign-in</span><time>{time(l.at)}</time></div>
                           <div className="dk-signin" data-state={l.state}>
-                            <p>{l.state === "done" ? <>Signed in to <b>{l.server}</b>. Carrying on.</>
-                              : l.state === "failed" ? <>The sign-in to <b>{l.server}</b> was closed before it finished.</>
-                                : l.state === "open" ? <>Finish signing in to <b>{l.server}</b> in the window that opened.</>
-                                  : <><b>{l.server}</b> needs you to sign in once. Choose your account in the window that opens; kell keeps the sign-in for next time.</>}</p>
+                            <p>{l.state === "done" ? <>Signed in to <b>{l.server || "the tool"}</b>. Carrying on.</>
+                              : l.state === "failed" ? <>The sign-in to <b>{l.server || "the tool"}</b> did not finish. Try again.</>
+                                : l.state === "open" ? <>Finish signing in to <b>{l.server || "the tool"}</b> in your browser, then come back here.</>
+                                  : <><b>{l.server || "This tool"}</b> needs you to sign in once. It opens in your browser; kell keeps the sign-in for next time.</>}</p>
                             {l.state !== "done" && (
                               <div className="dk-row">
-                                <button type="button" className="btn-ink" onClick={() => openToolSignIn(l.text)}>{l.state === "failed" ? "Try again" : `Sign in to ${l.server}`}</button>
+                                <button type="button" className="btn-ink" onClick={() => openToolSignIn(l.text)}>{l.state === "failed" ? "Try again" : `Sign in to ${l.server || "the tool"}`}</button>
                               </div>
                             )}
                           </div>
@@ -1209,6 +1430,7 @@ export default function Home() {
                         <div className="dg-meta"><b>{mine ? "You" : "Kell"}</b>{!mine && <span className="dg-badge">agent</span>}<time>{time(l.at)}</time></div>
                         <div className="dg-msg">
                           <div className="dg-body">{mine ? <p>{l.text}</p> : live ? <SmoothText text={l.text} markdown /> : <Markdown text={l.text} />}</div>
+                          {mine && l.files?.length ? attachmentChips(l.files) : null}
                           {l.text && !live ? (
                             <MessageActions copyText={l.text} retryText={mine ? l.text : lastUserBefore(i)}
                               onCopy={copyText} onRetry={(t) => void send(t)} retryLabel={mine ? "Send this again" : "Ask again"} />
@@ -1229,6 +1451,12 @@ export default function Home() {
                 )}
               </div>
             </div>
+            {!atEnd && (
+              <button type="button" className="dg-jump" onClick={() => scrollToEnd()} aria-label="Scroll to the latest message" title="Scroll to the latest message">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7" /></svg>
+                Latest
+              </button>
+            )}
           </div>
 
           {busy && steps.length > 0 && (
@@ -1245,7 +1473,8 @@ export default function Home() {
           )}
           {queued.map((q, i) => (
             <div key={i} className="dg-queued small" role="status">
-              <span className="dim">Waiting for kell:</span> <span className="dg-queued-text">{q}</span>
+              <span className="dim">Waiting for kell:</span> <span className="dg-queued-text">{q.text}</span>
+              {q.files.length > 0 && <span className="dg-queued-files"> +{q.files.length} file{q.files.length === 1 ? "" : "s"}</span>}
               <span className="dk-queue-tools">
                 {i > 0 && <button type="button" aria-label="Send this sooner" title="Send this sooner" onClick={() => moveQueued(i, -1)}>↑</button>}
                 {i < queued.length - 1 && <button type="button" aria-label="Send this later" title="Send this later" onClick={() => moveQueued(i, 1)}>↓</button>}
@@ -1259,10 +1488,14 @@ export default function Home() {
           </div>
           <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
             <span className="dg-composer-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the message box" onPointerDown={startComposerResize} />
+            {attachments.length > 0 && attachmentChips(attachments, true)}
+            <input ref={fileInputRef} type="file" multiple hidden
+              onChange={(e) => { const fs = Array.from(e.currentTarget.files || []); e.currentTarget.value = ""; void addBrowserFiles(fs) }} />
             <textarea ref={textRef} rows={1} data-big={big || undefined} value={text}
               onChange={(e) => { setText(e.target.value); histPos.current = null }}
               placeholder={directory ? "Tell kell what to do…" : "Open a project first"}
               disabled={!!engine && !engine.up}
+              onPaste={(e) => { const fs = Array.from(e.clipboardData.files || []); if (fs.length) { e.preventDefault(); void addBrowserFiles(fs) } }}
               onKeyDown={(e) => {
                 // IME-safe: Enter during a CJK composition selects a candidate, it must not send the prompt.
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -1287,6 +1520,10 @@ export default function Home() {
               }} />
             <div className="dg-composer-meta">
               {text.trim() && <span className="dg-count" aria-live="off">{words} {words === 1 ? "word" : "words"}</span>}
+              <button type="button" className="dg-attach dg-attach-file" onClick={() => void pickAttachments()}
+                disabled={!directory || (engine != null && !engine.up)} aria-label="Attach files" title="Attach files">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m21.4 11.6-8.9 8.9a5 5 0 0 1-7.1-7.1l8.9-8.9a3.5 3.5 0 1 1 5 5l-8.9 8.9a2 2 0 1 1-2.8-2.8l8.2-8.2" /></svg>
+              </button>
               <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); if (textRef.current) textRef.current.style.height = ""; textRef.current?.focus() }} aria-pressed={big}
                 aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
@@ -1299,7 +1536,7 @@ export default function Home() {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
               </button>
             )}
-            <button type="submit" className="dk-send" disabled={!text.trim() || !directory || (engine != null && !engine.up)}
+            <button type="submit" className="dk-send" disabled={(!text.trim() && !attachments.length) || !directory || (engine != null && !engine.up)}
               aria-label={busy ? "Queue this message" : "Send"} title={busy ? "kell is working: this waits and goes out when it finishes" : "Send"}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
             </button>
@@ -1440,36 +1677,50 @@ export default function Home() {
 
       {importOpen && (
         <div className="dk-import-backdrop" onMouseDown={() => { if (!importBusy) setImportOpen(false) }}>
-          <div className="dk-import" role="dialog" aria-modal="true" aria-label="Import OpenCode chats" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="dk-import" role="dialog" aria-modal="true" aria-labelledby="dk-import-title" onMouseDown={(e) => e.stopPropagation()}>
             <div className="dk-import-head">
-              <h2>Import OpenCode chats</h2>
+              <h2 id="dk-import-title">Import chats</h2>
               <button type="button" className="dk-icon dk-icon-sm" aria-label="Close" title="Close" disabled={importBusy} onClick={() => setImportOpen(false)}>×</button>
             </div>
-            <p className="dk-note">Chats started with the <code>opencode</code> CLI in this folder. Imported chats appear in kell&apos;s session list and can be continued here.</p>
+            <div className="dk-import-src" role="tablist" aria-label="Where to import from">
+              {IMPORT_SOURCES.map((s) => (
+                <button key={s.id} type="button" role="tab" aria-selected={importSource === s.id} disabled={importBusy}
+                  onClick={() => pickImportSource(s.id)}>{s.label}</button>
+              ))}
+            </div>
+            <p className="dk-note">{importSourceInfo.note} Imported chats appear in kell&apos;s session list and can be continued here.</p>
+            {directory && <p className="dk-note dk-import-dir mono" title={directory}>{directory}</p>}
+            {!engine?.up && <p className="dk-note">Open a project first: imported chats go into the open project.</p>}
             {importNote && <p className="dk-err" role="status">{importNote}</p>}
-            {importable.length > 0 && (
-              <div className="dk-import-tools">
-                <button type="button" className="btn-line dg-mini" onClick={() => setImportPick(new Set(importable.map((s) => s.id)))}>Select all</button>
-                <button type="button" className="btn-line dg-mini" onClick={() => setImportPick(new Set())}>Clear</button>
-              </div>
-            )}
-            {importable.length === 0 ? <p className="dk-note">No OpenCode chats in this folder.</p> : (
-              <ul className="dk-import-list">
-                {importable.map((s) => (
-                  <li key={s.id}>
-                    <label>
-                      <input type="checkbox" checked={importPick.has(s.id)}
-                        onChange={(e) => setImportPick((p) => { const n = new Set(p); if (e.target.checked) n.add(s.id); else n.delete(s.id); return n })} />
-                      <span>{s.title || "Untitled chat"}</span>
-                      <time>{s.updated ? when(s.updated) : ""}</time>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            )}
+            {importLoading ? <p className="dk-note dk-import-empty">Reading {importSourceInfo.label} chats…</p>
+              : importable.length === 0 ? <p className="dk-note dk-import-empty">No {importSourceInfo.label} chats in this folder.</p>
+              : (
+                <>
+                  <div className="dk-import-tools">
+                    <button type="button" className="btn-line dg-mini" disabled={importBusy} onClick={() => setImportPick(new Set(importable.map((s) => s.id)))}>Select all</button>
+                    <button type="button" className="btn-line dg-mini" disabled={importBusy} onClick={() => setImportPick(new Set())}>Clear</button>
+                    <span className="dk-note">{importable.length} {importable.length === 1 ? "chat" : "chats"}</span>
+                  </div>
+                  <ul className="dk-import-list">
+                    {importable.map((s) => (
+                      <li key={s.id}>
+                        <label>
+                          <input type="checkbox" checked={importPick.has(s.id)}
+                            onChange={(e) => setImportPick((p) => { const n = new Set(p); if (e.target.checked) n.add(s.id); else n.delete(s.id); return n })} />
+                          <span className="t">
+                            <span className="nm">{s.title || "Untitled chat"}</span>
+                            {s.preview && <small>{s.preview}</small>}
+                          </span>
+                          <time>{s.updated ? when(s.updated) : ""}</time>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             <div className="dk-import-actions">
               <button type="button" className="btn-line" disabled={importBusy} onClick={() => setImportOpen(false)}>Cancel</button>
-              <button type="button" className="btn-ink" disabled={importBusy || importPick.size === 0} onClick={() => void doImport()}>
+              <button type="button" className="btn-ink" disabled={importBusy || importLoading || !engine?.up || importPick.size === 0} onClick={() => void doImport()}>
                 {importBusy ? "Importing…" : importPick.size ? `Import ${importPick.size}` : "Import"}
               </button>
             </div>

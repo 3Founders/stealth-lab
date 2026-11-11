@@ -351,6 +351,18 @@ async def has_grant(pool: Any, owner: str, server: str) -> bool:
             "SELECT 1 FROM tool_grants WHERE owner_id = $1 AND server = $2 AND revoked_at IS NULL", owner, server))
 
 
+async def signin_finished(pool: Any, owner: str, server: str, link: str = "") -> bool:
+    """Whether the sign-in (or consent) the person was sent to has really finished. A consent link is answered by its grant;
+    an OAuth link by a usable token, refreshed when it is due -- a token row that is stale and cannot be refreshed does not
+    count, which is why the sign-in was asked for again. Never starts a new flow, never calls the tool server."""
+    if "/tools/consent/" in link:
+        return await has_grant(pool, owner, server)
+    try:
+        return bool(await oauth.token(pool, owner, server))
+    except Exception:  # noqa: BLE001 -- a failed refresh means the sign-in is not finished
+        return False
+
+
 async def consent_link(pool: Any, owner: str, server: str, base_url: str) -> str:
     token = secrets.token_urlsafe(24)
     async with pool.acquire() as conn:

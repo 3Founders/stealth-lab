@@ -62,10 +62,13 @@ if (!app.requestSingleInstanceLock()) {
     app.on("will-quit", () => tokens.close())
     const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", KELL_PARENT_PID: String(process.pid), KELL_ROOT: ROOT, PORT: String(port), HOSTNAME: "127.0.0.1",
                   KELL_WEB_TOKEN_URL: `http://127.0.0.1:${tokenPort}/web-token`, KELL_WEB_TOKEN_SECRET: secret }
+    // RAM: in the installed app the Next child's stdout/stderr are only diagnostics. Piping them makes Electron keep a
+    // growing read buffer; KELL_DEBUG=1 restores the pipes for a support session.
+    const quiet = app.isPackaged && process.env.KELL_DEBUG !== "1"
     next = fs.existsSync(standalone)
-      ? spawn(process.execPath, [standalone], { cwd: ROOT, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] })
+      ? spawn(process.execPath, [standalone], { cwd: ROOT, windowsHide: true, env, stdio: quiet ? ["ignore", "ignore", "ignore"] : ["ignore", "pipe", "pipe"] })
       : spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)],
-              { cwd: ROOT, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] })
+              { cwd: ROOT, windowsHide: true, env, stdio: quiet ? ["ignore", "ignore", "ignore"] : ["ignore", "pipe", "pipe"] })
     next.on("exit", (code) => { say(`next exited (${code})`); next = undefined; win?.close() })
     next.stdout?.on("data", (c) => process.stdout.write(c))
     next.stderr?.on("data", (c) => process.stderr.write(c))
@@ -91,27 +94,27 @@ if (!app.requestSingleInstanceLock()) {
                                                                devTools: !app.isPackaged } })   // no inspector in the installed app
     // The page's storage emptied before it reads anything, before it can restore anything: a fresh project and no sessions.
     win.webContents.on("dom-ready", () => { void win?.webContents.executeJavaScript(BOOT).catch(() => undefined) })
-    // Links: a tool's sign-in opens in the app's own sign-in window (electron/signin.ts); any other link goes to the
-    // system browser. The app window itself never navigates away from the UI.
-    const signInDone = (r: { url: string; ok: boolean }) => win?.webContents.send("kell:signin-done", r)
+    // Links: a tool's sign-in opens in the person's default browser (electron/signin.ts); any other link goes there too.
+    // The app window itself never navigates away from the UI. The page asks kell whether a sign-in finished (no callback
+    // comes back to this process).
     win.webContents.setWindowOpenHandler(({ url }) => {
-      if (isSignInLink(url)) openSignIn(win, url, signInDone)
+      if (isSignInLink(url)) void openSignIn(url)
       else if (/^https?:/.test(url)) void shell.openExternal(url)
       return { action: "deny" }
     })
     win.webContents.on("will-navigate", (e, url) => {
       if (url.startsWith(base)) return
       e.preventDefault()
-      if (isSignInLink(url)) openSignIn(win, url, signInDone)
+      if (isSignInLink(url)) void openSignIn(url)
       else if (/^https?:/.test(url)) void shell.openExternal(url)
     })
-    ipcMain.on("kell:open-signin", (_e, url: string) => openSignIn(win, String(url), signInDone))
+    ipcMain.handle("kell:open-signin", (_e, url: string) => openSignIn(String(url)))
     ipcMain.on("kell:menu-popup", () => popupAppMenu(win))    // The team rooms (electron/rooms.ts) and the one account sign-in shared by the coding lane and the rooms.
     ipcMain.on("kell:rooms-bounds", (_e, rect) => { if (win) setRoomsBounds(win, rect && typeof rect === "object" ? rect : null) })
     ipcMain.on("kell:rooms-reload", () => reloadRooms())
     ipcMain.on("kell:rooms-email", () => openRoomsEmailSignIn())
     ipcMain.on("kell:rooms-theme", (_e, t) => setRoomsTheme(t === "dark" ? "dark" : "light"))
-    ipcMain.handle("kell:rooms-account", () => roomsAccount())
+    ipcMain.handle("kell:rooms-account", () => roomsAccount(win))
     ipcMain.handle("kell:rooms-signout", () => signOutRooms())
     ipcMain.handle("kell:rooms-signin", (_e, provider) => (win ? signInRooms(win, provider === "github" ? "github" : "google") : false))
     ipcMain.handle("kell:account-open", (_e, url: string) => openAccountSignIn(win, String(url)))
@@ -128,6 +131,15 @@ if (!app.requestSingleInstanceLock()) {
                     : await dialog.showOpenDialog({ title: "Choose a project folder", properties: ["openDirectory", "createDirectory"] })
       return r.canceled ? null : r.filePaths[0] ?? null
     })
+    // Files picked in the composer. The renderer gets absolute paths and sends only paths to the local API: the bytes
+    // are read by the engine (or by the project's own tools), never copied through the page.
+    ipcMain.handle("kell:pick-files", async () => {
+      const r = win ? await dialog.showOpenDialog(win, { title: "Attach files", properties: ["openFile", "multiSelections"] })
+                    : await dialog.showOpenDialog({ title: "Attach files", properties: ["openFile", "multiSelections"] })
+      return r.canceled ? [] : r.filePaths
+    })
+    // Open a file outside the project in the person's default app. Project files are opened in the app's own viewer.
+    ipcMain.handle("kell:open-path", async (_e, p: string) => (p ? shell.openPath(String(p)) : "no path"))
     // Register the show handler BEFORE the load: "ready-to-show" can fire while loadURL is still resolving, and a handler
     // added after the await then never runs, leaving the window hidden forever (the installed app looked like it did
     // nothing, 2026-11-03). show() is idempotent, so it is also called once the load has finished.
