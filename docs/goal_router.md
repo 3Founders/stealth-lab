@@ -1014,7 +1014,7 @@ Update only your own row. `—` means unclaimed.
 | P1-01 | Security and intent Goals | opencode | done | this commit |
 | P1-02 | Recommend-goal script (start here) | opencode | done | this commit |
 | P1-03 | Mapping v2 and manual pins | opencode | done | this commit |
-| P1-04 | Gate core (`server.py`) | — | open | |
+| P1-04 | Gate core (`server.py`) | anuj-claude | in progress | #33 |
 | P1-05 | Policy store | opencode | done | this commit |
 | P1-06 | Intent certificates | opencode | done | this commit |
 | P1-07 | Signed audit | opencode | done | this commit |
