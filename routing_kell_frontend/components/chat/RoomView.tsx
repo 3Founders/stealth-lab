@@ -5,6 +5,8 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
+import { ApprovalCard } from "@/components/tools/ApprovalCard";
+import { approvalsApi, type ToolApproval } from "@/lib/tools/approvals";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
 import { quoteText, withReplyContext } from "@/lib/chat/reply";
 import { tempLabel, toTurns } from "@/lib/chat/temporary";
@@ -255,6 +257,28 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // SERVER room id (the label here is the title, e.g. #general), which arrives with the first sync.
   const roomsAgent = useMemo(() => roomsApi({ token: getAccessToken }), []);
   const filesClient = useMemo(() => filesApi({ token: getAccessToken }), []);
+  const approvalApi = useMemo(() => approvalsApi({ token: getAccessToken }), []);
+  const [approvals, setApprovals] = useState<ToolApproval[]>([]);
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const refreshApprovals = useCallback(async () => {
+    try { setApprovals(await approvalApi.list()); } catch { /* not signed in, or the server is restarting */ }
+  }, [approvalApi]);
+  const decideApproval = useCallback(async (id: string, action: "approve" | "deny") => {
+    setApprovalBusy(true);
+    try {
+      if (action === "approve") await approvalApi.approve(id); else await approvalApi.deny(id);
+      await refreshApprovals();
+    } catch (err) {
+      note(err instanceof Error ? err.message : "That approval did not reach kell. Try again.");
+    } finally { setApprovalBusy(false); }
+  }, [approvalApi, refreshApprovals, note]);
+  useEffect(() => {
+    void refreshApprovals();
+    const t = window.setInterval(() => void refreshApprovals(), 15_000);
+    const onFocus = () => void refreshApprovals();
+    window.addEventListener("focus", onFocus);
+    return () => { window.clearInterval(t); window.removeEventListener("focus", onFocus); };
+  }, [refreshApprovals]);
   const [sendingFiles, setSendingFiles] = useState("");
   const askingKell = useRef<Set<string>>(new Set());
   const queues = useRef<Queues>({});
@@ -1611,6 +1635,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <span className="dim">Replying to {replyingTo.sender.handle === HUMAN.handle ? "yourself" : nameOf(replyingTo.sender.handle)}:</span> <span className="dg-queued-text">{quoteText(replyingTo.payload.text)}</span>
             <button type="button" aria-label="Cancel the reply" title="Cancel the reply" onClick={() => setReplyingTo(null)}>×</button>
           </div>)}
+        {approvals.length > 0 && (
+          <div className="dg-approvals" style={{ padding: "0 16px 8px" }}>
+            {approvals.slice(0, 3).map((a) => (
+              <ApprovalCard key={a.id} approval={a} busy={approvalBusy}
+                onApprove={(id) => void decideApproval(id, "approve")}
+                onDeny={(id) => void decideApproval(id, "deny")} />
+            ))}
+          </div>
+        )}
         <Composer onEscape={replyingTo ? () => setReplyingTo(null) : editing ? () => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); } : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />

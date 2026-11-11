@@ -42,6 +42,43 @@ async function post(name: string, body: unknown, ms: number): Promise<any> {
   return r.json()
 }
 
+async function get(name: string, ms: number): Promise<any> {
+  await freshSignIn()
+  const { url, token } = config()
+  const target = url && sibling(url, name)
+  if (!target) throw Object.assign(new Error("kell is not signed in on this machine (no server in ~/.stealthlab/config.json)"), { status: 401 })
+  const r = await fetch(target, {
+    method: "GET", signal: AbortSignal.timeout(ms),
+    headers: { accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  })
+  if (!r.ok) throw Object.assign(new Error(`kell's ${name.slice(1)} answered ${r.status}`), { status: 502 })
+  return r.json()
+}
+
+/** One pending tool call, scoped to an exact call shape (db/196, docs/goal_router.md P1-11). */
+export type ToolApproval = {
+  id: string; owner_id: string; task_id: string | null; goal_id: string | null
+  server: string; tool: string; args_hash: string; risk: string; data_class: string
+  cert_id: string | null; status: "pending" | "approved" | "denied" | "expired" | "used"
+  requested_at: string; decided_at: string | null; expires_at: string; used_at: string | null
+  decided_by: string | null; note: string | null
+}
+
+export async function toolApprovals(): Promise<ToolApproval[]> {
+  const reply = await get("/tools/approvals", 10_000)
+  return Array.isArray(reply?.approvals) ? reply.approvals : []
+}
+
+export async function approveTool(id: string): Promise<boolean> {
+  const reply = await post(`/tools/approvals/${encodeURIComponent(id)}/approve`, {}, 10_000)
+  return Boolean(reply?.approval)
+}
+
+export async function denyTool(id: string): Promise<boolean> {
+  const reply = await post(`/tools/approvals/${encodeURIComponent(id)}/deny`, {}, 10_000)
+  return Boolean(reply?.approval)
+}
+
 /** The tool cards for a request, the way the hook decides: kell's triage first, and the router only when it names a tool goal, asked
  *  with that goal. Ranked on the raw message alone, a local coding task got string utilities and production errors put Sentry fifth
  *  (2026-11-08, the e2e test). -> { goal, tools }; throws with a reason. */

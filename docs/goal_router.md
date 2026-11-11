@@ -106,6 +106,8 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Hinoki | not integrated | needs an MCP wrapper and a card |
 | Policy / intent / signed audit | **built (P1-05/06/07)** | `tool_policies`, `intent_certificates`, `tool_call_audit` |
 | Gate core | **built (P1-04)** | `gate.py`, `TOOL_GATE=off / shadow / enforce`, wired in `_gateway_call`/`use_tool` |
+| Approvals | **built (P1-11)** | `tool_approvals` (db/196), `approvals.py`, `scripts/approve_tool.py`, `/v1/tools/approvals` |
+| Tool arm | **built (P2-03)** | `scripts/compare/tool_runner.py` |
 | Tool-vs-procedure comparison | not built | this plan, Phase 2 |
 | Trust from reuse, trials, pricing | not built | this plan, Phase 3 |
 
@@ -635,32 +637,56 @@ A refused call must still produce a row with `status='error'` and an error class
 
 ### P1-11 — Approval surface (can ship after P1-04)
 
-**Builds:** the human checkpoint for R2/R3. A card shows tool, server, target, argument summary, data class, risk,
-cost, reversibility and expiry. Approve/deny is signed, scoped to the exact call shape, single-use or capped, and
-short-lived.
+**Builds:** the human checkpoint for R2/R3. When policy returns `approve`, the gate creates a pending approval scoped to
+the exact call shape (owner, task, server, tool, argument hash, certificate). A card shows the tool, server, target,
+argument hash, data class, risk, cost (not priced yet), reversibility and expiry. Approve/deny is short-lived and
+single-use: the next identical call consumes it once. A changed argument or certificate is a different approval.
+
+The backend routes are `/v1/tools/approvals` (website session, room_agent_routes) and `/tools/approvals` (desktop MCP
+token, server.py). The website card polls the first; the desktop route proxies the second.
 
 **Files you own**
 
+- `backend/app/tool_routing/approvals.py`
+- `backend/db/196_tool_approvals.sql`
+- `backend/scripts/approve_tool.py`
+- `backend/app/tool_routing/gate.py` (the approval branch; P1-04's gate is merged)
+- `backend/app/mcp_server/server.py` (the `/tools/approvals` routes; P1-04 is merged)
+- `backend/app/mcp_server/room_agent_routes.py` (the `/v1/tools/approvals` routes)
 - `routing_kell_frontend/components/tools/ApprovalCard.tsx`
-- `routing_kell_frontend/app/api/tools/approve/route.ts`
+- `routing_kell_frontend/components/chat/RoomView.tsx` (the pending-approval banner)
 - `routing_kell_frontend/lib/tools/approvals.ts`
 - `desktop/app/api/tools/approve/route.ts`
 - `desktop/components/chat/ApprovalCard.tsx`
+- `desktop/lib/tools.ts`
 
 **Manual check**
 
 ```powershell
-python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call
-# expect: approve + approval id + link
+$out = python scripts/issue_cert.py --task demo-5 --owner dev-local --risk R3 `
+    --server hinoki --tool scan_repository --constraint-file ..\.scratch\hinoki_constraint.json
+$cert = (($out | Select-String '^cert:').Line -split '\s+')[1]
 
-# approve once in the UI, then:
-python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call --approval <id>
-# expect: one call allowed, the second refused
+$env:TOOL_GATE = "enforce"
+$g = python scripts/check_gate.py --server hinoki --tool scan_repository --owner dev-local `
+    --cert $cert --task demo-5 --arg repo_url=https://github.com/org/repo
+# expect: effect approve, approval:ap_...
+$ap = (($g | Select-String '^approval:').Line -split ':', 2)[1].Trim()
+
+python scripts/approve_tool.py --list --owner dev-local      # the pending row
+python scripts/approve_tool.py --approve $ap --owner dev-local
+
+python scripts/check_gate.py --server hinoki --tool scan_repository --owner dev-local `
+    --cert $cert --task demo-5 --arg repo_url=https://github.com/org/repo
+# expect: allow, approval:ap_...   (the approval is spent)
+
+python scripts/check_gate.py ...   # a third identical call -> approve with a NEW id
 ```
 
-Changing an argument or letting the approval expire must refuse.
+Changing an argument, using a different certificate, or letting the approval expire returns `approve` again. The web
+card shows the same row from `/v1/tools/approvals`; the desktop card uses `/tools/approvals`.
 
-**Do not touch:** `server.py` (the gate consumes `tool_approvals`), `gate.py`.
+**Do not touch:** `policy.py`, `certificates.py`, `audit.py`.
 
 **Phase 1 exit criteria**
 
@@ -1058,7 +1084,7 @@ Update only your own row. `—` means unclaimed.
 | P1-08 | Exa adapter | anuj-claude | done | #27 |
 | P1-09 | Hinoki adapter | — | blocked: no Hinoki API or credential | #26 |
 | P1-10 | Run recording | anuj-claude | done | #25 |
-| P1-11 | Approval surface | — | open | |
+| P1-11 | Approval surface | opencode | done | this commit |
 | P2-01 | Corpus and contracts | anuj-claude | done | #30 |
 | P2-02 | Procedure runner | anuj-claude | done | #32 |
 | P2-03 | Tool runner | anuj-claude | done | #35 |
@@ -1090,7 +1116,7 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 | `backend/app/tool_providers/exa/**` | P1-08 |
 | `backend/app/tool_providers/hinoki/**`, `backend/scripts/register_hinoki_card.py` | P1-09 |
 | `backend/app/tool_routing/runs.py`, `backend/db/191_*`, `backend/scripts/show_runs.py` | P1-10 (then P2-06) |
-| `routing_kell_frontend/components/tools/**`, `routing_kell_frontend/app/api/tools/approve/**`, `desktop/**/tools/approve/**` | P1-11 |
+| `backend/app/tool_routing/approvals.py`, `backend/db/196_*`, `backend/scripts/approve_tool.py`, `backend/app/tool_routing/gate.py`, `backend/app/mcp_server/server.py`, `backend/app/mcp_server/room_agent_routes.py`, `routing_kell_frontend/components/tools/**`, `routing_kell_frontend/components/chat/RoomView.tsx`, `routing_kell_frontend/lib/tools/approvals.ts`, `desktop/app/api/tools/approve/**`, `desktop/components/chat/ApprovalCard.tsx`, `desktop/lib/tools.ts` | P1-11 |
 | `backend/scripts/compare/contracts.py`, `corpus.py`, `tasks/**` | P2-01 |
 | `backend/scripts/compare/procedure_runner.py` | P2-02 |
 | `backend/scripts/compare/tool_runner.py` | P2-03 |
@@ -1200,7 +1226,7 @@ milestones:
     manual_check: "start/finish/read round-trip; errors recorded"
   - id: P1-11
     title: approval surface
-    owns: [routing_kell_frontend/components/tools, routing_kell_frontend/app/api/tools/approve]
+    owns: [backend/app/tool_routing/approvals.py, backend/db/196_tool_approvals.sql, backend/scripts/approve_tool.py, backend/app/tool_routing/gate.py, backend/app/mcp_server/server.py, backend/app/mcp_server/room_agent_routes.py, routing_kell_frontend/components/tools, routing_kell_frontend/components/chat/RoomView.tsx, routing_kell_frontend/lib/tools/approvals.ts, desktop/app/api/tools/approve, desktop/components/chat/ApprovalCard.tsx, desktop/lib/tools.ts]
     depends: [P1-04]
     manual_check: "approve once allows one matching call; hash change invalidates"
   - id: P2-01

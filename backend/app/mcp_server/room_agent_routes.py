@@ -227,6 +227,72 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         signed = await _gateway.signin_finished(pool, subject, name, link)
         return _json(request, {"server": name, "signed_in": bool(signed)})
 
+    @server.custom_route("/v1/tools/approvals", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def tool_approvals_list(request: Request) -> Response:
+        """The caller's pending tool approvals (P1-11). The web card polls this."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        from app.tool_routing import approvals as _approvals
+
+        return _json(request, {"approvals": await _approvals.list_pending(pool, subject)})
+
+    @server.custom_route("/v1/tools/approvals/{approval_id}", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def tool_approval_get(request: Request) -> Response:
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        from app.tool_routing import approvals as _approvals
+
+        row = await _approvals.get(pool, request.path_params["approval_id"], subject)
+        if row is None:
+            return _error(request, "not found", 404)
+        return _json(request, {"approval": row})
+
+    @server.custom_route("/v1/tools/approvals/{approval_id}/approve", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def tool_approval_approve(request: Request) -> Response:
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        from app.tool_routing import approvals as _approvals
+
+        approval_id = request.path_params["approval_id"]
+        if not await _approvals.approve(pool, approval_id, subject, decided_by=subject):
+            return _error(request, "not pending, expired, or not yours", 409)
+        return _json(request, {"approval": await _approvals.get(pool, approval_id, subject)})
+
+    @server.custom_route("/v1/tools/approvals/{approval_id}/deny", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def tool_approval_deny(request: Request) -> Response:
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        from app.tool_routing import approvals as _approvals
+
+        approval_id = request.path_params["approval_id"]
+        if not await _approvals.deny(pool, approval_id, subject, decided_by=subject):
+            return _error(request, "not pending, expired, or not yours", 409)
+        return _json(request, {"approval": await _approvals.get(pool, approval_id, subject)})
+
     @server.custom_route("/v1/rooms/{room_id}/agent/stop", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_stop(request: Request) -> Response:
         """The Stop button: cancels the caller's own running answers in this room (one agent when {"agent": "name"} is sent). Nothing of theirs is posted

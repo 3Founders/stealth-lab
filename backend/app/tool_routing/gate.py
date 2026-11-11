@@ -21,7 +21,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from app.tool_routing import audit, certificates, policy
+from app.tool_routing import approvals, audit, certificates, policy
 
 log = logging.getLogger(__name__)
 
@@ -94,11 +94,22 @@ async def authorize(pool: Any, call: ToolCall) -> Decision:
     if not cert_id and effect in ("allow", "approve") and not policy.risk_at_most(risk, "R1"):
         effect, reason = "deny", "cert:required"
 
+    approval_id: Optional[str] = None
+    if effect == "approve" and mode == "enforce":
+        found = await approvals.find(pool, call)
+        if found is not None and await approvals.consume(pool, str(found["id"])):
+            effect, reason, approval_id = "allow", f"approval:{found['id']}", str(found["id"])
+        else:
+            approval_id = await approvals.request(
+                pool, call, risk=risk,
+                data_class=str(_field(call, "data_class", "PUBLIC_SOURCE") or "PUBLIC_SOURCE"))
+
     decision = Decision(
         effect=effect,
         reason=reason,
         risk=risk,
         cert_id=cert_id,
+        approval_id=approval_id,
         constraints=constraints,
     )
     return await _finish(pool, call, decision, mode)

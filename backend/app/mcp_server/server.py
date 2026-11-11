@@ -2223,6 +2223,69 @@ async def tools_signin_status_route(request: Request) -> JSONResponse:
     return JSONResponse({"server": name, "signed_in": bool(signed)})
 
 
+async def _approval_caller(request: Request) -> tuple[str | None, Any, JSONResponse | None]:
+    """The caller and pool for the approval routes, or the refusal to return."""
+    denied = await _route_gate(request)
+    if denied is not None:
+        return None, None, denied
+    token = await _route_token(request)
+    subject = token.subject if token is not None and token.subject else None
+    pool = _LIFESPAN_STATE.get("pool")
+    if not subject or pool is None:
+        return None, None, JSONResponse({"error": "sign in to kell first"}, status_code=401)
+    return subject, pool, None
+
+
+@server.custom_route("/tools/approvals", methods=["GET"], include_in_schema=False)
+async def tools_approvals_list_route(request: Request) -> JSONResponse:
+    """The pending tool approvals for this caller (P1-11). The card polls this."""
+    subject, pool, refusal = await _approval_caller(request)
+    if refusal is not None:
+        return refusal
+    from app.tool_routing import approvals as _approvals
+
+    return JSONResponse({"approvals": await _approvals.list_pending(pool, subject)})
+
+
+@server.custom_route("/tools/approvals/{approval_id}", methods=["GET"], include_in_schema=False)
+async def tools_approval_get_route(request: Request) -> JSONResponse:
+    subject, pool, refusal = await _approval_caller(request)
+    if refusal is not None:
+        return refusal
+    from app.tool_routing import approvals as _approvals
+
+    row = await _approvals.get(pool, request.path_params["approval_id"], subject)
+    if row is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"approval": row})
+
+
+@server.custom_route("/tools/approvals/{approval_id}/approve", methods=["POST"], include_in_schema=False)
+async def tools_approval_approve_route(request: Request) -> JSONResponse:
+    subject, pool, refusal = await _approval_caller(request)
+    if refusal is not None:
+        return refusal
+    from app.tool_routing import approvals as _approvals
+
+    approval_id = request.path_params["approval_id"]
+    if not await _approvals.approve(pool, approval_id, subject, decided_by=subject):
+        return JSONResponse({"error": "not pending, expired, or not yours"}, status_code=409)
+    return JSONResponse({"approval": await _approvals.get(pool, approval_id, subject)})
+
+
+@server.custom_route("/tools/approvals/{approval_id}/deny", methods=["POST"], include_in_schema=False)
+async def tools_approval_deny_route(request: Request) -> JSONResponse:
+    subject, pool, refusal = await _approval_caller(request)
+    if refusal is not None:
+        return refusal
+    from app.tool_routing import approvals as _approvals
+
+    approval_id = request.path_params["approval_id"]
+    if not await _approvals.deny(pool, approval_id, subject, decided_by=subject):
+        return JSONResponse({"error": "not pending, expired, or not yours"}, status_code=409)
+    return JSONResponse({"approval": await _approvals.get(pool, approval_id, subject)})
+
+
 app = _oauth.wrap_app(
     server.streamable_http_app(transport_security=_transport_security(), stateless_http=MCP_STATELESS),
     settings, server_origin=_ISSUER_URL, public_origin=_PUBLIC_ORIGIN)
