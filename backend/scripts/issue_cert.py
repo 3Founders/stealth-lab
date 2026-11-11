@@ -23,7 +23,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dotenv import dotenv_values
+from dotenv import dotenv_values, load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def dsn_from_env() -> str:

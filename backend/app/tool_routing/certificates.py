@@ -112,6 +112,24 @@ async def issue(
     return cert_id
 
 
+async def load(pool: Any, cert_id: str) -> dict[str, Any] | None:
+    """The certificate's signed claims and caps, or None. The gate re-evaluates policy with this."""
+    row = await pool.fetchrow(
+        "SELECT claims, risk_ceiling, max_calls FROM intent_certificates WHERE id = $1",
+        str(cert_id or ""))
+    if row is None:
+        return None
+    claims = _claims(row["claims"])
+    return {
+        "claims": claims,
+        "risk_ceiling": row["risk_ceiling"],
+        "max_calls": row["max_calls"],
+        "task_id": claims.get("task_id"),
+        "goal_id": claims.get("goal_id"),
+        "owner_id": claims.get("owner_id"),
+    }
+
+
 async def verify(pool: Any, cert_id: str, call: Any) -> tuple[bool, str]:
     """`(True, "")` when the call is inside the certificate; `(False, reason)` otherwise."""
     row = await pool.fetchrow(

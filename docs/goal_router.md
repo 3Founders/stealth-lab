@@ -105,6 +105,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Exa | card + mapping exist | `registry:ai.exa/exa`, goal `web`, score 3.31 |
 | Hinoki | not integrated | needs an MCP wrapper and a card |
 | Policy / intent / signed audit | **built (P1-05/06/07)** | `tool_policies`, `intent_certificates`, `tool_call_audit` |
+| Gate core | **built (P1-04)** | `gate.py`, `TOOL_GATE=off / shadow / enforce`, wired in `_gateway_call`/`use_tool` |
 | Tool-vs-procedure comparison | not built | this plan, Phase 2 |
 | Trust from reuse, trials, pricing | not built | this plan, Phase 3 |
 
@@ -177,6 +178,7 @@ class Decision:
     cert_id: str | None
     approval_id: str | None
     constraints: dict      # max_calls, egress, timeout_s, sandbox
+    shadow: bool = False   # true when `shadow` mode let a non-allow through
 
 async def authorize(pool, call: ToolCall) -> Decision: ...
 ```
@@ -303,8 +305,8 @@ Behavior:
 - `--json`: the full `GoalHit` list, machine-readable.
 - `--call`: resolve, pick the top tool for the top Goal (or `--tool`), build a `ToolCall`, run `authorize()`, and only on
   `allow` call the gateway. Print `REFUSED: <reason>` on deny/approve; never fall through to a direct call.
-- `--call` requires `app/tool_routing/gate.py` (P1-04) and `audit.py` (P1-07). Until they land it must print
-  `gate not installed` and exit non-zero. Never add a direct-call fallback, not even for local development.
+- `--call` requires `app/tool_routing/gate.py` (P1-04) and `audit.py` (P1-07). If either is missing it prints
+  `gate not installed` and exits non-zero. Never add a direct-call fallback, not even for local development.
 - `--owner` defaults to `KELL_DEV_OWNER` or `dev-local`; this is a development identity, not a production one.
 - Keep `backend/scripts/search_goals.py` as a thin compatibility wrapper that calls the new script with the old flags.
 
@@ -354,33 +356,68 @@ The report prints cards, mappings, goals with zero cards and cards with zero goa
 
 ### P1-04 — Gate core (the only milestone that edits `server.py`)
 
-**Builds:** `authorize()` as the single choke point. Wire it at the top of `_gateway_call` and before direct tool
-dispatch in `use_tool`. Modes: `off`, `shadow` (log the decision, never block), `enforce` (block). Fail closed: any
-exception in policy, certificate or audit denies R2+ and denies everything if `TOOL_GATE_STRICT=on`.
+**Builds:** `authorize()` as the single choke point for third-party calls. It runs after kell's own builtins and
+`revoke`, and before the server/card, grant, rate-limit and network paths. Modes: `off` (today's behavior), `shadow`
+(compute the real decision, write the receipt, never block -- the default), `enforce` (the computed decision is the
+answer). An unknown mode is `enforce`.
 
-Order inside the gate: authenticate → certificate → allowlist/capability → risk tier → policy → schema → value-flow →
-egress → rate limit → sandbox profile → audit. Reuse the existing checks in `_gateway_call` (data class, secrets, grants,
-rate limits) rather than duplicating them.
+Fail closed: a policy/certificate error or a missing audit row denies R2+; R0/R1 may run without a certificate, R2+
+requires one. A policy `approve` is not an execution: the caller must obtain an approval and call again. `use_tool`
+accepts `cert` and `task_id` and passes them through; the resolver's `--call` uses the same `authorize()`.
+
+The existing gateway checks (data class, secrets, grants, rate limits) still run after the gate; the gate does not
+duplicate them. Direct kell tools (`V1_TOOLS`, `DISCOVERY_TOOLS`) are not third-party and stay outside this gate.
 
 **Files you own**
 
 - `backend/app/tool_routing/gate.py`
+- `backend/scripts/check_gate.py`
 - `backend/app/mcp_server/server.py` (serialized; hand back after merge)
 
 **Manual check**
 
+`check_gate.py` exercises `authorize()` without a card or network, so it works even while Hinoki is blocked:
+
 ```powershell
+$env:TOOL_GATE = "off"
+python scripts/check_gate.py --server hinoki --tool scan_repository --owner dev-local
+# expect: allow, gate:off
+
 $env:TOOL_GATE = "enforce"
-python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call
-# expect: REFUSED: policy:r3_requires_approval
+python scripts/check_gate.py --server ai.exa/exa --tool web_search_exa --owner dev-local
+# expect: allow (policy:allow:1, R0)
+python scripts/check_gate.py --server hinoki --tool scan_repository --owner dev-local
+# expect: deny, cert:required (R3)
+python scripts/check_gate.py --server unknown --tool x --owner dev-local
+# expect: deny, policy:no_rule
 
 $env:TOOL_GATE = "shadow"
-python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call
-# expect: the call runs, and the audit row records the decision that would have been enforced
+python scripts/check_gate.py --server hinoki --tool scan_repository --owner dev-local
+# expect: allow, shadow:deny:cert:required, and the audit row records deny
 ```
 
-Also check one R0 call (Exa) still passes in `enforce` mode. Then set `TOOL_GATE=off` and confirm behavior returns to
-today's.
+With a certificate, an R3 call reaches `approve` (exit 3), not `allow`:
+
+```powershell
+$out = python scripts/issue_cert.py --task demo-3 --owner dev-local --risk R3 `
+    --server hinoki --tool scan_repository --constraint-file ..\.scratch\hinoki_constraint.json
+$cert = (($out | Select-String '^cert:').Line -split '\s+')[1]
+$env:TOOL_GATE = "enforce"
+python scripts/check_gate.py --server hinoki --tool scan_repository --owner dev-local `
+    --cert $cert --task demo-3 --arg repo_url=https://github.com/org/repo
+# expect: approve, policy:approve:2
+```
+
+End to end, the resolver's `--call` now passes R0 and reaches the network:
+
+```powershell
+$env:TOOL_GATE = "enforce"
+python scripts/recommend_goal.py "search the web for the latest Postgres release" --call `
+    --arg "query=latest Postgres release"
+# expect: decision: allow (policy:allow:1), then Exa results
+```
+
+Then `python scripts/verify_audit_chain.py --since 1h` must print `ok`.
 
 **Do not touch:** `policy.py`, `certificates.py`, `audit.py` (import them; their owners build them).
 
@@ -1014,7 +1051,7 @@ Update only your own row. `—` means unclaimed.
 | P1-01 | Security and intent Goals | opencode | done | this commit |
 | P1-02 | Recommend-goal script (start here) | opencode | done | this commit |
 | P1-03 | Mapping v2 and manual pins | opencode | done | this commit |
-| P1-04 | Gate core (`server.py`) | anuj-claude | in progress | #33 |
+| P1-04 | Gate core (`server.py`) | opencode | done | this commit |
 | P1-05 | Policy store | opencode | done | this commit |
 | P1-06 | Intent certificates | opencode | done | this commit |
 | P1-07 | Signed audit | opencode | done | this commit |
@@ -1046,7 +1083,7 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 | `backend/app/tool_routing/goals.py`, `backend/db/187_*` | P1-01 |
 | `backend/scripts/recommend_goal.py`, `backend/scripts/search_goals.py`, `backend/app/tool_routing/goal_router.py` | P1-02 (router then P3-03) |
 | `backend/scripts/map_tool_cards_to_goals.py`, `backend/scripts/report_goal_coverage.py` | P1-03 |
-| `backend/app/tool_routing/gate.py`, `backend/app/mcp_server/server.py` | P1-04 (then P3-06) |
+| `backend/app/tool_routing/gate.py`, `backend/scripts/check_gate.py`, `backend/app/mcp_server/server.py` | P1-04 (then P3-06) |
 | `backend/app/tool_routing/policy.py`, `backend/db/188_*`, `backend/scripts/check_policy.py` | P1-05 |
 | `backend/app/tool_routing/certificates.py`, `backend/db/189_*`, `backend/scripts/issue_cert.py`, `backend/scripts/check_cert.py` | P1-06 |
 | `backend/app/tool_routing/audit.py`, `backend/app/tool_routing/signing.py`, `backend/db/190_*`, `backend/scripts/verify_audit_chain.py`, `backend/scripts/audit_demo.py` | P1-07 |
@@ -1128,7 +1165,7 @@ milestones:
     manual_check: "pins survive --replace; coverage report prints orphans"
   - id: P1-04
     title: gate core
-    owns: [backend/app/tool_routing/gate.py, backend/app/mcp_server/server.py]
+    owns: [backend/app/tool_routing/gate.py, backend/scripts/check_gate.py, backend/app/mcp_server/server.py]
     depends: [P1-05, P1-06, P1-07]
     manual_check: "enforce denies R3 without cert; shadow logs only; fail closed"
   - id: P1-05

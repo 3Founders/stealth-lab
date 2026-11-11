@@ -1,8 +1,9 @@
 """HMAC signing shared by intent certificates and the audit chain (P1-06/P1-07).
 
 The secret is `TOOL_CERT_SECRET`. A local checkout or scratch database usually has no secret, so
-a stable development secret is derived from `SECRET_KEY` or `DATABASE_URL`; that keeps the manual
-checks working without a ceremony. Production must set `TOOL_CERT_SECRET`.
+a fixed development key is used; that keeps the manual checks working without a ceremony.
+Production must set `TOOL_CERT_SECRET`. Changing the secret invalidates every existing certificate
+and audit receipt, so set it once and keep it.
 
 Nothing here talks to the database. `canonical` is the one serialization both signers use, so a
 row can be verified later without guessing how it was encoded.
@@ -16,15 +17,18 @@ import os
 from typing import Any
 
 GENESIS_HASH = "0" * 64
+# A fixed development key. It is deliberately not derived from DATABASE_URL or SECRET_KEY: those
+# differ between a process that loaded .env and one that did not, which silently breaks the chain.
+# Production must set TOOL_CERT_SECRET; anything signed with this key is a local test.
+DEV_SECRET = hashlib.sha256(b"kell-dev-cert").digest()
 
 
 def secret() -> bytes:
-    """The signing key: `TOOL_CERT_SECRET`, or a derived development key."""
+    """The signing key: `TOOL_CERT_SECRET`, or the fixed development key."""
     value = os.environ.get("TOOL_CERT_SECRET", "").strip()
     if value:
         return value.encode("utf-8")
-    seed = (os.environ.get("SECRET_KEY") or os.environ.get("DATABASE_URL") or "kell-dev").encode("utf-8")
-    return hashlib.sha256(b"kell-dev-cert:" + seed).digest()
+    return DEV_SECRET
 
 
 def canonical(payload: dict[str, Any]) -> bytes:

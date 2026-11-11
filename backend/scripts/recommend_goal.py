@@ -26,7 +26,15 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dotenv import dotenv_values
+try:  # a tool result can be any Unicode; the Windows console defaults to cp1252
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:  # noqa: BLE001 -- not a tty, or an interpreter without reconfigure
+    pass
+
+from dotenv import dotenv_values, load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def dsn_from_env() -> str:
