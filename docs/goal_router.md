@@ -28,6 +28,10 @@ Two things are still missing, and they are the reason for this plan:
    replace**. Phase 2 is a Python harness that runs the same task through both arms and compares the results. Phase 3
    turns that evidence into ranking, trials and retirement.
 
+**Testing is manual.** There is no automated test suite in this plan. Every milestone ships with a command you run
+yourself and an expected result. Phase 1 is tested directly with the resolver script (`P1-02`), which is why it is the
+first thing to build.
+
 Non-goals for this plan: cash payouts to providers, a public marketplace, and autonomous offensive security. Trial
 credits and pricing are scoped in Phase 3 but ship after the gate and the comparison harness.
 
@@ -37,7 +41,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 |---|---|---|
 | Goal index and search | exists | `goal_search_index`, `goal_names`, `app/services/goals.py` |
 | Goal-first router | exists, first cut | `app/tool_routing/goal_router.py` |
-| Goal CLI | exists | `backend/scripts/search_goals.py` |
+| Goal CLI | exists, read-only | `backend/scripts/search_goals.py` |
 | Card → goal mapping | exists, 125,656 rows | `db/186_tool_card_goals.sql`, `scripts/map_tool_cards_to_goals.py` |
 | Tool gateway | exists, phase 1 | `app/tool_routing/gateway.py`, `_gateway_call` in `app/mcp_server/server.py` |
 | OAuth / consent | exists, off by default | `tool_oauth_*`, `oauth_client.py`, `TOOL_GATEWAY_OAUTH` |
@@ -54,6 +58,8 @@ Known local constraint: goal semantic/FTS search warns that the search group's m
 
 ### Try the router today
 
+Until P1-02 lands, the existing read-only CLI is the entry point:
+
 ```powershell
 cd backend
 python scripts/search_goals.py "check what the page looks like after login"
@@ -61,20 +67,21 @@ python scripts/search_goals.py "scan this repository for vulnerabilities" --json
 python scripts/map_tool_cards_to_goals.py --dry-run
 ```
 
-The first two are read-only. The mapper's dry run writes nothing.
+After P1-02, the same commands become `python scripts/resolve_goal.py ...`.
 
 ## Ground rules for parallel agents
 
 1. **One agent per sub-milestone.** The milestone ID is the unit of ownership, not the phase.
 2. **Only edit files listed under your milestone's "Files you own".** If you need a change in a file owned by another
-   milestone, open a small PR against that milestone's owner or add a comment on its issue. Do not edit it "just once".
+   milestone, open a small PR against that milestone's owner or comment on its issue. Do not edit it "just once".
 3. **`backend/app/mcp_server/server.py` is serialized.** Exactly one open milestone may own it at a time: `P1-04`, then
    `P3-06`. Everything else integrates through a module the gate imports. This is the main collision point.
 4. **Migrations are allocated, not chosen.** Take the number in your milestone. If it is taken, stop and comment.
-5. **Ship behind a flag.** New behavior defaults to shadow/off until its acceptance command passes.
-6. **Never weaken a fail-closed default to make a test pass.** A denied call is a correct outcome.
+5. **Ship behind a flag.** New behavior defaults to shadow/off until its manual check passes.
+6. **Never weaken a fail-closed default to make a demo pass.** A denied call is a correct outcome.
 7. **Do not add static trust as a ranking signal.** Stars and `verified` are metadata. Ranking comes from verified
    reuse (Phase 3), not from a badge.
+8. **No test files.** Verify by running the resolver or the milestone's command and pasting the output in the PR.
 
 ### Claiming a sub-milestone
 
@@ -82,7 +89,7 @@ The first two are read-only. The mapper's dry run writes nothing.
 2. Assign yourself and paste the issue link in your PR description.
 3. Branch: `goal-router/<ID>-<slug>`.
 4. Edit only the `Owner` cell for your row in the status table below (one-line change; do not reformat the doc).
-5. Open a draft PR early. Merge when the acceptance command passes and no owned file is left dirty.
+5. Open a draft PR early. Merge when the manual check passes and no owned file is left dirty.
 
 If two agents claim the same ID, the earlier issue wins. The later agent picks another unclaimed ID.
 
@@ -158,20 +165,36 @@ async def start_run(pool, *, task_id: str, arm: str, goal_id: str | None,
 async def finish_run(pool, run_id: str, record: dict) -> None: ...
 ```
 
-## Phase 1 — Foundation: route, gate, bind, record
+## Phase 1 — Foundation: resolve, gate, bind, record
 
 **Goal:** a prompt lands on the right Goal, the Goal shows its ways and tools, every tool call passes one gate, and every
 call and run is recorded. Exa runs without a user sign-in. Hinoki is present but R3-gated.
 
-**Exit criteria (Phase 2 cannot start until all pass):**
+**Start with P1-02.** It is the resolver script you will use to manually test every other Phase 1 milestone. The rest
+can be built in parallel against the frozen interfaces.
 
-- `python scripts/search_goals.py "scan this repository for vulnerabilities"` returns the security goal and Hinoki in
-  its tools.
-- `python scripts/search_goals.py "search the web for the latest Postgres release"` returns the web goal and Exa.
-- A gateway call without a certificate is denied for R2/R3 and allowed for R0, in `enforce` mode.
-- Every decision produces one `tool_call_audit` row with a hash chain that verifies.
-- Exa answers a real query through the gateway with no user sign-in.
-- A run can be started and finished for both arms, and the row is readable by `scripts/compare`.
+### Phase 1 manual test loop
+
+Once P1-02 is merged, this is how the phase is tested. Run it after each milestone.
+
+| Prompt | Expected Goal | Expected tool |
+|---|---|---|
+| `search the web for the latest Postgres release` | Search the web or read a web page | Exa |
+| `scan this repository for known CVEs in dependencies` | security dependency/CVE subgoal | OSV or Hinoki |
+| `scan this repository for vulnerabilities` | security / pentest subgoal | Hinoki |
+| `run the tests and show the failing ones` | run code / CI subgoal | sandbox or CI tool |
+| `open the page, log in and screenshot the dashboard` | Drive a real browser | browser tool |
+
+For each row:
+
+```powershell
+cd backend
+python scripts/resolve_goal.py "<prompt>" --explain
+python scripts/resolve_goal.py "<prompt>" --json
+```
+
+`--explain` must show which leg matched (`exact`, `fts`, `vector`), the Goal score, and the mapped tools in rank order.
+If a row fails, the milestone that owns that behavior is named in the table above.
 
 ### P1-01 — Security and intent Goals
 
@@ -185,29 +208,67 @@ Subgoals: `security_dependency_cve`, `security_secret_scan`, `security_sast`, `s
 
 - `backend/app/tool_routing/goals.py`
 - `backend/db/187_tool_goals_security.sql`
-- `backend/tests/test_tool_goals_security_offline.py`
 
-**Acceptance:** the migration is idempotent; a new test asserts every subgoal has a deterministic UUID, a description,
-marker words, and that `goal_text()` still works for the original 25.
+**Manual check**
+
+```powershell
+python scripts/resolve_goal.py "scan this repository for known CVEs in dependencies" --explain
+python scripts/resolve_goal.py "find hardcoded secrets in this repo" --explain
+python scripts/resolve_goal.py "review the auth flow for privilege escalation" --explain
+```
+
+Each prompt must put its subgoal in the top 3, and the original 25 goals must still resolve as before.
 
 **Do not touch:** `goal_router.py`, the mapper, `server.py`.
 
-### P1-02 — Router hardening
+### P1-02 — Resolver script (the Phase 1 harness)
 
-**Builds:** correctness and diagnostics for `route_goal`: exact/alias normalization, K000 fallback, per-leg scores,
-deduplication, deterministic tie-break, and a clear "no match" result. Add a `--explain` flag that shows which leg matched
-and why. Do not add new ranking signals; that is Phase 3.
+**Builds:** the single command that resolves a prompt and, optionally, calls the chosen tool through the real gate. This
+is the manual test driver for Phase 1. It must not add a bypass: `--call` uses the same `authorize()` and gateway path
+as `use_tool`.
+
+`backend/scripts/resolve_goal.py`:
+
+```
+resolve_goal.py "<prompt>" [--k 5] [--json] [--explain] [--semantic]
+                           [--tools-only] [--call] [--tool NAME]
+                           [--arg key=value ...] [--data-class PUBLIC_SOURCE]
+                           [--owner dev-local] [--cert CERT_ID] [--task-id TASK_ID]
+```
+
+Behavior:
+
+- Default: print Goal, score, matched-by, ways (name, verification state, availability) and tools (rank, card id,
+  server, why it is offered).
+- `--explain`: one line per matching leg, then the ranking inputs (goal fit, trust if Phase 3 exists, risk tier).
+- `--json`: the full `GoalHit` list, machine-readable.
+- `--call`: resolve, pick the top tool for the top Goal (or `--tool`), build a `ToolCall`, run `authorize()`, and only on
+  `allow` call the gateway. Print `REFUSED: <reason>` on deny/approve; never fall through to a direct call.
+- `--call` requires `app/tool_routing/gate.py` (P1-04) and `audit.py` (P1-07). Until they land it must print
+  `gate not installed` and exit non-zero. Never add a direct-call fallback, not even for local development.
+- `--owner` defaults to `KELL_DEV_OWNER` or `dev-local`; this is a development identity, not a production one.
+- Keep `backend/scripts/search_goals.py` as a thin compatibility wrapper that calls the new script with the old flags.
 
 **Files you own**
 
-- `backend/app/tool_routing/goal_router.py`
+- `backend/scripts/resolve_goal.py`
 - `backend/scripts/search_goals.py`
-- `backend/tests/test_goal_router_offline.py`
+- `backend/app/tool_routing/goal_router.py`
 
-**Acceptance:** `search_goals.py "..." --explain` prints one line per leg (`exact`, `fts`, `vector`) with rank and score;
-a test feeds a fixture pool and asserts exact beats FTS, aliases resolve, and an empty query returns `[]`.
+It imports `authorize()` from `gate.py`; it does not own `gate.py`.
 
-**Do not touch:** `goals.py`, `retrieve.py`, `server.py`.
+**Manual check**
+
+```powershell
+python scripts/resolve_goal.py "check what the page looks like after login" --explain
+python scripts/resolve_goal.py "search the web for the latest Postgres release" --json
+python scripts/resolve_goal.py "search the web for the latest Postgres release" --call
+```
+
+The first shows one line per leg and the Goal's ways/tools. The second prints valid JSON. Once P1-04 and P1-07 are
+merged, the third prints a real answer or a clear `REFUSED`/`FAILED`, and leaves one audit row.
+
+**Do not touch:** `goals.py`, `retrieve.py`, `server.py`, `policy.py`.
 
 ### P1-03 — Mapping v2 and manual pins
 
@@ -219,10 +280,16 @@ mapper with `--pin card_id goal_id score`, `--report` (coverage per goal, orphan
 
 - `backend/scripts/map_tool_cards_to_goals.py`
 - `backend/scripts/report_goal_coverage.py`
-- `backend/tests/test_map_tool_cards_offline.py`
 
-**Acceptance:** `--dry-run --report` prints cards, mappings, goals with zero cards, and cards with zero goals;
-`--pin registry:ai.exa/exa <web_goal_id> 9.0` survives `--replace`.
+**Manual check**
+
+```powershell
+python scripts/map_tool_cards_to_goals.py --dry-run --report
+python scripts/map_tool_cards_to_goals.py --pin registry:ai.exa/exa <web_goal_id> 9.0 --dry-run
+python scripts/resolve_goal.py "search the web" --tools-only
+```
+
+The report prints cards, mappings, goals with zero cards and cards with zero goals. The pin survives a `--replace` run.
 
 **Do not touch:** `goal_router.py`, `goals.py`, `server.py`.
 
@@ -240,10 +307,21 @@ rate limits) rather than duplicating them.
 
 - `backend/app/tool_routing/gate.py`
 - `backend/app/mcp_server/server.py` (serialized; hand back after merge)
-- `backend/tests/test_tool_gate_offline.py`
 
-**Acceptance:** `TOOL_GATE=enforce` + a fake R3 call with no certificate returns `REFUSED` and writes an audit row;
-`TOOL_GATE=shadow` lets it through and still writes the row; a policy exception denies in enforce mode.
+**Manual check**
+
+```powershell
+$env:TOOL_GATE = "enforce"
+python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call
+# expect: REFUSED: policy:r3_requires_approval
+
+$env:TOOL_GATE = "shadow"
+python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call
+# expect: the call runs, and the audit row records the decision that would have been enforced
+```
+
+Also check one R0 call (Exa) still passes in `enforce` mode. Then set `TOOL_GATE=off` and confirm behavior returns to
+today's.
 
 **Do not touch:** `policy.py`, `certificates.py`, `audit.py` (import them; their owners build them).
 
@@ -251,17 +329,24 @@ rate limits) rather than duplicating them.
 
 **Builds:** declarative, deterministic policy. `tool_policies` rows are keyed by server/tool/goal and carry risk tier,
 effect (`allow`/`deny`/`approve`), data classes, max calls, egress allowlist, and a priority. Evaluation order: explicit
-deny → allowlist → risk → data class → rate → default deny. Ship the seed rows for Exa (R0 allow) and Hinoki (R3
-approve).
+deny → allowlist → risk → data class → rate → default deny. Ship seed rows for Exa (R0 allow) and Hinoki (R3 approve).
 
 **Files you own**
 
 - `backend/app/tool_routing/policy.py`
 - `backend/db/188_tool_policies.sql`
-- `backend/tests/test_tool_policy_offline.py`
 
-**Acceptance:** a table-driven test covers deny-wins, allowlist-empty means all, R0 auto-allow, R2/R3 approve, unknown
-tool deny, and an unparseable rule deny.
+**Manual check**
+
+Run the resolver against one tool per tier and confirm the printed decision:
+
+```powershell
+python scripts/resolve_goal.py "search the web" --call            # R0 -> allow
+python scripts/resolve_goal.py "scan this repository" --call       # R3 -> approve
+python scripts/resolve_goal.py "delete the production database" --call  # unknown/deny
+```
+
+Deny must win over allow, an empty allowlist must mean "all", and an unknown tool must deny.
 
 **Do not touch:** `gate.py`, `server.py`.
 
@@ -276,10 +361,20 @@ is inside the allowed set.
 
 - `backend/app/tool_routing/certificates.py`
 - `backend/db/189_intent_certificates.sql`
-- `backend/tests/test_intent_certificates_offline.py`
 
-**Acceptance:** expired, revoked, wrong-user, wrong-goal, and widened-capability certificates all fail with distinct
-reason codes; a valid certificate passes; issuing requires an explicit goal.
+**Manual check**
+
+Issue a certificate for one read-only Hinoki tool, then:
+
+```powershell
+python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call --cert <cert_id>
+# allowed only for scan_repository; explain_finding is refused
+
+python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call --cert <expired_id>
+# REFUSED: cert:expired
+```
+
+Check wrong-user, wrong-goal and widened-capability cases by editing the certificate row directly.
 
 **Do not touch:** `gate.py`, `server.py`, `policy.py`.
 
@@ -294,10 +389,17 @@ Never store arguments or results, only hashes.
 - `backend/app/tool_routing/audit.py`
 - `backend/db/190_tool_call_audit.sql`
 - `backend/scripts/verify_audit_chain.py`
-- `backend/tests/test_tool_audit_offline.py`
 
-**Acceptance:** `python scripts/verify_audit_chain.py --since 24h` returns `ok`; tampering with one row makes it fail at
-that row; the writer is safe under concurrent inserts (advisory lock or serialized sequence).
+**Manual check**
+
+```powershell
+python scripts/resolve_goal.py "search the web for the latest Postgres release" --call
+python scripts/verify_audit_chain.py --since 1h
+# expect: ok, N receipts
+
+# then tamper with one row's reason in a scratch database and run it again:
+# expect: FAILED at receipt <id>
+```
 
 **Do not touch:** `gate.py`, `server.py`.
 
@@ -313,12 +415,21 @@ user's credentials.
 - `backend/app/tool_providers/__init__.py`
 - `backend/app/tool_providers/exa/__init__.py`
 - `backend/app/tool_providers/exa/client.py`
-- `backend/tests/test_exa_adapter_offline.py`
 
-**Acceptance:** a mocked HTTP test covers success, 401, timeout, oversized response, and injection-looking output;
-`EXA_API_KEY` missing yields a clear refusal.
+**Manual check**
 
-**Do not touch:** `server.py`, `gateway.py`, `tool_cards` rows (use the existing card).
+```powershell
+python scripts/resolve_goal.py "search the web for the latest Postgres release" --call
+# expect: results, no sign-in prompt
+
+$env:EXA_API_KEY = ""
+python scripts/resolve_goal.py "search the web for the latest Postgres release" --call
+# expect: FAILED: exa not configured
+```
+
+Also fetch one page and confirm the output is labelled as third-party data.
+
+**Do not touch:** `server.py`, `gateway.py`, the existing `tool_cards` row.
 
 ### P1-09 — Hinoki adapter (R3, defensive surface first)
 
@@ -338,10 +449,19 @@ No exploit execution, no live third-party target, no credential access in v1. Th
 - `backend/app/tool_providers/hinoki/client.py`
 - `backend/app/tool_providers/hinoki/mcp_server.py`
 - `backend/scripts/register_hinoki_card.py`
-- `backend/tests/test_hinoki_adapter_offline.py`
 
-**Acceptance:** the wrapper lists exactly the four tools with schemas; a call without a certificate is refused in
-enforce mode; a mocked scan returns findings with stable ids; `propose_fix` returns a patch and writes nothing.
+**Manual check**
+
+```powershell
+python scripts/register_hinoki_card.py --dry-run
+python scripts/resolve_goal.py "scan this repository for vulnerabilities" --tools-only
+# expect: Hinoki in the top tools
+
+python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call --arg repo_url=https://github.com/org/repo
+# expect: REFUSED without a certificate; findings with one
+```
+
+`propose_fix` must return a patch and write nothing to the repository.
 
 **Do not touch:** `server.py`, `gateway.py`, `goals.py`.
 
@@ -355,10 +475,17 @@ trace ref. Extend `tool_gateway_calls` with `task_id`, `cert_id`, `decision`, `c
 
 - `backend/app/tool_routing/runs.py`
 - `backend/db/191_task_runs.sql`
-- `backend/tests/test_task_runs_offline.py`
+- `backend/scripts/show_runs.py`
 
-**Acceptance:** start → finish → read returns the same record; a failed run still records `status='error'` and an error
-class; the migration is additive and idempotent.
+**Manual check**
+
+```powershell
+python scripts/resolve_goal.py "search the web" --call --task-id demo-1
+python scripts/show_runs.py --task demo-1
+# expect: one row per arm, with status, latency, cost, goal and tool
+```
+
+A refused call must still produce a row with `status='error'` and an error class.
 
 **Do not touch:** `server.py`, `gate.py`, `scripts/compare/*`.
 
@@ -375,25 +502,43 @@ short-lived.
 - `routing_kell_frontend/lib/tools/approvals.ts`
 - `desktop/app/api/tools/approve/route.ts`
 - `desktop/components/chat/ApprovalCard.tsx`
-- `backend/tests/test_tool_approvals_offline.py`
 
-**Acceptance:** an R3 call returns `approve` with an approval id; approving once allows exactly one matching call;
-a changed argument hash invalidates the approval; expiry invalidates it.
+**Manual check**
+
+```powershell
+python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call
+# expect: approve + approval id + link
+
+# approve once in the UI, then:
+python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call --approval <id>
+# expect: one call allowed, the second refused
+```
+
+Changing an argument or letting the approval expire must refuse.
 
 **Do not touch:** `server.py` (the gate consumes `tool_approvals`), `gate.py`.
+
+**Phase 1 exit criteria**
+
+- `python scripts/resolve_goal.py "<security prompt>" --explain` returns the security subgoal and Hinoki.
+- `python scripts/resolve_goal.py "<web prompt>" --explain` returns the web goal and Exa.
+- `--call` on an R3 tool without a certificate is refused in `enforce` mode; R0 passes.
+- Every decision produces one `tool_call_audit` row and the chain verifies.
+- Exa answers a real query with no user sign-in.
+- A run can be started and finished for both arms and read back with `show_runs.py`.
 
 ## Phase 2 — Evidence: compare tool results with procedure results
 
 **Goal:** answer, with numbers, whether a tool beats the procedure it would replace — per Goal, not globally.
 
 Phase 2 starts only after the Phase 1 exit criteria pass. It is **read-only with respect to production routing**: it runs
-tasks, records results, and reports. It does not change ranking.
+tasks, records results, and reports. It does not change ranking. It is run manually with `run_compare.py`.
 
 ### The comparison protocol
 
 For each benchmark task:
 
-1. Resolve the task's Goal with `route_goal`.
+1. Resolve the task's Goal with `resolve_goal.py` / `route_goal`.
 2. Pick one **procedure arm** (the best active procedure for that Goal) and one **tool arm** (the top card mapped to that
    Goal, after the gate says it may run).
 3. Optionally run a **baseline arm** (model alone, no procedure and no tool) to separate "the task is easy" from "the
@@ -420,10 +565,15 @@ goal hint, input refs, verifier kind and config, data class, budget cap, and tag
 - `backend/scripts/compare/contracts.py`
 - `backend/scripts/compare/corpus.py`
 - `backend/scripts/compare/tasks/*.jsonl`
-- `backend/tests/test_compare_corpus_offline.py`
 
-**Acceptance:** loading the corpus validates every task, rejects duplicate ids, and rejects a task without a verifier;
-a dry run prints the 60 tasks and their goals.
+**Manual check**
+
+```powershell
+python -m scripts.compare.corpus --check
+# expect: 60 tasks, 6 goals, no duplicate ids, every task has a verifier
+```
+
+A task without a verifier must be rejected with its id.
 
 ### P2-02 — Procedure runner
 
@@ -434,10 +584,15 @@ execution. If a procedure is unbound, record that fact; do not silently substitu
 **Files you own**
 
 - `backend/scripts/compare/procedure_runner.py`
-- `backend/tests/test_compare_procedure_runner_offline.py`
 
-**Acceptance:** a fixture procedure runs to a recorded result; an unbound step is marked `unbound`, not passed; a
-mid-run failure produces `status='error'` with an error class.
+**Manual check**
+
+```powershell
+python -m scripts.compare.procedure_runner --task web-001
+# expect: one RunRecord (arm=procedure) printed and stored
+```
+
+An unbound step must print `unbound`, not `pass`.
 
 ### P2-03 — Tool runner
 
@@ -447,10 +602,16 @@ use the real gate, so a refused call is a recorded refusal, not an exception. No
 **Files you own**
 
 - `backend/scripts/compare/tool_runner.py`
-- `backend/tests/test_compare_tool_runner_offline.py`
 
-**Acceptance:** a mocked gateway call records a pass; a policy refusal records `status='error'` with
-`error_class='gate:denied'`; no certificate means no call.
+**Manual check**
+
+```powershell
+python -m scripts.compare.tool_runner --task web-001
+# expect: one RunRecord (arm=tool) printed and stored
+
+python -m scripts.compare.tool_runner --task sec-001 --no-cert
+# expect: status=error, error_class=gate:denied
+```
 
 ### P2-04 — Normalizer and scorers
 
@@ -460,10 +621,18 @@ artifact hash, and a rubric judge. Normalization is per task type; the raw outpu
 **Files you own**
 
 - `backend/scripts/compare/scoring.py`
-- `backend/tests/test_compare_scoring_offline.py`
 
-**Acceptance:** each scorer has a pass case and a fail case; a judge prompt is blind to arm and task id; a missing
-verifier fails closed.
+**Manual check**
+
+```powershell
+python -m scripts.compare.scoring --task web-001 --input out/procedure.json
+# expect: score + the scorer that produced it, with the raw hash
+
+python -m scripts.compare.scoring --task web-001 --input out/tool.json
+# expect: the same fields, comparable
+```
+
+A missing verifier must fail closed.
 
 ### P2-05 — Orchestrator
 
@@ -473,10 +642,18 @@ Flags: `--tasks`, `--goal`, `--arms`, `--repeats`, `--budget-usd`, `--dry-run`, 
 **Files you own**
 
 - `backend/scripts/compare/run_compare.py`
-- `backend/tests/test_compare_orchestrator_offline.py`
 
-**Acceptance:** `--dry-run` prints the full plan and spends nothing; a real run over 2 tasks × 2 arms × 2 repeats writes
-8 `RunRecord`s and 2 `ComparisonRecord`s; the budget cap stops the run cleanly.
+**Manual check**
+
+```powershell
+python -m scripts.compare.run_compare --tasks web-001,web-002 --arms procedure,tool --repeats 2 --dry-run
+# expect: the full plan, no spend
+
+python -m scripts.compare.run_compare --tasks web-001,web-002 --arms procedure,tool --repeats 2
+# expect: 8 RunRecords, 2 ComparisonRecords, a summary table
+```
+
+The budget cap must stop the run cleanly.
 
 ### P2-06 — Comparison store
 
@@ -487,9 +664,18 @@ delta, cost delta, latency delta, winner, and the evidence ref. Add indexes for 
 
 - `backend/scripts/compare/store.py`
 - `backend/db/191_task_runs.sql` (add the comparison table; coordinate with P1-10 if it is still open)
-- `backend/tests/test_compare_store_offline.py`
 
-**Acceptance:** write → read round-trips; a re-run upserts by (task, procedure, card); the table is queryable by goal.
+**Manual check**
+
+```powershell
+python -m scripts.compare.store --goal web --limit 10
+# expect: one row per (task, procedure, card) with deltas
+
+# re-run the same comparison:
+python -m scripts.compare.run_compare --tasks web-001 --arms procedure,tool --repeats 1
+python -m scripts.compare.store --task web-001
+# expect: upsert, not a duplicate
+```
 
 ### P2-07 — Statistics and report
 
@@ -501,30 +687,22 @@ every failure.
 
 - `backend/scripts/compare/stats.py`
 - `backend/scripts/compare/report.py`
-- `backend/tests/test_compare_stats_offline.py`
 
-**Acceptance:** a synthetic fixture with a known effect recovers the sign and a CI that contains the true value; a
-zero-effect fixture produces a CI containing zero; the report renders from stored rows only.
+**Manual check**
 
-### P2-08 — Comparison regression suite
+```powershell
+python -m scripts.compare.report --goal web --out docs/compare_web.md
+# expect: per-arm table, paired delta with CI, cost per verified success, caveats
+```
 
-**Builds:** an offline end-to-end test that runs the whole harness against fixtures (no network), plus a golden report.
-This is what protects the harness from drift.
-
-**Files you own**
-
-- `backend/tests/test_compare_e2e_offline.py`
-- `backend/tests/fixtures/compare/*`
-
-**Acceptance:** `pytest backend/tests/test_compare_e2e_offline.py` passes in under 60 seconds with no network and no
-database beyond the fixture.
+A synthetic fixture with a known effect must recover the sign; a zero-effect fixture must produce a CI containing zero.
 
 **Phase 2 exit criteria**
 
 - 60 tasks, 6 goals, at least 3 repeats per arm.
 - Every comparison has a paired delta and a CI.
 - A written report answers, per goal: does the tool beat the procedure, at what cost, and with what confidence.
-- The harness is reproducible from a clean checkout with a documented command.
+- The harness runs from a clean checkout with the commands above, with no test suite.
 
 ## Phase 3 — Market: trust from reuse, trials, retirement
 
@@ -541,10 +719,19 @@ two hundred verified ones.
 
 - `backend/app/tool_routing/trust.py`
 - `backend/db/192_tool_trust.sql`
-- `backend/tests/test_tool_trust_offline.py`
+- `backend/scripts/show_trust.py`
 
-**Acceptance:** a card with 1/1 scores below a card with 90/100; a card with 40/100 scores below 90/100; the view
-refreshes from `tool_observations` + `comparison_results`.
+**Manual check**
+
+```powershell
+python scripts/show_trust.py --goal web --limit 10
+# expect: wins/judged, lower bound, last outcome, trial vs paid
+
+python scripts/resolve_goal.py "search the web" --explain
+# expect: trust lower bound shown per tool once the view is on
+```
+
+A card with 1/1 must score below a card with 90/100.
 
 ### P3-02 — Provider-funded trials
 
@@ -556,10 +743,18 @@ offensive actions; a trial may only be a read-only scan.
 
 - `backend/app/tool_routing/trials.py`
 - `backend/db/193_tool_trials.sql`
-- `backend/tests/test_tool_trials_offline.py`
 
-**Acceptance:** credits decrement per call and never go negative; an expired window stops allocation; per-user and
-per-goal caps hold; a provider cannot buy more than the configured share.
+**Manual check**
+
+```powershell
+python -c "import asyncio; from app.tool_routing.trials import status; print(asyncio.run(status('web')))"
+# expect: active trials, credit left, share of calls
+
+python scripts/resolve_goal.py "search the web" --explain
+# expect: the trial tool is marked and only appears inside its share
+```
+
+Credits must never go negative; an expired window must stop allocation; per-user and per-goal caps must hold.
 
 ### P3-03 — Ranking integration
 
@@ -571,10 +766,15 @@ risk_penalty`, with `goal_fit` as a gate, not the score. Exact/alias goal still 
 
 - `backend/app/tool_routing/goal_router.py` (handoff from P1-02)
 - `backend/app/tool_routing/retrieve.py`
-- `backend/tests/test_goal_ranking_offline.py`
 
-**Acceptance:** with a fixture posterior, the proven tool wins; an active trial can win only inside its exploration
-share; a high-risk tool never wins on relevance alone; disabling the flag restores the Phase 1 order.
+**Manual check**
+
+```powershell
+python scripts/resolve_goal.py "search the web" --explain
+# expect: proven tool first; trial tool only inside its share; high-risk tool last
+```
+
+Disabling the flag must restore the Phase 1 order.
 
 ### P3-04 — Graduation and retirement
 
@@ -586,10 +786,16 @@ goal at the next best tool.
 
 - `backend/app/tool_routing/lifecycle.py`
 - `backend/scripts/tool_lifecycle.py`
-- `backend/tests/test_tool_lifecycle_offline.py`
 
-**Acceptance:** fixture transitions produce exactly graduate/watch/retire; a retired tool is not returned by the router;
-a re-listed tool starts in trial, not proven.
+**Manual check**
+
+```powershell
+python scripts/tool_lifecycle.py --dry-run
+# expect: per tool, one of graduate / watch / retire, with the numbers behind it
+
+python scripts/resolve_goal.py "search the web" --tools-only
+# expect: a retired tool is not listed; the goal shows the next best
+```
 
 ### P3-05 — Verification market
 
@@ -601,10 +807,15 @@ triggers re-verification.
 
 - `backend/app/tool_routing/verification.py`
 - `backend/db/194_verification.sql`
-- `backend/tests/test_verification_offline.py`
 
-**Acceptance:** a forged signature is rejected; a verifier whose results disagree with downstream outcomes loses weight;
-a version change invalidates prior verification for ranking.
+**Manual check**
+
+```powershell
+python -c "import asyncio; from app.tool_routing.verification import report; print(asyncio.run(report('web')))"
+# expect: verifier results with signature status and weight
+```
+
+A forged signature must be rejected; a verifier whose results disagree with downstream outcomes must lose weight.
 
 ### P3-06 — Pricing and metering (second and last `server.py` owner)
 
@@ -617,10 +828,18 @@ back.
 - `backend/app/tool_routing/pricing.py`
 - `backend/db/195_tool_listings.sql`
 - `backend/app/mcp_server/server.py` (serialized; only after P1-04 merges)
-- `backend/tests/test_tool_pricing_offline.py`
 
-**Acceptance:** a priced call debits exactly once; a trial call debits the provider, not the user; an insufficient
-balance refuses before the network call; the price is shown before execution.
+**Manual check**
+
+```powershell
+python scripts/resolve_goal.py "search the web" --call
+# expect: a price line before the call, then the result
+
+python scripts/resolve_goal.py "search the web" --call --owner broke
+# expect: REFUSED: balance, before any network call
+```
+
+A priced call must debit exactly once; a trial call must debit the provider, not the user.
 
 ### P3-07 — Market report
 
@@ -633,7 +852,12 @@ pass rate?).
 - `backend/scripts/tool_market_report.py`
 - `docs/tool_market_results.md`
 
-**Acceptance:** the report renders from stored rows only; calibration is a reliability curve with sample sizes.
+**Manual check**
+
+```powershell
+python scripts/tool_market_report.py --since 7d --out docs/tool_market_results.md
+# expect: every metric above, with sample sizes and a calibration curve
+```
 
 **Phase 3 exit criteria**
 
@@ -645,30 +869,32 @@ pass rate?).
 ## Dependency graph
 
 ```
-P1-01 ─┐
-P1-02 ─┼─→ P1-03 ─┐
-P1-08 ─┤           ├─→ P1-04 ─→ P1-11
-P1-09 ─┘           │
-P1-05 ─────────────┤
-P1-06 ─────────────┤
-P1-07 ─────────────┘
+P1-02 (resolver) ─┐
+P1-01 ────────────┤
+P1-03 ────────────┼─→ P1-04 (gate) ─→ P1-11
+P1-05 ────────────┤
+P1-06 ────────────┤
+P1-07 ────────────┤
+P1-08 ────────────┤
+P1-09 ────────────┘
 
-P1-10 ─→ P2-01 ─→ {P2-02, P2-03, P2-04} ─→ P2-05 ─→ P2-06 ─→ P2-07 ─→ P2-08
+P1-10 ─→ P2-01 ─→ {P2-02, P2-03, P2-04} ─→ P2-05 ─→ P2-06 ─→ P2-07
 
-P2-08 ─→ P3-01 ─┐
+P2-07 ─→ P3-01 ─┐
           P3-02 ─┼─→ P3-03 ─→ P3-04
           P3-05 ─┘
 P1-04 ─→ P3-06 ─→ P3-07
 ```
 
-P1-04 may be built in parallel with P1-05/06/07 against the frozen interfaces above; it merges after they exist.
-P2-03 also needs P1-04 (it must go through the real gate).
+The diagram is build order, not a strict dependency list: only P1-04 truly waits on P1-05/06/07. P1-02 is the first
+merge: it is the resolver used to manually test everything else. P2-03 also needs P1-04 (it must go through the real
+gate).
 
 Parallel-safe groups:
 
 - **Group A (no `server.py`):** P1-01, P1-02, P1-03, P1-08, P1-09, P1-10.
 - **Group B (gate chain):** P1-04 → P1-05 → P1-06 → P1-07, serialized by interface, not by file.
-- **Group C (Phase 2):** P2-01 → {P2-02, P2-03, P2-04} → P2-05 → P2-06 → P2-07 → P2-08.
+- **Group C (Phase 2):** P2-01 → {P2-02, P2-03, P2-04} → P2-05 → P2-06 → P2-07.
 - **Group D (Phase 3):** P3-01, P3-02, P3-05 in parallel; P3-03 after P3-01/P3-02; P3-04 after P3-03; P3-06 serialized
   on `server.py`; P3-07 last.
 
@@ -679,7 +905,7 @@ Update only your own row. `—` means unclaimed.
 | ID | Milestone | Owner | State | PR / issue |
 |---|---|---|---|---|
 | P1-01 | Security and intent Goals | — | open | |
-| P1-02 | Router hardening | — | open | |
+| P1-02 | Resolver script (start here) | — | open | |
 | P1-03 | Mapping v2 and manual pins | — | open | |
 | P1-04 | Gate core (`server.py`) | — | open | |
 | P1-05 | Policy store | — | open | |
@@ -696,7 +922,6 @@ Update only your own row. `—` means unclaimed.
 | P2-05 | Orchestrator | — | blocked on P2-02..04 | |
 | P2-06 | Comparison store | — | blocked on P2-05 | |
 | P2-07 | Statistics and report | — | blocked on P2-06 | |
-| P2-08 | Regression suite | — | blocked on P2-07 | |
 | P3-01 | Trust posterior | — | blocked on Phase 2 | |
 | P3-02 | Provider-funded trials | — | blocked on Phase 2 | |
 | P3-03 | Ranking integration | — | blocked on P3-01/02 | |
@@ -712,7 +937,7 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 | File / glob | Owner |
 |---|---|
 | `backend/app/tool_routing/goals.py`, `backend/db/187_*` | P1-01 |
-| `backend/app/tool_routing/goal_router.py`, `backend/scripts/search_goals.py` | P1-02 (then P3-03) |
+| `backend/scripts/resolve_goal.py`, `backend/scripts/search_goals.py`, `backend/app/tool_routing/goal_router.py` | P1-02 (router then P3-03) |
 | `backend/scripts/map_tool_cards_to_goals.py`, `backend/scripts/report_goal_coverage.py` | P1-03 |
 | `backend/app/tool_routing/gate.py`, `backend/app/mcp_server/server.py` | P1-04 (then P3-06) |
 | `backend/app/tool_routing/policy.py`, `backend/db/188_*` | P1-05 |
@@ -720,7 +945,7 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 | `backend/app/tool_routing/audit.py`, `backend/db/190_*`, `backend/scripts/verify_audit_chain.py` | P1-07 |
 | `backend/app/tool_providers/exa/**` | P1-08 |
 | `backend/app/tool_providers/hinoki/**`, `backend/scripts/register_hinoki_card.py` | P1-09 |
-| `backend/app/tool_routing/runs.py`, `backend/db/191_*` | P1-10 (then P2-06) |
+| `backend/app/tool_routing/runs.py`, `backend/db/191_*`, `backend/scripts/show_runs.py` | P1-10 (then P2-06) |
 | `routing_kell_frontend/components/tools/**`, `routing_kell_frontend/app/api/tools/approve/**`, `desktop/**/tools/approve/**` | P1-11 |
 | `backend/scripts/compare/contracts.py`, `corpus.py`, `tasks/**` | P2-01 |
 | `backend/scripts/compare/procedure_runner.py` | P2-02 |
@@ -729,8 +954,7 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 | `backend/scripts/compare/run_compare.py` | P2-05 |
 | `backend/scripts/compare/store.py`, `backend/db/191_*` | P2-06 |
 | `backend/scripts/compare/stats.py`, `report.py` | P2-07 |
-| `backend/tests/test_compare_e2e_offline.py`, `backend/tests/fixtures/compare/**` | P2-08 |
-| `backend/app/tool_routing/trust.py`, `backend/db/192_*` | P3-01 |
+| `backend/app/tool_routing/trust.py`, `backend/db/192_*`, `backend/scripts/show_trust.py` | P3-01 |
 | `backend/app/tool_routing/trials.py`, `backend/db/193_*` | P3-02 |
 | `backend/app/tool_routing/retrieve.py` | P3-03 |
 | `backend/app/tool_routing/lifecycle.py`, `backend/scripts/tool_lifecycle.py` | P3-04 |
@@ -742,7 +966,7 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 
 | Phase | Done when |
 |---|---|
-| 1 | A security prompt and a web prompt each route to the right goal and tool; every call has a decision and a verifiable receipt; Exa runs keyless-to-the-user; Hinoki is R3-gated. |
+| 1 | The resolver routes a security prompt and a web prompt to the right goal and tool; `--call` passes R0 and refuses R3 without a certificate; every call has a decision and a verifiable receipt; Exa runs keyless-to-the-user; Hinoki is R3-gated. |
 | 2 | A reproducible Python harness compares tool vs procedure vs baseline on 60 tasks, with paired deltas and confidence intervals, and a report per goal. |
 | 3 | Ranking is driven by verified reuse; trials are provider-funded and capped; bad tools retire; verification is continuous and cannot be bought. |
 
@@ -754,7 +978,7 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 | Gate blocks legitimate calls during rollout | `TOOL_GATE=shadow` first; compare decisions before enforcing |
 | Trial exploration harms users | Cap share per goal and user; R0/R1 only; automatic fallback to the next tool |
 | Comparison overfits 60 tasks | Paired design, 3 repeats, CIs, a held-out task set, and no winner from one run |
-| Judge bias | Blind to arm and task id; tests/exact match first |
+| Judge bias | Blind to arm and task id; the task's own verifier first |
 | Provider-funded trials become pay-to-win | Hard share cap, distinct-user counting, audits, no rank purchase |
 | Static trust sneaks back in | `stars`/`verified` are metadata only; ranking reads the posterior |
 | Hinoki misuse | Defensive surface only in v1; R3 approval; public data; no live targets |
@@ -766,10 +990,11 @@ Agents may parse this block to claim work. Keep it in sync with the status table
 ```yaml
 version: 1
 updated: 2026-11-11
+testing: manual
 phases:
   - id: P1
     name: foundation
-    exit: "route + gate + bind + record; Exa keyless; Hinoki R3-gated"
+    exit: "resolve + gate + bind + record; Exa keyless; Hinoki R3-gated"
   - id: P2
     name: evidence
     exit: "tool vs procedure vs baseline on 60 tasks with paired CIs"
@@ -781,130 +1006,125 @@ milestones:
     title: security and intent Goals
     owns: [backend/app/tool_routing/goals.py, backend/db/187_tool_goals_security.sql]
     depends: []
-    acceptance: "subgoals seeded; original 25 unchanged"
+    manual_check: "resolve_goal.py on CVE, secrets and auth prompts puts the subgoal in top 3"
   - id: P1-02
-    title: router hardening
-    owns: [backend/app/tool_routing/goal_router.py, backend/scripts/search_goals.py]
+    title: resolver script (start here)
+    owns: [backend/scripts/resolve_goal.py, backend/scripts/search_goals.py, backend/app/tool_routing/goal_router.py]
     depends: []
-    acceptance: "--explain shows legs; exact beats fts; empty query returns []"
+    manual_check: "--explain shows legs; --json is valid; --call goes through the gate"
   - id: P1-03
     title: mapping v2 and manual pins
     owns: [backend/scripts/map_tool_cards_to_goals.py, backend/scripts/report_goal_coverage.py]
     depends: []
-    acceptance: "pins survive --replace; coverage report prints orphans"
+    manual_check: "pins survive --replace; coverage report prints orphans"
   - id: P1-04
     title: gate core
     owns: [backend/app/tool_routing/gate.py, backend/app/mcp_server/server.py]
     depends: [P1-05, P1-06, P1-07]
-    acceptance: "enforce denies R3 without cert; shadow logs only; fail closed"
+    manual_check: "enforce denies R3 without cert; shadow logs only; fail closed"
   - id: P1-05
     title: policy store
     owns: [backend/app/tool_routing/policy.py, backend/db/188_tool_policies.sql]
     depends: []
-    acceptance: "deny wins; R0 allow; R2/R3 approve; unknown deny"
+    manual_check: "deny wins; R0 allow; R2/R3 approve; unknown deny"
   - id: P1-06
     title: intent certificates
     owns: [backend/app/tool_routing/certificates.py, backend/db/189_intent_certificates.sql]
     depends: []
-    acceptance: "expired/revoked/widened fail; valid passes"
+    manual_check: "expired/revoked/widened fail; valid passes"
   - id: P1-07
     title: signed audit
     owns: [backend/app/tool_routing/audit.py, backend/db/190_tool_call_audit.sql]
     depends: []
-    acceptance: "chain verifies; tamper fails at the row"
+    manual_check: "chain verifies; tamper fails at the row"
   - id: P1-08
     title: Exa adapter
     owns: [backend/app/tool_providers/exa]
     depends: []
-    acceptance: "mock search/fetch; missing key refuses clearly"
+    manual_check: "real search with no sign-in; missing key refuses clearly"
   - id: P1-09
     title: Hinoki adapter
     owns: [backend/app/tool_providers/hinoki]
     depends: []
-    acceptance: "four read-only tools; no cert means no call"
+    manual_check: "four read-only tools; no cert means no call"
   - id: P1-10
     title: run recording
-    owns: [backend/app/tool_routing/runs.py, backend/db/191_task_runs.sql]
+    owns: [backend/app/tool_routing/runs.py, backend/db/191_task_runs.sql, backend/scripts/show_runs.py]
     depends: []
-    acceptance: "start/finish/read round-trip; errors recorded"
+    manual_check: "start/finish/read round-trip; errors recorded"
   - id: P1-11
     title: approval surface
     owns: [routing_kell_frontend/components/tools, routing_kell_frontend/app/api/tools/approve]
     depends: [P1-04]
-    acceptance: "approve once allows one matching call; hash change invalidates"
+    manual_check: "approve once allows one matching call; hash change invalidates"
   - id: P2-01
     title: corpus and contracts
     owns: [backend/scripts/compare/contracts.py, backend/scripts/compare/corpus.py, backend/scripts/compare/tasks]
     depends: [P1]
-    acceptance: "60 tasks validate; duplicate ids rejected"
+    manual_check: "60 tasks validate; duplicate ids rejected"
   - id: P2-02
     title: procedure runner
     owns: [backend/scripts/compare/procedure_runner.py]
     depends: [P2-01]
-    acceptance: "unbound step marked, not passed"
+    manual_check: "unbound step marked, not passed"
   - id: P2-03
     title: tool runner
     owns: [backend/scripts/compare/tool_runner.py]
     depends: [P2-01, P1-04]
-    acceptance: "gate refusal recorded as error_class gate:denied"
+    manual_check: "gate refusal recorded as error_class gate:denied"
   - id: P2-04
     title: normalizer and scorers
     owns: [backend/scripts/compare/scoring.py]
     depends: [P2-01]
-    acceptance: "each scorer pass+fail; judge blind"
+    manual_check: "each scorer prints pass or fail; judge blind"
   - id: P2-05
     title: orchestrator
     owns: [backend/scripts/compare/run_compare.py]
     depends: [P2-02, P2-03, P2-04]
-    acceptance: "2x2x2 run writes 8 runs and 2 comparisons"
+    manual_check: "2x2x2 run writes 8 runs and 2 comparisons"
   - id: P2-06
     title: comparison store
     owns: [backend/scripts/compare/store.py, backend/db/191_task_runs.sql]
     depends: [P2-05]
-    acceptance: "upsert by task/procedure/card; query by goal"
+    manual_check: "upsert by task/procedure/card; query by goal"
   - id: P2-07
     title: statistics and report
     owns: [backend/scripts/compare/stats.py, backend/scripts/compare/report.py]
     depends: [P2-06]
-    acceptance: "known effect recovered; zero effect CI contains 0"
-  - id: P2-08
-    title: comparison regression suite
-    owns: [backend/tests/test_compare_e2e_offline.py, backend/tests/fixtures/compare]
-    depends: [P2-07]
-    acceptance: "offline e2e under 60s"
+    manual_check: "known effect recovered; zero effect CI contains 0"
   - id: P3-01
     title: trust posterior
-    owns: [backend/app/tool_routing/trust.py, backend/db/192_tool_trust.sql]
+    owns: [backend/app/tool_routing/trust.py, backend/db/192_tool_trust.sql, backend/scripts/show_trust.py]
     depends: [P2]
-    acceptance: "1/1 ranks below 90/100"
+    manual_check: "1/1 ranks below 90/100"
   - id: P3-02
     title: provider-funded trials
     owns: [backend/app/tool_routing/trials.py, backend/db/193_tool_trials.sql]
     depends: [P2]
-    acceptance: "credits never negative; caps hold; no R3 trials"
+    manual_check: "credits never negative; caps hold; no R3 trials"
   - id: P3-03
     title: ranking integration
     owns: [backend/app/tool_routing/goal_router.py, backend/app/tool_routing/retrieve.py]
     depends: [P3-01, P3-02]
-    acceptance: "proven wins; trial only in share; flag restores P1 order"
+    manual_check: "proven wins; trial only in share; flag restores P1 order"
   - id: P3-04
     title: graduation and retirement
     owns: [backend/app/tool_routing/lifecycle.py, backend/scripts/tool_lifecycle.py]
     depends: [P3-03]
-    acceptance: "graduate/watch/retire transitions exact"
+    manual_check: "graduate/watch/retire transitions exact"
   - id: P3-05
     title: verification market
     owns: [backend/app/tool_routing/verification.py, backend/db/194_verification.sql]
     depends: [P2]
-    acceptance: "forged signature rejected; verifier reputation tracks outcomes"
+    manual_check: "forged signature rejected; verifier reputation tracks outcomes"
   - id: P3-06
     title: pricing and metering
     owns: [backend/app/tool_routing/pricing.py, backend/db/195_tool_listings.sql, backend/app/mcp_server/server.py]
     depends: [P1-04]
-    acceptance: "debit once; trial debits provider; refuse before network"
+    manual_check: "debit once; trial debits provider; refuse before network"
   - id: P3-07
     title: market report
     owns: [backend/scripts/tool_market_report.py, docs/tool_market_results.md]
     depends: [P3-04, P3-06]
-    acceptance: "calibration curve with sample sizes"
+    manual_check: "calibration curve with sample sizes"
 ```
