@@ -1091,7 +1091,7 @@ Update only your own row. `—` means unclaimed.
 | P2-04 | Scorers | anuj-claude | done | #31 |
 | P2-05 | Orchestrator | anuj-claude | done | #36 |
 | P2-06 | Comparison store | anuj-claude | done | #37 |
-| P2-07 | Statistics and report | anuj-claude | in progress | #38 |
+| P2-07 | Statistics and report | anuj-claude | done | #38 |
 | P3-01 | Trust posterior | — | blocked on Phase 2 | |
 | P3-02 | Provider-funded trials | — | blocked on Phase 2 | |
 | P3-03 | Ranking integration | — | blocked on P3-01/02 | |
