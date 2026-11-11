@@ -1,10 +1,14 @@
 """Write a few demo audit receipts and verify the chain (P1-07).
 
     python scripts/audit_demo.py
-    python scripts/audit_demo.py --count 3
+    python scripts/audit_demo.py --count 3 --tamper
 
 This is a manual-check helper, not production traffic: the rows are labelled `demo` and are
 ordinary audit rows, so `verify_audit_chain.py` covers them too.
+
+`--tamper` does two things: it shows that `db/197` refuses an UPDATE through the normal connection,
+then (inside one transaction, with the trigger disabled) edits a row, proves the hash chain fails at
+that receipt, and rolls the transaction back so nothing is left changed.
 """
 from __future__ import annotations
 
@@ -23,8 +27,41 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def dsn_from_env() -> str:
+    """The environment wins over backend/.env, so an exported scratch DATABASE_URL is honored."""
     env = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-    return env.get("DATABASE_URL") or os.environ.get("DATABASE_URL") or ""
+    return os.environ.get("DATABASE_URL") or env.get("DATABASE_URL") or ""
+
+
+class _Rollback(Exception):
+    """Raised to roll the tamper transaction back once the proof has been read."""
+
+
+async def _tamper(conn, audit, receipt_id: str) -> int:
+    """Prove both halves: the trigger blocks an update, and the chain catches one that gets through."""
+    blocked = ""
+    try:
+        await conn.execute("UPDATE tool_call_audit SET reason = 'tampered' WHERE receipt_id = $1", receipt_id)
+    except Exception as exc:  # noqa: BLE001 -- the guard is the expected path
+        blocked = str(exc)
+    print(f"guard:   {'blocked as expected' if 'append-only' in blocked else 'NOT ENFORCED'} ({blocked or 'update went through'})")
+
+    bad_message, bad = "", False
+    try:
+        async with conn.transaction():
+            try:
+                await conn.execute("ALTER TABLE tool_call_audit DISABLE TRIGGER tool_call_audit_no_update")
+            except Exception as exc:  # noqa: BLE001 -- not the table owner: the guard still holds
+                print(f"tampered: skipped (cannot disable the guard: {type(exc).__name__})")
+                return 0 if "append-only" in blocked else 1
+            await conn.execute("UPDATE tool_call_audit SET reason = 'tampered' WHERE receipt_id = $1", receipt_id)
+            bad, bad_message, _ = await audit.verify_chain(conn)
+            raise _Rollback
+    except _Rollback:
+        pass
+    print(f"tampered: {'ok (WRONG)' if bad else 'FAILED as expected'} ({bad_message})")
+    ok, message, _ = await audit.verify_chain(conn)
+    print(f"restored: {'ok' if ok else 'FAILED'} ({message})")
+    return 0 if (not bad and ok and "append-only" in blocked) else 1
 
 
 async def run(count: int, tamper: bool = False) -> int:
@@ -54,16 +91,7 @@ async def run(count: int, tamper: bool = False) -> int:
 
         if tamper and ids:
             async with pool.acquire() as conn:
-                await conn.execute(
-                    "UPDATE tool_call_audit SET reason = 'tampered' WHERE receipt_id = $1", ids[0])
-            bad, bad_message, _ = await audit.verify_chain(pool)
-            print(f"tampered: {'ok (WRONG)' if bad else 'FAILED as expected'} ({bad_message})")
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    "UPDATE tool_call_audit SET reason = 'demo' WHERE receipt_id = $1", ids[0])
-            fixed, fixed_message, _ = await audit.verify_chain(pool)
-            print(f"restored: {'ok' if fixed else 'FAILED'} ({fixed_message})")
-            return 0 if (not bad and fixed) else 1
+                return await _tamper(conn, audit, ids[0])
         return 0 if ok else 1
     finally:
         await pool.close()
@@ -73,7 +101,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Write demo audit receipts and verify the chain.")
     ap.add_argument("--count", type=int, default=2)
     ap.add_argument("--tamper", action="store_true",
-                    help="edit one receipt, prove the chain fails, then restore it")
+                    help="prove the append-only guard and that the chain fails on a tampered row")
     args = ap.parse_args()
     raise SystemExit(asyncio.run(run(args.count, args.tamper)))
 

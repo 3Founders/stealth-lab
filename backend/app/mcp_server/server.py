@@ -1868,11 +1868,14 @@ async def _gateway_call(ctx: Context, server_name: str, tool: str, arguments: di
     # it records the decision and lets the call through; in `enforce` a non-allow never reaches
     # the network. The model never sees a path around this.
     from app.tool_routing import gate as _gate
+    from app.tool_routing import store as _store
 
+    # Goal-scoped policies need the Goal the person's last search matched. `recent_goal` returns the
+    # taxonomy key (for example `web`), so normalize it to the same uuid the mapper writes (#34).
     decision = await _gate.authorize(pool, _gate.ToolCall(
         owner_id=owner,
         task_id=task_id or None,
-        goal_id=None,
+        goal_id=_gate.goal_uuid(_store.recent_goal(owner)),
         server=server_name,
         tool=tool,
         arguments=dict(arguments or {}),
@@ -4042,6 +4045,9 @@ async def use_tool(ctx: Context, name: str, arguments: dict[str, Any] | None = N
         return f"REFUSED: {name!r} is called directly, not through use_tool"
     if name not in V1_TOOLS:
         return f"REFUSED: no tool named {name!r}; call discover_tools(need=...) to find one"
+    # Deliberate exemption (#34 item 4): kell's own V1/DISCOVERY tools are not third-party calls and
+    # the plan keeps them outside the gateway gate (docs/goal_router.md P1-04); their own scope checks
+    # still apply, exactly as for a direct call. The gate covers `server=` calls and `_gateway_call`.
     try:
         result = await _MCP_SERVER.call_tool(name, dict(arguments or {}), ctx)
     except PermissionError:

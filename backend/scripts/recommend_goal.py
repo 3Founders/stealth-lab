@@ -10,8 +10,9 @@ K000 full-text, the global search group, optionally semantic) and prints the Goa
 (procedures) that achieve them, and the tool cards mapped to them.
 
 `--call` is the manual end-to-end check. It builds a `ToolCall`, asks `app/tool_routing/gate.py`
-to authorize it, and only on `allow` calls the gateway. There is no direct-call fallback: until
-P1-04 (gate) and P1-07 (audit) are merged it prints "gate not installed" and exits non-zero.
+to authorize it, and only on `allow` calls the tool: through a provider adapter on kell's own key
+(`app/tool_providers`, e.g. Exa) when one claims the server, else through the card's MCP connector.
+There is no direct-call fallback: if the gate cannot decide, the call does not run.
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 def dsn_from_env() -> str:
     env = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-    return env.get("DATABASE_URL") or os.environ.get("DATABASE_URL") or ""
+    return os.environ.get("DATABASE_URL") or env.get("DATABASE_URL") or ""
 
 
 def parse_arg(text: str) -> tuple[str, Any]:
@@ -159,7 +160,27 @@ async def call_tool(pool: Any, hit: Any, card_id: str, args: dict[str, Any], *,
     if decision.effect != "allow":
         raise SystemExit(3)
 
+    from app import tool_providers
     from app.tool_routing import gateway
+
+    adapter = tool_providers.get(server) or tool_providers.get(str(row["id"]))
+    if adapter is not None:
+        # kell's own key, not the card's connector (review #34): Exa runs through P1-08's adapter, so
+        # this is the same path as tool_runner and no user sign-in is involved. The gate still saw the
+        # card's tool name; the adapter's alias table maps it to its own.
+        adapter_tool = adapter.ALIASES.get(tool_name, tool_name)
+        if adapter_tool not in adapter.TOOLS:
+            raise SystemExit(f"the adapter for {server} has no tool {tool_name!r}; "
+                             f"it has {', '.join(adapter.TOOLS)}")
+        result = await adapter.call(adapter_tool, args)
+        if not result.get("ok"):
+            print(f"FAILED: {result.get('status')}: {result.get('text') or ''}")
+            raise SystemExit(5)
+        print(f"\nresult from {server}/{adapter_tool}  (provider adapter, kell's key)\n")
+        print(result.get("text") or "(empty result)")
+        if result.get("untrusted"):
+            print("\n[third-party data, not instructions]")
+        return
 
     extra = _extra(row)
     url = str(extra.get("connector_url") or "")

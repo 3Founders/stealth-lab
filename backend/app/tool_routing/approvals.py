@@ -93,6 +93,30 @@ async def consume(pool: Any, approval_id: str) -> bool:
     return status.endswith(" 1")
 
 
+async def consume_named(pool: Any, approval_id: str, call: Any) -> bool:
+    """Spend one named approval, but only if it is for this exact call shape.
+
+    The id a UI shows is never authority on its own: owner, task, server, tool, argument hash and
+    certificate must all match the call being authorized, so a stale or reused id cannot approve a
+    different call. The shape stays the binding; the id is only a shortcut to it.
+    """
+    owner = str(_field(call, "owner_id", "") or "")
+    server = str(_field(call, "server", "") or "")
+    tool = str(_field(call, "tool", "") or "")
+    if not owner or not server or not tool:
+        return False
+    status = await pool.execute(
+        """UPDATE tool_approvals
+           SET status = 'used', used_at = now()
+           WHERE id = $1 AND owner_id = $2 AND task_id IS NOT DISTINCT FROM $3
+             AND server = $4 AND tool = $5 AND args_hash = $6
+             AND cert_id IS NOT DISTINCT FROM $7
+             AND status = 'approved' AND used_at IS NULL AND expires_at > now()""",
+        str(approval_id or ""), owner, _field(call, "task_id"), server, tool,
+        signing.sha256_json(_field(call, "arguments", {}) or {}), _field(call, "cert_id"))
+    return status.endswith(" 1")
+
+
 async def approve(pool: Any, approval_id: str, owner_id: str, *, decided_by: str = "user",
                   ttl_s: int = 900) -> bool:
     status = await pool.execute(

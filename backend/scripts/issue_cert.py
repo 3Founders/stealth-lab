@@ -30,7 +30,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 def dsn_from_env() -> str:
     env = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-    return env.get("DATABASE_URL") or os.environ.get("DATABASE_URL") or ""
+    return os.environ.get("DATABASE_URL") or env.get("DATABASE_URL") or ""
 
 
 async def run(args: argparse.Namespace) -> int:
