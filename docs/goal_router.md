@@ -1,7 +1,7 @@
 # Goal-first routing: phases, sub-milestones, and file ownership
 
 Status: active plan, 2026-11-11. Phase 1 is complete except P1-09 (blocked on Hinoki's API base/schema); Phase 2 is
-complete; Phase 3 is in progress (P3-01 done, P3-02 in progress).
+complete; Phase 3 is complete (P3-01…P3-07).
 This document is the map. The GitHub issue is the lock (see [Claiming](#claiming-a-sub-milestone)).
 Current state and open review findings: [handoff_goal_router_2026-11-11.md](handoff_goal_router_2026-11-11.md).
 
@@ -92,7 +92,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Piece | State | Where |
 |---|---|---|
 | Goal index and search | exists | `goal_search_index`, `goal_names`, `app/services/goals.py` |
-| Goal-first router | exists, first cut | `app/tool_routing/goal_router.py` |
+| Goal-first router | exists; `GOAL_RANKING=trust` ranks a goal's tools by verified reuse (P3-03) | `app/tool_routing/goal_router.py` |
 | Goal CLI | exists, read-only | `backend/scripts/search_goals.py` |
 | Recommend-goal CLI | **built (P1-02)** | `backend/scripts/recommend_goal.py`; `search_goals.py` is a wrapper |
 | Security subgoals | **built (P1-01)** | `app/tool_routing/goals.py`, `db/187_tool_goals_security.sql` |
@@ -104,14 +104,14 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Tool gateway | exists, phase 1 | `app/tool_routing/gateway.py`, `_gateway_call` in `app/mcp_server/server.py` |
 | OAuth / consent | exists, off by default | `tool_oauth_*`, `oauth_client.py`, `TOOL_GATEWAY_OAUTH` |
 | Outcome recording | partial | `tool_observations` (db/162), `store.record_outcome` |
-| Exa | card + mapping exist | `registry:ai.exa/exa`, goal `web`, score 3.31 |
-| Hinoki | not integrated | needs an MCP wrapper and a card |
+| Exa | **adapter built (P1-08)**, card + mapping | `registry:ai.exa/exa`, goal `web`, kell's key |
+| Hinoki | **blocked (P1-09)** | needs the API base/schema (#26); no adapter or card registered |
 | Policy / intent / signed audit | **built (P1-05/06/07)** | `tool_policies`, `intent_certificates`, `tool_call_audit` |
 | Gate core | **built (P1-04)** | `gate.py`, `TOOL_GATE=off / shadow / enforce`, wired in `_gateway_call`/`use_tool` |
 | Approvals | **built (P1-11)** | `tool_approvals` (db/196), `approvals.py`, `scripts/approve_tool.py`, `/v1/tools/approvals` |
 | Tool arm | **built (P2-03)** | `scripts/compare/tool_runner.py` |
-| Tool-vs-procedure comparison | not built | this plan, Phase 2 |
-| Trust from reuse, trials, pricing | not built | this plan, Phase 3 |
+| Tool-vs-procedure comparison | **built (P2-01…P2-07)**; reports in `docs/compare_*.md` | `scripts/compare/*`. The procedure arm is unbound: no procedures exist for the tool goals, so every procedure run is `no_procedure` and the reports say so |
+| Trust, trials, lifecycle, verification, pricing | **built (P3-01…P3-07)** | `trust.py`, `trials.py`, `lifecycle.py`, `verification.py`, `pricing.py`, `scripts/tool_market_report.py` |
 
 Known local constraint: goal semantic/FTS search warns that the search group's members are unconfigured. Exact
 `goal_names` lookup works and hydrates from the home shard; the K000 full-text fallback in `goal_router.py` keeps the
@@ -119,16 +119,18 @@ Known local constraint: goal semantic/FTS search warns that the search group's m
 
 ### Try the router today
 
-Until P1-02 lands, the existing read-only CLI is the entry point:
+The entry point is `recommend_goal.py` (`search_goals.py` is a thin wrapper):
 
 ```powershell
 cd backend
-python scripts/search_goals.py "check what the page looks like after login"
-python scripts/search_goals.py "scan this repository for vulnerabilities" --json
-python scripts/map_tool_cards_to_goals.py --dry-run
+python scripts/recommend_goal.py "check what the page looks like after login" --explain
+python scripts/recommend_goal.py "scan this repository for vulnerabilities" --json
+python scripts/recommend_goal.py "search the web for the latest Postgres release" --call
+python scripts/map_tool_cards_to_goals.py --dry-run --report
 ```
 
-After P1-02, the same commands become `python scripts/recommend_goal.py ...`.
+`GOAL_RANKING=trust` switches the tool order from goal fit to verified reuse (P3-03); `TOOL_GATE=enforce`
+turns the gate from shadow into the answer. Neither is on by default yet.
 
 ## Ground rules for parallel agents
 

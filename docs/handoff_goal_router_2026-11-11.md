@@ -22,7 +22,7 @@ what was wrong; do not redo it. `197` is new and must be applied with `187-196`.
 | Phase | State |
 |---|---|
 | **Phase 1 — Foundation** | **Done except P1-09.** P1-01…P1-08, P1-10, P1-11 are merged. Hinoki (P1-09) is blocked on the API base/schema, not the credential. |
-| **Phase 2 — Evidence** | **Done.** P2-01…P2-07 are merged: corpus, procedure runner, tool runner, scorers, orchestrator, comparison store, paired statistics and per-goal report. |
+| **Phase 2 — Evidence** | **Done.** P2-01…P2-07 are merged: corpus, procedure runner, tool runner, scorers, orchestrator, comparison store, paired statistics and per-goal report. Caveat the reports state themselves: no procedures exist for the 25+5 tool goals, so the procedure arm is unbound (`no_procedure`) and the comparison is preliminary. |
 | **Phase 3 — Market** | **Done.** P3-01…P3-07 are merged: trust posterior, funded trials, trust ranking, graduation/retirement, verification market, pricing/metering and the market report. |
 
 Current board (from `docs/goal_router.md`):
@@ -98,7 +98,7 @@ and then reset the test rows if you want a clean chain.
   `TOOL_GATE` / `TOOL_GATE_STRICT`.
 - Migrations applied locally: `187`, `188`, `189`, `190`, `191` (including `comparison_results`), `192`
   (`tool_trust`), `196` (`tool_approvals`), `197` (append-only audit), `193` (trials), `194` (verification).
-- **Not applied locally:** `195` (listings, P3-06).
+- **Not applied locally:** none; `187-197` are all present.
 - `TOOL_CERT_SECRET` is unset and this machine's `DATABASE_URL` is Neon, not localhost, so
   `backend/.env` has `KELL_DEV=1` (git-ignored) to keep the manual checks working. A deployment must
   set `TOOL_CERT_SECRET` instead; without either, the gate denies R2+.
@@ -236,8 +236,9 @@ cd ..\desktop; npx tsc --noEmit
 5. **`goal_id` is `None` in `_gateway_call`.** Goal-scoped policies do not match.
 6. **`TOOL_CERT_SECRET` is unset locally, `KELL_DEV=1` is.** The dev key is refused on any deployment
    whose `DATABASE_URL` is not localhost; set `TOOL_CERT_SECRET` before production (invalidates old rows).
-7. **`tool_approvals` has no sweeper.** Expired pending rows remain; `list_pending` filters them. Add a periodic
-   `UPDATE … SET status='expired'` if the table grows.
+7. **`tool_approvals` sweeper is in.** `approvals.expire()` marks pending rows past their window as
+   `expired`; `list_pending` calls it lazily (the cards poll it) and `approve_tool.py --expire` runs it
+   from cron. Expired rows were already unusable; this is table hygiene.
 8. **Audit writes are serialized** by a transaction-scoped advisory lock. Fine now; a bottleneck at high volume.
 9. **`comparison_results` / `tool_trust` were applied manually.** Run `db/191` and `db/192` on every environment.
 10. **P2-03 is Anuj's runner.** Do not re-add a second `tool_runner.py`; our duplicate is in

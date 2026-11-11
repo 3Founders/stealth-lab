@@ -4,9 +4,13 @@
     python scripts/approve_tool.py --show ap_... --owner dev-local
     python scripts/approve_tool.py --approve ap_... --owner dev-local
     python scripts/approve_tool.py --deny ap_... --owner dev-local --note "not this repo"
+    python scripts/approve_tool.py --expire
 
 This is the manual twin of the card in the web and desktop apps. The approval is scoped to one exact
 call shape and is single-use; after `--approve`, the next identical gate call consumes it.
+
+`--expire` is the sweeper: pending rows past their window become `expired`. The cards' poll also
+sweeps lazily, so a scheduler is optional; run this from cron if nobody opens the app for days.
 """
 from __future__ import annotations
 
@@ -39,6 +43,9 @@ async def run(args: argparse.Namespace) -> int:
     try:
         from app.tool_routing import approvals
 
+        if args.expire:
+            print(f"expired: {await approvals.expire(pool)}")
+            return 0
         if args.list:
             rows = await approvals.list_pending(pool, args.owner, limit=args.limit)
             print(json.dumps(rows, indent=2, default=str))
@@ -67,6 +74,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="List, approve or deny a tool approval.")
     ap.add_argument("--owner", default=os.environ.get("KELL_DEV_OWNER") or "dev-local")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--expire", action="store_true",
+                    help="mark pending approvals past their window as expired")
     ap.add_argument("--show", default="")
     ap.add_argument("--approve", default="")
     ap.add_argument("--deny", default="")

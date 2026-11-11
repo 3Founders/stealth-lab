@@ -147,9 +147,25 @@ async def get(pool: Any, approval_id: str, owner_id: Optional[str] = None) -> Op
 
 
 async def list_pending(pool: Any, owner_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    await expire(pool)                      # lazy sweep: the UI never shows a row past its window
     rows = await pool.fetch(
         """SELECT * FROM tool_approvals
            WHERE owner_id = $1 AND status = 'pending' AND expires_at > now()
            ORDER BY requested_at DESC LIMIT $2""",
         str(owner_id or ""), max(1, min(int(limit), 100)))
     return [_row(r) for r in rows]
+
+
+async def expire(pool: Any) -> int:
+    """Mark pending rows whose window ended as `expired`; -> how many changed.
+
+    A pending row is only usable while `expires_at > now()` (find/consume/approve all check it), so
+    this is hygiene, not a security boundary: it keeps `list_pending` and the table from growing with
+    rows nobody can act on. It is a no-op on the common path. The cards' poll calls it lazily; a
+    scheduled caller can run `python scripts/approve_tool.py --expire` directly.
+    """
+    done = await pool.fetch(
+        """UPDATE tool_approvals SET status = 'expired'
+           WHERE status = 'pending' AND expires_at <= now()
+           RETURNING id""")
+    return len(done)
