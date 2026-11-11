@@ -5,7 +5,7 @@
     python -m scripts.compare.run_compare --goal security --arms procedure,tool,baseline --repeats 3 --budget-usd 2
 
 Arms: procedure (scripts/compare/procedure_runner.py), tool (tool_runner.py, through the gate) and baseline (the model
-alone: no procedure, no tool; OpenRouter with OPENROUTER_API_KEY and COMPARE_BASELINE_MODEL, default
+alone: no procedure, no tool; OpenRouter, or DeepInfra once OpenRouter is out of credit; COMPARE_BASELINE_MODEL, default
 openai/gpt-oss-120b). Every attempt is a RunRecord stored in task_runs. Attempt i of one arm is paired with attempt i
 of the others, and each (task, procedure, card) gets one ComparisonRecord. The winner here is only a direction:
 fewer than 3 pairs is "undecided"; confidence intervals and the verdict are scripts/compare/report.py's (P2-07).
@@ -36,17 +36,20 @@ from scripts.compare.procedure_runner import dsn, resolve_goal
 from scripts.compare.scoring import score, sha
 
 BASELINE_MODEL = os.environ.get("COMPARE_BASELINE_MODEL", "openai/gpt-oss-120b")
-BASELINE_URL = "https://openrouter.ai/api/v1/chat/completions"
+# the same model on two OpenAI-compatible providers: OpenRouter first; DeepInfra when OpenRouter's credit is used up
+BASELINE_PROVIDERS = (("openrouter", "https://openrouter.ai/api/v1/chat/completions", "OPENROUTER_API_KEY"),
+                      ("deepinfra", "https://api.deepinfra.com/v1/openai/chat/completions", "DEEPINFRA_KEY"))
+_SPENT: set[str] = set()   # providers that answered 402 in this process
 MAX_CONSECUTIVE_ERRORS = 3
 MIN_PAIRS_FOR_DIRECTION = 3
 
 
-def _openrouter_key() -> str:
-    if "OPENROUTER_API_KEY" in os.environ:
-        return os.environ["OPENROUTER_API_KEY"].strip()
+def _key(name: str) -> str:
+    if name in os.environ:
+        return os.environ[name].strip()
     from dotenv import dotenv_values
 
-    return str(dotenv_values(Path(__file__).resolve().parents[2] / ".env").get("OPENROUTER_API_KEY") or "").strip()
+    return str(dotenv_values(Path(__file__).resolve().parents[2] / ".env").get(name) or "").strip()
 
 
 async def run_baseline(pool: Any, task: Task, *, store: bool = True) -> RunRecord:
@@ -57,8 +60,8 @@ async def run_baseline(pool: Any, task: Task, *, store: bool = True) -> RunRecor
     t0 = time.monotonic()
     goal_key, _goal_id = await resolve_goal(pool, task)
     status, error_class, cost, tin, tout, sc = "error", None, 0.0, 0, 0, None
-    key = _openrouter_key()
-    if not key:
+    providers = [(n, u, _key(k)) for n, u, k in BASELINE_PROVIDERS if n not in _SPENT and _key(k)]
+    if not providers:
         error_class = "baseline:not_configured"
     else:
         body = {"model": BASELINE_MODEL, "temperature": 0, "seed": 7, "max_tokens": 600, "usage": {"include": True},
@@ -67,11 +70,23 @@ async def run_baseline(pool: Any, task: Task, *, store: bool = True) -> RunRecor
                              {"role": "user", "content": task.prompt}]}
         try:
             async with httpx.AsyncClient(timeout=120) as client:
-                r = await client.post(BASELINE_URL, json=body, headers={"authorization": f"Bearer {key}"})
+                for name, url, key in providers:
+                    for wait in (0, 2, 5, 15, 30):   # a rate limit or a busy model is retried, then counted
+                        if wait:
+                            await asyncio.sleep(wait)
+                        r = await client.post(url, json=body if name == "openrouter" else
+                                              {k: v for k, v in body.items() if k != "usage"},
+                                              headers={"authorization": f"Bearer {key}"})
+                        if r.status_code not in (429, 500, 502, 503, 504):
+                            break
+                    if r.status_code == 402:          # out of credit: the next provider, for the rest of the run
+                        _SPENT.add(name)
+                        continue
+                    break
             r.raise_for_status()
             data = r.json()
             usage = data.get("usage") or {}
-            cost = float(usage.get("cost") or 0.0)
+            cost = float(usage.get("cost") or usage.get("estimated_cost") or 0.0)
             tin, tout = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
             answer = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
             if cost > task.budget_usd:
