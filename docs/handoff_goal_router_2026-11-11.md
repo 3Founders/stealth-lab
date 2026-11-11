@@ -98,7 +98,7 @@ and then reset the test rows if you want a clean chain.
   `TOOL_GATE` / `TOOL_GATE_STRICT`.
 - Migrations applied locally: `187`, `188`, `189`, `190`, `191` (including `comparison_results`), `192`
   (`tool_trust`), `196` (`tool_approvals`), `197` (append-only audit), `193` (trials), `194` (verification),
-  `198` (OSV policy).
+  `198` (OSV policy), `199` (procedure↔card mapping).
 - **Not applied locally:** none; `187-198` are all present.
 - `TOOL_CERT_SECRET` is unset and this machine's `DATABASE_URL` is Neon, not localhost, so
   `backend/.env` has `KELL_DEV=1` (git-ignored) to keep the manual checks working. A deployment must
@@ -191,8 +191,8 @@ cd ..\desktop; npx tsc --noEmit
 **Migrations**
 
 - `186` card→goal, `187` security subgoals, `188` policies, `189` certificates, `190` audit, `191` task runs +
-  comparison results, `192` trust view, `196` approvals.
-- `193-195` are reserved for P3-02/P3-05/P3-06.
+  comparison results, `192` trust view, `196` approvals, `193` trials, `194` verification, `195` listings,
+  `197` append-only audit, `198` OSV policy, `199` procedure↔card mapping.
 
 **Scripts**
 

@@ -17,6 +17,7 @@ mapped to it by `tool_card_goals` (db/186_tool_card_goals.sql).
 """
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -56,6 +57,7 @@ class WayHit:
     preconditions: list[Any]
     verification_state: str
     availability: str
+    cards: list[dict[str, Any]] = field(default_factory=list)  # procedure_tool_cards: the binding targets
 
 
 @dataclass
@@ -186,23 +188,41 @@ async def _ways(pool: Any, hits: Sequence[dict[str, Any]]) -> dict[str, list[Way
             owner = pool if shard == HOME_SHARD else await pools.get(shard)
             rows = await owner.fetch(
                 """
-                SELECT id::text AS id, name, steps, preconditions,
-                       verification_state::text AS verification_state,
-                       availability::text AS availability
-                FROM procedures
-                WHERE achieves_goal_id = $1::uuid
-                  AND t_invalid IS NULL
-                  AND availability = 'active'
-                ORDER BY (verification_state = 'verified') DESC,
-                         COALESCE((verification_stats->>'successes')::int, 0) DESC,
-                         COALESCE((domain_payload->>'goal_score')::float, 0) DESC,
-                         t_created DESC
+                SELECT pr.id::text AS id, pr.name, pr.steps, pr.preconditions,
+                       pr.verification_state::text AS verification_state,
+                       pr.availability::text AS availability,
+                       COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                                            'card_id', pc.card_id, 'name', tc.name,
+                                            'server', tc.server, 'step_order', pc.step_order,
+                                            'score', pc.score)
+                                        ORDER BY pc.step_order, pc.score DESC, pc.card_id)
+                                 FROM procedure_tool_cards pc
+                                 JOIN tool_cards tc ON tc.id = pc.card_id
+                                 WHERE pc.procedure_id = pr.id), '[]'::jsonb) AS cards
+                FROM procedures pr
+                WHERE pr.achieves_goal_id = $1::uuid
+                  AND pr.t_invalid IS NULL
+                  AND pr.availability = 'active'
+                ORDER BY (pr.verification_state = 'verified') DESC,
+                         COALESCE((pr.verification_stats->>'successes')::int, 0) DESC,
+                         COALESCE((pr.domain_payload->>'goal_score')::float, 0) DESC,
+                         pr.t_created DESC
                 LIMIT $2
                 """,
                 hit["goal_id"], MAX_WAYS_PER_GOAL,
             )
         except ShardUnavailable:
             rows = []
+
+        def _cards(row: Any) -> list[dict[str, Any]]:
+            cards = row["cards"]
+            if isinstance(cards, str):
+                try:
+                    cards = json.loads(cards or "[]")
+                except ValueError:
+                    cards = []
+            return list(cards or [])
+
         out[hit["goal_id"]] = [
             WayHit(
                 procedure_id=str(row["id"]),
@@ -211,6 +231,7 @@ async def _ways(pool: Any, hits: Sequence[dict[str, Any]]) -> dict[str, list[Way
                 preconditions=list(row["preconditions"] or []),
                 verification_state=str(row["verification_state"] or ""),
                 availability=str(row["availability"] or ""),
+                cards=_cards(row),
             )
             for row in rows
         ]

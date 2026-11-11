@@ -153,6 +153,18 @@ async def bulk(conn, args: argparse.Namespace) -> int:
             ON CONFLICT (source_key) WHERE source_key IS NOT NULL AND t_invalid IS NULL DO NOTHING""",
         args.goal, cap)
     print(f"bulk insert: {status}  (cap per goal {cap or 'none'})")
+    mapped = await conn.execute(
+        """
+        INSERT INTO procedure_tool_cards (procedure_id, step_order, card_id, score, source)
+        SELECT p.id, 0, p.domain_payload->>'card_id',
+               COALESCE((p.domain_payload->>'goal_score')::real, 0), 'materialized'
+        FROM procedures p
+        WHERE p.provenance = 'tool_card' AND p.t_invalid IS NULL
+          AND p.domain_payload ? 'card_id'
+          AND EXISTS (SELECT 1 FROM tool_cards tc WHERE tc.id = p.domain_payload->>'card_id')
+        ON CONFLICT DO NOTHING
+        """)
+    print(f"card->way mapping: {mapped}")
     return 0
 
 
@@ -247,6 +259,15 @@ async def run(args: argparse.Namespace) -> int:
                         str(existing), name, goal["canonical_name"], json.dumps(steps),
                         json.dumps(payload),
                     )
+                await conn.execute(
+                    """
+                    INSERT INTO procedure_tool_cards (procedure_id, step_order, card_id, score, source)
+                    VALUES ($1::uuid, 0, $2, $3, 'materialized')
+                    ON CONFLICT (procedure_id, step_order, card_id)
+                    DO UPDATE SET score = EXCLUDED.score, source = 'materialized'
+                    """,
+                    str(existing or pid), str(card["id"]), float(card["score"] or 0),
+                )
                 made += 1
         print(f"{'would create' if args.dry_run else 'created/updated'}: {made}  skipped (no connector/tool): {skipped}")
         return 0

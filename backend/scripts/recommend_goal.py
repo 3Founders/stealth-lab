@@ -72,7 +72,9 @@ def print_hit(number: int, hit: Any, explain: bool) -> None:
     if hit.ways:
         print("   ways:")
         for way in hit.ways:
-            print(f"     - {way.name}  ({way.verification_state}/{way.availability})")
+            cards = ", ".join(str(c.get("card_id") or "") for c in (way.cards or []))
+            print(f"     - {way.name}  ({way.verification_state}/{way.availability})"
+                  + (f"  cards={cards}" if cards else ""))
     else:
         print("   ways: none")
     if hit.tools:
