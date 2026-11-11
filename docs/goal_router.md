@@ -29,7 +29,7 @@ Two things are still missing, and they are the reason for this plan:
    turns that evidence into ranking, trials and retirement.
 
 **Testing is manual.** There is no automated test suite in this plan. Every milestone ships with a command you run
-yourself and an expected result. Phase 1 is tested directly with the resolver script (`P1-02`), which is why it is the
+yourself and an expected result. Phase 1 is tested directly with the recommend-goal script (`P1-02`), which is why it is the
 first thing to build.
 
 Non-goals for this plan: cash payouts to providers, a public marketplace, and autonomous offensive security. Trial
@@ -67,7 +67,7 @@ python scripts/search_goals.py "scan this repository for vulnerabilities" --json
 python scripts/map_tool_cards_to_goals.py --dry-run
 ```
 
-After P1-02, the same commands become `python scripts/resolve_goal.py ...`.
+After P1-02, the same commands become `python scripts/recommend_goal.py ...`.
 
 ## Ground rules for parallel agents
 
@@ -81,7 +81,7 @@ After P1-02, the same commands become `python scripts/resolve_goal.py ...`.
 6. **Never weaken a fail-closed default to make a demo pass.** A denied call is a correct outcome.
 7. **Do not add static trust as a ranking signal.** Stars and `verified` are metadata. Ranking comes from verified
    reuse (Phase 3), not from a badge.
-8. **No test files.** Verify by running the resolver or the milestone's command and pasting the output in the PR.
+8. **No test files.** Verify by running the recommend-goal script or the milestone's command and pasting the output in the PR.
 
 ### Claiming a sub-milestone
 
@@ -170,7 +170,7 @@ async def finish_run(pool, run_id: str, record: dict) -> None: ...
 **Goal:** a prompt lands on the right Goal, the Goal shows its ways and tools, every tool call passes one gate, and every
 call and run is recorded. Exa runs without a user sign-in. Hinoki is present but R3-gated.
 
-**Start with P1-02.** It is the resolver script you will use to manually test every other Phase 1 milestone. The rest
+**Start with P1-02.** It is the recommend-goal script you will use to manually test every other Phase 1 milestone. The rest
 can be built in parallel against the frozen interfaces.
 
 ### Phase 1 manual test loop
@@ -189,8 +189,8 @@ For each row:
 
 ```powershell
 cd backend
-python scripts/resolve_goal.py "<prompt>" --explain
-python scripts/resolve_goal.py "<prompt>" --json
+python scripts/recommend_goal.py "<prompt>" --explain
+python scripts/recommend_goal.py "<prompt>" --json
 ```
 
 `--explain` must show which leg matched (`exact`, `fts`, `vector`), the Goal score, and the mapped tools in rank order.
@@ -212,25 +212,25 @@ Subgoals: `security_dependency_cve`, `security_secret_scan`, `security_sast`, `s
 **Manual check**
 
 ```powershell
-python scripts/resolve_goal.py "scan this repository for known CVEs in dependencies" --explain
-python scripts/resolve_goal.py "find hardcoded secrets in this repo" --explain
-python scripts/resolve_goal.py "review the auth flow for privilege escalation" --explain
+python scripts/recommend_goal.py "scan this repository for known CVEs in dependencies" --explain
+python scripts/recommend_goal.py "find hardcoded secrets in this repo" --explain
+python scripts/recommend_goal.py "review the auth flow for privilege escalation" --explain
 ```
 
 Each prompt must put its subgoal in the top 3, and the original 25 goals must still resolve as before.
 
 **Do not touch:** `goal_router.py`, the mapper, `server.py`.
 
-### P1-02 — Resolver script (the Phase 1 harness)
+### P1-02 — Recommend-goal script (the Phase 1 harness)
 
 **Builds:** the single command that resolves a prompt and, optionally, calls the chosen tool through the real gate. This
 is the manual test driver for Phase 1. It must not add a bypass: `--call` uses the same `authorize()` and gateway path
 as `use_tool`.
 
-`backend/scripts/resolve_goal.py`:
+`backend/scripts/recommend_goal.py`:
 
 ```
-resolve_goal.py "<prompt>" [--k 5] [--json] [--explain] [--semantic]
+recommend_goal.py "<prompt>" [--k 5] [--json] [--explain] [--semantic]
                            [--tools-only] [--call] [--tool NAME]
                            [--arg key=value ...] [--data-class PUBLIC_SOURCE]
                            [--owner dev-local] [--cert CERT_ID] [--task-id TASK_ID]
@@ -251,7 +251,7 @@ Behavior:
 
 **Files you own**
 
-- `backend/scripts/resolve_goal.py`
+- `backend/scripts/recommend_goal.py`
 - `backend/scripts/search_goals.py`
 - `backend/app/tool_routing/goal_router.py`
 
@@ -260,9 +260,9 @@ It imports `authorize()` from `gate.py`; it does not own `gate.py`.
 **Manual check**
 
 ```powershell
-python scripts/resolve_goal.py "check what the page looks like after login" --explain
-python scripts/resolve_goal.py "search the web for the latest Postgres release" --json
-python scripts/resolve_goal.py "search the web for the latest Postgres release" --call
+python scripts/recommend_goal.py "check what the page looks like after login" --explain
+python scripts/recommend_goal.py "search the web for the latest Postgres release" --json
+python scripts/recommend_goal.py "search the web for the latest Postgres release" --call
 ```
 
 The first shows one line per leg and the Goal's ways/tools. The second prints valid JSON. Once P1-04 and P1-07 are
@@ -286,7 +286,7 @@ mapper with `--pin card_id goal_id score`, `--report` (coverage per goal, orphan
 ```powershell
 python scripts/map_tool_cards_to_goals.py --dry-run --report
 python scripts/map_tool_cards_to_goals.py --pin registry:ai.exa/exa <web_goal_id> 9.0 --dry-run
-python scripts/resolve_goal.py "search the web" --tools-only
+python scripts/recommend_goal.py "search the web" --tools-only
 ```
 
 The report prints cards, mappings, goals with zero cards and cards with zero goals. The pin survives a `--replace` run.
@@ -312,11 +312,11 @@ rate limits) rather than duplicating them.
 
 ```powershell
 $env:TOOL_GATE = "enforce"
-python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call
+python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call
 # expect: REFUSED: policy:r3_requires_approval
 
 $env:TOOL_GATE = "shadow"
-python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call
+python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call
 # expect: the call runs, and the audit row records the decision that would have been enforced
 ```
 
@@ -338,12 +338,12 @@ deny → allowlist → risk → data class → rate → default deny. Ship seed 
 
 **Manual check**
 
-Run the resolver against one tool per tier and confirm the printed decision:
+Run the recommend-goal script against one tool per tier and confirm the printed decision:
 
 ```powershell
-python scripts/resolve_goal.py "search the web" --call            # R0 -> allow
-python scripts/resolve_goal.py "scan this repository" --call       # R3 -> approve
-python scripts/resolve_goal.py "delete the production database" --call  # unknown/deny
+python scripts/recommend_goal.py "search the web" --call            # R0 -> allow
+python scripts/recommend_goal.py "scan this repository" --call       # R3 -> approve
+python scripts/recommend_goal.py "delete the production database" --call  # unknown/deny
 ```
 
 Deny must win over allow, an empty allowlist must mean "all", and an unknown tool must deny.
@@ -367,10 +367,10 @@ is inside the allowed set.
 Issue a certificate for one read-only Hinoki tool, then:
 
 ```powershell
-python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call --cert <cert_id>
+python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call --cert <cert_id>
 # allowed only for scan_repository; explain_finding is refused
 
-python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call --cert <expired_id>
+python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call --cert <expired_id>
 # REFUSED: cert:expired
 ```
 
@@ -393,7 +393,7 @@ Never store arguments or results, only hashes.
 **Manual check**
 
 ```powershell
-python scripts/resolve_goal.py "search the web for the latest Postgres release" --call
+python scripts/recommend_goal.py "search the web for the latest Postgres release" --call
 python scripts/verify_audit_chain.py --since 1h
 # expect: ok, N receipts
 
@@ -419,11 +419,11 @@ user's credentials.
 **Manual check**
 
 ```powershell
-python scripts/resolve_goal.py "search the web for the latest Postgres release" --call
+python scripts/recommend_goal.py "search the web for the latest Postgres release" --call
 # expect: results, no sign-in prompt
 
 $env:EXA_API_KEY = ""
-python scripts/resolve_goal.py "search the web for the latest Postgres release" --call
+python scripts/recommend_goal.py "search the web for the latest Postgres release" --call
 # expect: FAILED: exa not configured
 ```
 
@@ -454,10 +454,10 @@ No exploit execution, no live third-party target, no credential access in v1. Th
 
 ```powershell
 python scripts/register_hinoki_card.py --dry-run
-python scripts/resolve_goal.py "scan this repository for vulnerabilities" --tools-only
+python scripts/recommend_goal.py "scan this repository for vulnerabilities" --tools-only
 # expect: Hinoki in the top tools
 
-python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call --arg repo_url=https://github.com/org/repo
+python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call --arg repo_url=https://github.com/org/repo
 # expect: REFUSED without a certificate; findings with one
 ```
 
@@ -480,7 +480,7 @@ trace ref. Extend `tool_gateway_calls` with `task_id`, `cert_id`, `decision`, `c
 **Manual check**
 
 ```powershell
-python scripts/resolve_goal.py "search the web" --call --task-id demo-1
+python scripts/recommend_goal.py "search the web" --call --task-id demo-1
 python scripts/show_runs.py --task demo-1
 # expect: one row per arm, with status, latency, cost, goal and tool
 ```
@@ -506,11 +506,11 @@ short-lived.
 **Manual check**
 
 ```powershell
-python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call
+python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call
 # expect: approve + approval id + link
 
 # approve once in the UI, then:
-python scripts/resolve_goal.py "scan this repository for vulnerabilities" --call --approval <id>
+python scripts/recommend_goal.py "scan this repository for vulnerabilities" --call --approval <id>
 # expect: one call allowed, the second refused
 ```
 
@@ -520,8 +520,8 @@ Changing an argument or letting the approval expire must refuse.
 
 **Phase 1 exit criteria**
 
-- `python scripts/resolve_goal.py "<security prompt>" --explain` returns the security subgoal and Hinoki.
-- `python scripts/resolve_goal.py "<web prompt>" --explain` returns the web goal and Exa.
+- `python scripts/recommend_goal.py "<security prompt>" --explain` returns the security subgoal and Hinoki.
+- `python scripts/recommend_goal.py "<web prompt>" --explain` returns the web goal and Exa.
 - `--call` on an R3 tool without a certificate is refused in `enforce` mode; R0 passes.
 - Every decision produces one `tool_call_audit` row and the chain verifies.
 - Exa answers a real query with no user sign-in.
@@ -538,7 +538,7 @@ tasks, records results, and reports. It does not change ranking. It is run manua
 
 For each benchmark task:
 
-1. Resolve the task's Goal with `resolve_goal.py` / `route_goal`.
+1. Resolve the task's Goal with `recommend_goal.py` / `route_goal`.
 2. Pick one **procedure arm** (the best active procedure for that Goal) and one **tool arm** (the top card mapped to that
    Goal, after the gate says it may run).
 3. Optionally run a **baseline arm** (model alone, no procedure and no tool) to separate "the task is easy" from "the
@@ -727,7 +727,7 @@ two hundred verified ones.
 python scripts/show_trust.py --goal web --limit 10
 # expect: wins/judged, lower bound, last outcome, trial vs paid
 
-python scripts/resolve_goal.py "search the web" --explain
+python scripts/recommend_goal.py "search the web" --explain
 # expect: trust lower bound shown per tool once the view is on
 ```
 
@@ -750,7 +750,7 @@ offensive actions; a trial may only be a read-only scan.
 python -c "import asyncio; from app.tool_routing.trials import status; print(asyncio.run(status('web')))"
 # expect: active trials, credit left, share of calls
 
-python scripts/resolve_goal.py "search the web" --explain
+python scripts/recommend_goal.py "search the web" --explain
 # expect: the trial tool is marked and only appears inside its share
 ```
 
@@ -770,7 +770,7 @@ risk_penalty`, with `goal_fit` as a gate, not the score. Exact/alias goal still 
 **Manual check**
 
 ```powershell
-python scripts/resolve_goal.py "search the web" --explain
+python scripts/recommend_goal.py "search the web" --explain
 # expect: proven tool first; trial tool only inside its share; high-risk tool last
 ```
 
@@ -793,7 +793,7 @@ goal at the next best tool.
 python scripts/tool_lifecycle.py --dry-run
 # expect: per tool, one of graduate / watch / retire, with the numbers behind it
 
-python scripts/resolve_goal.py "search the web" --tools-only
+python scripts/recommend_goal.py "search the web" --tools-only
 # expect: a retired tool is not listed; the goal shows the next best
 ```
 
@@ -832,10 +832,10 @@ back.
 **Manual check**
 
 ```powershell
-python scripts/resolve_goal.py "search the web" --call
+python scripts/recommend_goal.py "search the web" --call
 # expect: a price line before the call, then the result
 
-python scripts/resolve_goal.py "search the web" --call --owner broke
+python scripts/recommend_goal.py "search the web" --call --owner broke
 # expect: REFUSED: balance, before any network call
 ```
 
@@ -869,7 +869,7 @@ python scripts/tool_market_report.py --since 7d --out docs/tool_market_results.m
 ## Dependency graph
 
 ```
-P1-02 (resolver) ─┐
+P1-02 (recommend_goal) ─┐
 P1-01 ────────────┤
 P1-03 ────────────┼─→ P1-04 (gate) ─→ P1-11
 P1-05 ────────────┤
@@ -887,7 +887,7 @@ P1-04 ─→ P3-06 ─→ P3-07
 ```
 
 The diagram is build order, not a strict dependency list: only P1-04 truly waits on P1-05/06/07. P1-02 is the first
-merge: it is the resolver used to manually test everything else. P2-03 also needs P1-04 (it must go through the real
+merge: it is the recommend-goal script used to manually test everything else. P2-03 also needs P1-04 (it must go through the real
 gate).
 
 Parallel-safe groups:
@@ -905,7 +905,7 @@ Update only your own row. `—` means unclaimed.
 | ID | Milestone | Owner | State | PR / issue |
 |---|---|---|---|---|
 | P1-01 | Security and intent Goals | — | open | |
-| P1-02 | Resolver script (start here) | — | open | |
+| P1-02 | Recommend-goal script (start here) | — | open | |
 | P1-03 | Mapping v2 and manual pins | — | open | |
 | P1-04 | Gate core (`server.py`) | — | open | |
 | P1-05 | Policy store | — | open | |
@@ -937,7 +937,7 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 | File / glob | Owner |
 |---|---|
 | `backend/app/tool_routing/goals.py`, `backend/db/187_*` | P1-01 |
-| `backend/scripts/resolve_goal.py`, `backend/scripts/search_goals.py`, `backend/app/tool_routing/goal_router.py` | P1-02 (router then P3-03) |
+| `backend/scripts/recommend_goal.py`, `backend/scripts/search_goals.py`, `backend/app/tool_routing/goal_router.py` | P1-02 (router then P3-03) |
 | `backend/scripts/map_tool_cards_to_goals.py`, `backend/scripts/report_goal_coverage.py` | P1-03 |
 | `backend/app/tool_routing/gate.py`, `backend/app/mcp_server/server.py` | P1-04 (then P3-06) |
 | `backend/app/tool_routing/policy.py`, `backend/db/188_*` | P1-05 |
@@ -966,7 +966,7 @@ A file may appear in exactly one open milestone. If you need to change it, coord
 
 | Phase | Done when |
 |---|---|
-| 1 | The resolver routes a security prompt and a web prompt to the right goal and tool; `--call` passes R0 and refuses R3 without a certificate; every call has a decision and a verifiable receipt; Exa runs keyless-to-the-user; Hinoki is R3-gated. |
+| 1 | The recommend-goal script routes a security prompt and a web prompt to the right goal and tool; `--call` passes R0 and refuses R3 without a certificate; every call has a decision and a verifiable receipt; Exa runs keyless-to-the-user; Hinoki is R3-gated. |
 | 2 | A reproducible Python harness compares tool vs procedure vs baseline on 60 tasks, with paired deltas and confidence intervals, and a report per goal. |
 | 3 | Ranking is driven by verified reuse; trials are provider-funded and capped; bad tools retire; verification is continuous and cannot be bought. |
 
@@ -1006,10 +1006,10 @@ milestones:
     title: security and intent Goals
     owns: [backend/app/tool_routing/goals.py, backend/db/187_tool_goals_security.sql]
     depends: []
-    manual_check: "resolve_goal.py on CVE, secrets and auth prompts puts the subgoal in top 3"
+    manual_check: "recommend_goal.py on CVE, secrets and auth prompts puts the subgoal in top 3"
   - id: P1-02
-    title: resolver script (start here)
-    owns: [backend/scripts/resolve_goal.py, backend/scripts/search_goals.py, backend/app/tool_routing/goal_router.py]
+    title: recommend-goal script (start here)
+    owns: [backend/scripts/recommend_goal.py, backend/scripts/search_goals.py, backend/app/tool_routing/goal_router.py]
     depends: []
     manual_check: "--explain shows legs; --json is valid; --call goes through the gate"
   - id: P1-03
