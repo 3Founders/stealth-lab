@@ -1100,7 +1100,7 @@ Update only your own row. `—` means unclaimed.
 | P3-04 | Graduation and retirement | anuj-claude | done | #42 |
 | P3-05 | Verification market | anuj-claude | done | #43 |
 | P3-06 | Pricing and metering (`server.py`) | anuj-claude | done | #45 |
-| P3-07 | Market report | anuj-claude | in progress | #46 |
+| P3-07 | Market report | anuj-claude | done | #46 |
 
 ## File ownership index
 
