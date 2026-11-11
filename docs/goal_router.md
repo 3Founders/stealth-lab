@@ -1025,7 +1025,7 @@ Update only your own row. `—` means unclaimed.
 | P2-01 | Corpus and contracts | anuj-claude | done | #30 |
 | P2-02 | Procedure runner | — | blocked on P2-01 | |
 | P2-03 | Tool runner | — | blocked on P2-01 | |
-| P2-04 | Scorers | anuj-claude | in progress | #31 |
+| P2-04 | Scorers | anuj-claude | done | #31 |
 | P2-05 | Orchestrator | — | blocked on P2-02..04 | |
 | P2-06 | Comparison store | — | blocked on P2-05 | |
 | P2-07 | Statistics and report | — | blocked on P2-06 | |
