@@ -64,7 +64,10 @@ def print_hit(number: int, hit: Any, explain: bool) -> None:
                 print(f"     - {t['leg']:<10} rank {t['rank']:<2} score {t['score']:.4f}  {t['name']}")
         else:
             print("   legs: none")
-        print(f"   ranking: goal_fit={hit.score:.3f}  trust=n/a (P3-01)  risk=unknown (P1-05)")
+        ranked = any(getattr(t, "rank_score", None) is not None for t in hit.tools)
+        print(f"   ranking: goal_fit={hit.score:.3f}  tools by "
+              + ("trust lower bound + exploration - cost - latency - risk (GOAL_RANKING=trust)" if ranked
+                 else "goal fit, then stars (GOAL_RANKING=fit)"))
     if hit.ways:
         print("   ways:")
         for way in hit.ways:
@@ -75,7 +78,13 @@ def print_hit(number: int, hit: Any, explain: bool) -> None:
         print("   tools:")
         for tool in hit.tools:
             label = tool.title or tool.name or tool.server
-            print(f"     - {label}  [{tool.server or tool.source}]  (score {tool.score:.3f})  card={tool.card_id}")
+            print(f"     - {label}  [{tool.server or tool.source}]  (score {tool.score:.3f})  card={tool.card_id}"
+                  + ("  New - free trial" if getattr(tool, "trial", False) else ""))
+            if explain and getattr(tool, "rank_score", None) is not None:
+                i = tool.rank_inputs
+                print(f"         rank {tool.rank_score:+.3f} = trust lb {i['trust_lb']:.3f} ({i['wins']}/{i['judged']})"
+                      f" + explore {i['exploration']:.3f} - cost {i['cost_penalty']:.3f} - latency "
+                      f"{i['latency_penalty']:.3f} - risk {i['risk_penalty']:.2f} ({i['risk']})")
     else:
         print("   tools: none")
 

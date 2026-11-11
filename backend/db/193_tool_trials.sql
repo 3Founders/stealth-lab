@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS tool_trials (
     max_calls       integer NOT NULL CHECK (max_calls > 0),
     used_calls      integer NOT NULL DEFAULT 0 CHECK (used_calls >= 0),
     per_user_calls  integer NOT NULL DEFAULT 5 CHECK (per_user_calls > 0),
-    share           real NOT NULL DEFAULT 0.1 CHECK (share > 0 AND share <= 0.2),
+    share           real NOT NULL DEFAULT 0.1 CHECK (share > 0 AND share <= 0.2::real),
     risk            text NOT NULL DEFAULT 'R0' CHECK (risk IN ('R0', 'R1', 'R2', 'R3', 'R4')),
     read_only       boolean NOT NULL DEFAULT true,
     window_start    timestamptz NOT NULL DEFAULT now(),
