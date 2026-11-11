@@ -463,6 +463,33 @@ async def route_goal(
     tools = await _tools(pool, [h["goal_id"] for h in ranked], owner_id=owner_id,
                          request_id=request_id) if include_tools else {}
 
+    # A one-step Way is its tool: build the Ways from the ranked tools so the first Way is the
+    # first tool (trust when GOAL_RANKING=trust, goal fit otherwise). A tool with no materialized
+    # procedure gets a synthesized one-step Way; a real multi-step Way is kept when one of its
+    # cards is in the ranked list.
+    if include_ways and include_tools:
+        for goal_id, hits in tools.items():
+            by_card: dict[str, Any] = {}
+            for w in ways.get(goal_id, []):
+                for c in (w.cards or []):
+                    by_card.setdefault(str(c.get("card_id") or ""), w)
+            built: list[Any] = []
+            for t in hits:
+                w = by_card.get(t.card_id)
+                if w is None:
+                    w = WayHit(
+                        procedure_id=f"tool:{t.card_id}",
+                        name=t.title or t.name or t.server,
+                        steps=[{"order": 0, "goal": f"Use {t.name or t.server}", "card_id": t.card_id}],
+                        preconditions=[],
+                        verification_state="candidate",
+                        availability="active",
+                        cards=[{"card_id": t.card_id, "name": t.name, "server": t.server,
+                                "step_order": 0}],
+                    )
+                built.append(w)
+            ways[goal_id] = built[:MAX_WAYS_PER_GOAL]
+
     return [
         GoalHit(
             goal_id=h["goal_id"],

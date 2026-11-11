@@ -101,7 +101,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Intent certificates | **built (P1-06)** | `intent_certificates` (db/189), `certificates.py`, `scripts/issue_cert.py`, `scripts/check_cert.py` |
 | Signed audit | **built (P1-07)** | `tool_call_audit` (db/190), `audit.py`, `signing.py`, `scripts/verify_audit_chain.py` |
 | Card → goal mapping | exists, 125,656 rows | `db/186_tool_card_goals.sql`, `scripts/map_tool_cards_to_goals.py` |
-| Ways from tools | **materialized: 56,741 one-step procedures (the runnable library)** | `scripts/materialize_tool_procedures.py --all`; 20,079 cards. `procedure_tool_cards` (db/199) binds each way's step to its card (56,741 mappings); the other 68,916 card→goal edges have no connector/tool |
+| Ways from tools | **materialized: 56,741 one-step procedures (the runnable library)** | `scripts/materialize_tool_procedures.py --all`; 20,079 cards. `procedure_tool_cards` (db/199) binds each way's step to its card (56,741 mappings); the router builds the Ways from the **ranked** tools, so the first Way is the first tool (trust under `GOAL_RANKING=trust`). The other 68,916 card→goal edges have no connector/tool |
 | Tool gateway | exists, phase 1 | `app/tool_routing/gateway.py`, `_gateway_call` in `app/mcp_server/server.py` |
 | OAuth / consent | exists, off by default | `tool_oauth_*`, `oauth_client.py`, `TOOL_GATEWAY_OAUTH` |
 | Outcome recording | partial | `tool_observations` (db/162), `store.record_outcome` |
