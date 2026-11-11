@@ -10,6 +10,11 @@ status table and the open issues, and only then claim a milestone.
 
 State described here: `2ffb2bcf`. This handoff file landed in `dfd2f4bd`; run `git pull --rebase origin main` first.
 
+**Update after `1839f665`:** #34 and #29 are fixed and closed (fail-closed `authorize()`, adapter
+dispatch in `recommend_goal --call`, environment-first DSN, signing refuses the dev key off
+localhost, and `db/197_tool_call_audit_append_only.sql`). Section 3 below is kept as the record of
+what was wrong; do not redo it. `197` is new and must be applied with `187-196`.
+
 ---
 
 ## 1. Where the project is
@@ -88,12 +93,16 @@ and then reset the test rows if you want a clean chain.
 - `backend/.env` is **git-ignored** (`git ls-files backend/.env` is empty). It contains:
   - `EXA_API_KEY` — set; Anuj's P1-08 adapter uses it.
   - `HINOKI_API_KEY` — set (kell-managed; **never commit it**).
-  - `TOOL_CERT_SECRET` — **unset**; the fixed dev key signs certs/receipts.
-- `backend/.env.example` documents `EXA_API_KEY`, `HINOKI_API_KEY`, `TOOL_CERT_SECRET`.
+  - `TOOL_CERT_SECRET` — **unset**; `KELL_DEV=1` is set, so the fixed dev key signs certs/receipts.
+- `backend/.env.example` documents `EXA_API_KEY`, `HINOKI_API_KEY`, `TOOL_CERT_SECRET`, `KELL_DEV` and
+  `TOOL_GATE` / `TOOL_GATE_STRICT`.
 - Migrations applied locally: `187`, `188`, `189`, `190`, `191` (including `comparison_results`), `192`
-  (`tool_trust`), `196` (`tool_approvals`).
-- **Not applied locally:** `193` (trials, P3-02), `194` (verification, P3-05), `195` (listings, P3-06).
-- Local test data: ~17 audit receipts, several intent certificates, one pending approval for `demo-5`, several
+  (`tool_trust`), `196` (`tool_approvals`), `197` (append-only audit), `193` (trials), `194` (verification).
+- **Not applied locally:** `195` (listings, P3-06).
+- `TOOL_CERT_SECRET` is unset and this machine's `DATABASE_URL` is Neon, not localhost, so
+  `backend/.env` has `KELL_DEV=1` (git-ignored) to keep the manual checks working. A deployment must
+  set `TOOL_CERT_SECRET` instead; without either, the gate denies R2+.
+- Local test data: 30+ audit receipts, several intent certificates, pending/used approvals for `demo-5`/`demo-6`, several
   `task_runs` rows from P2-03. All are `demo`/`dev-local`; clean them if you need a fresh chain.
 - `tool_trust` is a **materialized view**. Refresh with `SELECT refresh_tool_trust();`.
 - The `search group: 6 search members are registered but none of their connection strings is set` warning is benign
@@ -225,7 +234,8 @@ cd ..\desktop; npx tsc --noEmit
 3. **`recommend_goal --call` bypasses the Exa adapter** (uses `mcp.exa.ai` directly). Fix per #34.
 4. **Gate defaults to shadow.** Production must set `TOOL_GATE=off` until migrations are applied, then `enforce`.
 5. **`goal_id` is `None` in `_gateway_call`.** Goal-scoped policies do not match.
-6. **`TOOL_CERT_SECRET` is unset.** The dev key signs certs/receipts; set it before production (invalidates old rows).
+6. **`TOOL_CERT_SECRET` is unset locally, `KELL_DEV=1` is.** The dev key is refused on any deployment
+   whose `DATABASE_URL` is not localhost; set `TOOL_CERT_SECRET` before production (invalidates old rows).
 7. **`tool_approvals` has no sweeper.** Expired pending rows remain; `list_pending` filters them. Add a periodic
    `UPDATE … SET status='expired'` if the table grows.
 8. **Audit writes are serialized** by a transaction-scoped advisory lock. Fine now; a bottleneck at high volume.
@@ -254,14 +264,11 @@ cd ..\desktop; npx tsc --noEmit
 
 ## 9. Suggested next order
 
-1. **Fix #34 and #29** — deploy blockers (gate fail-closed, environment-first DSN, adapter path, signing secret,
-   append-only trigger).
+1. **Fix #34 and #29** — **done in `1839f665`** (fail-closed gate, environment-first DSN, adapter path,
+   signing secret, append-only trigger).
 2. **Integrate the desktop approval card** into `desktop/app/page.tsx`.
-3. **P3-02** — wait for/assist Anuj (#40); then **P3-03 ranking integration** (`goal_router.py` + `retrieve.py`).
-4. **P3-05** verification market.
-5. **P3-06** pricing/metering (takes `server.py` after P1-04/P1-11).
-6. **P3-07** market report.
-7. **P1-09** when the Hinoki API base/schema is known.
+3. **P3-06** pricing/metering (in progress, #45, holds `server.py`); then **P3-07** market report.
+4. **P1-09** when the Hinoki API base/schema is known.
 
 ---
 
@@ -283,8 +290,9 @@ c43cbb09 feat(tool_routing): tool approvals, gate branch and web/desktop cards (
 474cd11f feat(tool_routing): recommend_goal CLI, security subgoals and manual pins
 ```
 
-Open issues: #26 (Hinoki), #29 (signing secret), #34 (P1-04 review), #40 (P3-02 claim). The only open PRs are
-dependabot dependency bumps; no goal-router PR is open.
+Open issues: #26 (Hinoki), #45 (P3-06 claim). #29 and #34 are fixed in `1839f665` and closed; #40-#43
+(P3-02…P3-05) are merged and closed. The only open PRs are dependabot dependency bumps; no goal-router PR
+is open.
 
 ---
 
