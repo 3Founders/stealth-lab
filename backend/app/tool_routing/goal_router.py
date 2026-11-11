@@ -283,10 +283,12 @@ async def _rank(pool: Any, goal_id: str, cards: list[ToolHit], *, owner_id: Opti
     key = _goal_key(goal_id)
     cards = [c for c in cards if c.score >= GOAL_FIT_MIN]
     excluded: set[str] = set()
+    demoted: dict[str, float] = {}
     try:
-        from app.tool_routing import lifecycle as _lifecycle   # P3-04: retired cards leave the list
+        from app.tool_routing import lifecycle as _lifecycle   # P3-04: retired cards leave, retiring ones drop
 
         excluded = set(await _lifecycle.excluded(pool, key))
+        demoted = await _lifecycle.demotions(pool, key)
     except (ImportError, AttributeError):
         pass
     trial_ids = {str(r["card_id"]) for r in await _optional_fetch(
@@ -319,9 +321,11 @@ async def _rank(pool: Any, goal_id: str, cards: list[ToolHit], *, owner_id: Opti
                   "latency_penalty": round(min(0.1, latency.get(c.card_id, 0.0) / 100_000), 4),
                   "risk": risk if c.server in risks else f"{risk}?", "risk_penalty": RISK_PENALTY.get(risk, 0.1),
                   "goal_fit": round(c.score, 3)}
+        if c.card_id in demoted:
+            inputs["retiring_penalty"] = demoted[c.card_id]
         c.rank_inputs = inputs
         c.rank_score = round(lb + inputs["exploration"] - inputs["cost_penalty"] - inputs["latency_penalty"]
-                             - inputs["risk_penalty"], 4)
+                             - inputs["risk_penalty"] - inputs.get("retiring_penalty", 0.0), 4)
     cards.sort(key=lambda c: (-(c.rank_score or 0.0), -c.score, c.card_id))
     cards = cards[:MAX_TOOLS_PER_GOAL]
     if trial is not None:
