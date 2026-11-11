@@ -160,6 +160,25 @@ async def call_tool(pool: Any, hit: Any, card_id: str, args: dict[str, Any], *,
     if decision.effect != "allow":
         raise SystemExit(3)
 
+    # P3-06: a priced tool shows its price and is paid before any network call; a failed call is refunded
+    import uuid as _uuid
+
+    from app.tool_routing import pricing
+
+    line = await pricing.quote(pool, call)
+    if line:
+        print(line)
+    charged = await pricing.charge(pool, call, call_key=f"cli:{_uuid.uuid4()}")
+    if not charged.ok:
+        print(f"REFUSED: {charged.reason}")
+        raise SystemExit(3)
+    if charged.price_usd:
+        print(f"charged: ${charged.price_usd:.4f} ({charged.paid_by})")
+
+    async def refund() -> None:
+        if charged.price_usd and await pricing.refund(pool, charged.call_key):
+            print("refunded: the call failed")
+
     from app import tool_providers
     from app.tool_routing import gateway
 
@@ -175,7 +194,10 @@ async def call_tool(pool: Any, hit: Any, card_id: str, args: dict[str, Any], *,
         result = await adapter.call(adapter_tool, args)
         if not result.get("ok"):
             print(f"FAILED: {result.get('status')}: {result.get('text') or ''}")
+            await refund()
             raise SystemExit(5)
+        if charged.price_usd:
+            await pricing.settle(pool, charged.call_key)
         print(f"\nresult from {server}/{adapter_tool}  (provider adapter, kell's key)\n")
         print(result.get("text") or "(empty result)")
         if result.get("untrusted"):
@@ -201,12 +223,18 @@ async def call_tool(pool: Any, hit: Any, card_id: str, args: dict[str, Any], *,
             url, tool_name, args, token=token, server=server)
     except gateway.GatewaySignIn as exc:
         print(f"SIGN-IN REQUIRED: {exc.server}  ({exc.url})")
+        await refund()
         raise SystemExit(4)
     except gateway.GatewayRefused as exc:
         print(f"REFUSED: {exc}")
+        await refund()
         raise SystemExit(5)
 
     text, images = gateway.content_parts(result)
+    if result.get("isError"):
+        await refund()
+    elif charged.price_usd:
+        await pricing.settle(pool, charged.call_key)
     print(f"\nresult from {server}/{tool_name}  ({sent} B sent, {received} B received, "
           f"{len(images)} image(s)):\n")
     print(text or "(empty result)")

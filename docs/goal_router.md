@@ -1099,7 +1099,7 @@ Update only your own row. `—` means unclaimed.
 | P3-03 | Ranking integration | anuj-claude | done | #41 |
 | P3-04 | Graduation and retirement | anuj-claude | done | #42 |
 | P3-05 | Verification market | anuj-claude | done | #43 |
-| P3-06 | Pricing and metering (`server.py`) | anuj-claude | in progress | #45 |
+| P3-06 | Pricing and metering (`server.py`) | anuj-claude | done | #45 |
 | P3-07 | Market report | — | blocked on Phase 3 | |
 
 ## File ownership index
