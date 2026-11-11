@@ -3,6 +3,56 @@
 Status: active plan, 2026-11-11. Phase 1 is open for parallel work.
 This document is the map. The GitHub issue is the lock (see [Claiming](#claiming-a-sub-milestone)).
 
+## If you are an agent: start here
+
+The only prompt you need is:
+
+> read docs/goal_router.md and complete it
+
+"Complete it" means: work the status table top to bottom, one unclaimed milestone at a time, in dependency order, and
+push each one to `main`. Do not wait for another instruction. Do not stop after one milestone unless you are blocked.
+
+### The work loop
+
+1. Read this whole document.
+2. `git pull --rebase origin main`.
+3. Pick the first row in [Status](#status) that is `open` (or `blocked` and now unblocked). Start with **P1-02**, then
+   the rest of P1, then P2, then P3.
+4. Claim it: open the issue, assign yourself, branch `goal-router/<ID>-<slug>`, and edit your `Owner` cell.
+5. Build only the files under that milestone's "Files you own". Run its **Manual check** and paste the output in the PR.
+6. Commit, `git pull --rebase origin main`, `git push origin main`. Then update your row to `done` and push that too.
+7. Pick the next row. Repeat until every row is `done` or `blocked` with a reason in the issue.
+
+### Push cadence (required)
+
+- Push after **every milestone**, and at least **every 45 minutes** while a milestone is in progress. Do not sit on a
+  local branch.
+- Commit small. One milestone may be several commits, but each must leave `main` runnable.
+- Always `git pull --rebase origin main` immediately before `git push origin main`.
+- Never `git push --force`, never rewrite `main`, and never commit `.scratch/`, secrets, or files owned by another
+  milestone.
+- If the push is rejected: pull `--rebase`, resolve only your own files, retry. If the conflict is in a file you do not
+  own, stop and comment on that milestone's issue.
+
+### When you are blocked
+
+- Missing credential or provider key: record it in the issue and move to the next unclaimed milestone. Do not invent a
+  bypass.
+- A file you need is owned by an open milestone: comment on that issue. Do not edit it.
+- `server.py` is held by P1-04 or P3-06: wait for it to merge, or pick a Group A milestone.
+- Ambiguous requirement: choose the fail-closed behavior and note the decision in the PR.
+
+### Definition of complete
+
+The run is complete when every row in [Status](#status) is `done` or `blocked` with a reason, and the three phase exit
+criteria hold:
+
+- Phase 1: `recommend_goal.py` routes the security and web prompts correctly, `--call` allows R0 and refuses R3 without
+  a certificate, and the audit chain verifies.
+- Phase 2: 60 tasks across 6 goals are compared tool vs procedure vs baseline, with paired deltas and confidence
+  intervals.
+- Phase 3: ranking is driven by verified reuse, trials are funded and capped, and bad tools retire.
+
 ## What this builds
 
 Routing is **goal first**:
@@ -82,6 +132,8 @@ After P1-02, the same commands become `python scripts/recommend_goal.py ...`.
 7. **Do not add static trust as a ranking signal.** Stars and `verified` are metadata. Ranking comes from verified
    reuse (Phase 3), not from a badge.
 8. **No test files.** Verify by running the recommend-goal script or the milestone's command and pasting the output in the PR.
+9. **Push to `main` periodically.** After every milestone, and at least every 45 minutes while one is in progress. See
+   [If you are an agent](#if-you-are-an-agent-start-here).
 
 ### Claiming a sub-milestone
 
@@ -991,6 +1043,8 @@ Agents may parse this block to claim work. Keep it in sync with the status table
 version: 1
 updated: 2026-11-11
 testing: manual
+start_prompt: "read docs/goal_router.md and complete it"
+push_cadence: "after every milestone, and at least every 45 minutes while one is in progress"
 phases:
   - id: P1
     name: foundation
