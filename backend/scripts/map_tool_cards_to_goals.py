@@ -175,6 +175,8 @@ async def main() -> None:
                     help="delete generated rows first; manual pins are kept")
     ap.add_argument("--pin", nargs=3, metavar=("CARD", "GOAL", "SCORE"),
                     help="pin one card to one goal (source=manual); survives --replace")
+    ap.add_argument("--pin-only", action="store_true",
+                    help="with --pin: write only the pin, not the generated mappings")
     ap.add_argument("--report", action="store_true", help="print coverage after mapping")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -194,6 +196,18 @@ async def main() -> None:
                     "SELECT 1 FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", goal_id):
                 raise SystemExit(f"no active goal {goal_id!r}")
             pin = (card_id, goal_id, float(score))
+
+        if args.pin_only:
+            if pin is None:
+                raise SystemExit("--pin-only needs --pin CARD GOAL SCORE")
+            await conn.execute("""
+                INSERT INTO tool_card_goals (card_id, goal_id, score, source)
+                VALUES ($1, $2::uuid, $3, 'manual')
+                ON CONFLICT (card_id, goal_id) DO UPDATE
+                    SET score = EXCLUDED.score, source = 'manual'
+            """, *pin)
+            print(f"pinned {pin[0]} -> {pin[1]} ({pin[2]}, manual)")
+            return
 
         if args.dry_run:
             tool_goals = {gid: tool_goal_id(gid) for gid in TOOL_GOAL_TITLES}

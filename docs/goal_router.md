@@ -105,7 +105,8 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | OAuth / consent | exists, off by default | `tool_oauth_*`, `oauth_client.py`, `TOOL_GATEWAY_OAUTH` |
 | Outcome recording | partial | `tool_observations` (db/162), `store.record_outcome` |
 | Exa | **adapter built (P1-08)**, card + mapping | `registry:ai.exa/exa`, goal `web`, kell's key |
-| Hinoki | **blocked (P1-09)** | needs the API base/schema (#26); no adapter or card registered |
+| OSV | **keyless, policy + pin (db/198)** | `registry:io.github.cyanheads/osv-advisory-mcp-server`, CVE subgoal, `osv_query_package` |
+| Hinoki | **blocked (P1-09)**: inference API known, no scanner API | `https://inference.hinoki.security/v1`, model `hinoki-offensive` (#26). An LLM, so `scan_repository` needs a different design; no adapter or card registered, and no call without consent |
 | Policy / intent / signed audit | **built (P1-05/06/07)** | `tool_policies`, `intent_certificates`, `tool_call_audit` |
 | Gate core | **built (P1-04)** | `gate.py`, `TOOL_GATE=off / shadow / enforce`, wired in `_gateway_call`/`use_tool` |
 | Approvals | **built (P1-11)** | `tool_approvals` (db/196), `approvals.py`, `scripts/approve_tool.py`, `/v1/tools/approvals` |

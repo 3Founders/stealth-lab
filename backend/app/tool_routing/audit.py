@@ -123,12 +123,22 @@ async def record(
 
 
 async def verify_chain(pool: Any, since: Optional[datetime] = None) -> tuple[bool, str, int]:
-    """Walk the chain from `since` (or the beginning). -> (ok, message, receipts checked)."""
+    """Walk the chain from `since` (or the beginning). -> (ok, message, receipts checked).
+
+    A window starts mid-chain, so its first row's `prev_hash` points at the last row before the
+    window, not at genesis. Anchor to that row instead; only a window that starts at the first row
+    (or the whole chain) starts at `GENESIS_HASH`. This is still a real link check: a break at the
+    boundary fails here.
+    """
     rows = await pool.fetch(
         """SELECT * FROM tool_call_audit
            WHERE ($1::timestamptz IS NULL OR at >= $1)
            ORDER BY id ASC""", since)
     prev = signing.GENESIS_HASH
+    if since is not None and rows:
+        anchor = await pool.fetchval(
+            "SELECT hash FROM tool_call_audit WHERE id < $1 ORDER BY id DESC LIMIT 1", rows[0]["id"])
+        prev = str(anchor or signing.GENESIS_HASH)
     for row in rows:
         if str(row["prev_hash"]) != prev:
             return False, f"broken link at receipt {row['receipt_id']}", 0

@@ -97,12 +97,13 @@ and then reset the test rows if you want a clean chain.
 - `backend/.env.example` documents `EXA_API_KEY`, `HINOKI_API_KEY`, `TOOL_CERT_SECRET`, `KELL_DEV` and
   `TOOL_GATE` / `TOOL_GATE_STRICT`.
 - Migrations applied locally: `187`, `188`, `189`, `190`, `191` (including `comparison_results`), `192`
-  (`tool_trust`), `196` (`tool_approvals`), `197` (append-only audit), `193` (trials), `194` (verification).
-- **Not applied locally:** none; `187-197` are all present.
+  (`tool_trust`), `196` (`tool_approvals`), `197` (append-only audit), `193` (trials), `194` (verification),
+  `198` (OSV policy).
+- **Not applied locally:** none; `187-198` are all present.
 - `TOOL_CERT_SECRET` is unset and this machine's `DATABASE_URL` is Neon, not localhost, so
   `backend/.env` has `KELL_DEV=1` (git-ignored) to keep the manual checks working. A deployment must
   set `TOOL_CERT_SECRET` instead; without either, the gate denies R2+.
-- Local test data: 30+ audit receipts, several intent certificates, pending/used approvals for `demo-5`/`demo-6`, several
+- Local test data: 40+ audit receipts, several intent certificates, pending/used approvals for `demo-5`/`demo-6`, several
   `task_runs` rows from P2-03. All are `demo`/`dev-local`; clean them if you need a fresh chain.
 - `tool_trust` is a **materialized view**. Refresh with `SELECT refresh_tool_trust();`.
 - The `search group: 6 search members are registered but none of their connection strings is set` warning is benign
@@ -219,19 +220,24 @@ cd ..\desktop; npx tsc --noEmit
 **Providers**
 
 - `backend/app/tool_providers/exa/` — Anuj's P1-08 adapter (kell-managed key).
-- `backend/app/tool_providers/hinoki/` — **missing** (P1-09).
+- `backend/app/tool_providers/hinoki/` — **missing** (P1-09); the inference API is an LLM, not a scanner.
+- OSV — no adapter needed: the live public card `registry:io.github.cyanheads/osv-advisory-mcp-server`
+  runs through the gateway (db/198 policy + a manual pin to the CVE goal).
 
 ---
 
 ## 7. Known gaps and traps
 
-1. **Hinoki is not integrated.** The key is in `backend/.env`, but the API base URL and request/response shape are
-   unknown. Public probing found no `api.hinoki.security`; `app.hinoki.security/api/v1/*` and
-   `hinoki.security/api/v1/*` are 404. HO1 is a model, not the enterprise scanner. Ask #26 for the endpoint/model name
-   or an OpenAI-compatible base. Do not invent one.
+1. **Hinoki's inference API is known; the scanner API is not.** `https://inference.hinoki.security/v1`,
+   model `hinoki-offensive`, Bearer `HINOKI_API_KEY` (#26). It is an LLM, stateless, with no repository
+   access, so the planned `scan_repository(repo_url)` needs a different design (diff/code review is the
+   natural surface). No adapter or card is registered, and no call is made without the key owner's
+   consent (limited credits). OSV now serves the dependency/CVE subgoal keylessly: db/198 adds the
+   policy row and a manual pin maps `registry:io.github.cyanheads/osv-advisory-mcp-server` to the CVE goal
+   (`python scripts/map_tool_cards_to_goals.py --pin registry:io.github.cyanheads/osv-advisory-mcp-server c1aedb7a-fc53-50a3-ae21-3cfdeb756c52 9.0 --pin-only`).
 2. **Desktop approval card is rendered** above the composer (`desktop/app/page.tsx`), polling the
    `/api/tools/approve` proxy every 15 s and on focus, mirroring `RoomView.tsx`.
-3. **`recommend_goal --call` bypasses the Exa adapter** (uses `mcp.exa.ai` directly). Fix per #34.
+3. **`recommend_goal --call` uses the Exa adapter** (fixed in `1839f665`), not `mcp.exa.ai` directly.
 4. **Gate defaults to shadow.** Production must set `TOOL_GATE=off` until migrations are applied, then `enforce`.
 5. **`goal_id` is `None` in `_gateway_call`.** Goal-scoped policies do not match.
 6. **`TOOL_CERT_SECRET` is unset locally, `KELL_DEV=1` is.** The dev key is refused on any deployment
