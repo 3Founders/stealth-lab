@@ -7,11 +7,13 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import Markdown from "@/components/chat/Markdown"
 import SmoothText, { Thinking } from "@/components/chat/SmoothText"
 import MessageActions from "@/components/chat/MessageActions"
+import { ApprovalCard } from "@/components/chat/ApprovalCard"
 import ThemeToggle, { ThemeWatcher } from "@/components/ThemeToggle"
 import { useSpringScroll } from "@/components/chat/useSpringScroll"
 import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
 import { applyFont, readFont, saveFont } from "@/lib/font"
+import type { ToolApproval } from "@/lib/tools"
 
 // The Electron preload's bridge (electron/preload.ts). Absent in a plain browser (`next dev`): sign-in links then open a tab
 // and the rooms are a link to the website's chat.
@@ -387,6 +389,36 @@ export default function Home() {
     } catch { /* storage blocked */ }
   }, [goal])
   const [big, setBig] = useState(false)                  // the message box: bigger / smaller, like the website chat
+  // Pending tool approvals (P1-11): a call the gate wants the person to allow. The card sits above the
+  // composer and polls the desktop proxy, which reaches kell's /tools/approvals with the MCP token; the
+  // browser never sees the token or the server address.
+  const [approvals, setApprovals] = useState<ToolApproval[]>([])
+  const [approvalBusy, setApprovalBusy] = useState(false)
+  const refreshApprovals = useCallback(async () => {
+    try {
+      const r = await fetch("/api/tools/approve")
+      if (!r.ok) return
+      const j = await r.json()
+      setApprovals(Array.isArray(j?.approvals) ? j.approvals : [])
+    } catch { /* not signed in, or the server is restarting */ }
+  }, [])
+  const decideApproval = useCallback(async (id: string, action: "approve" | "deny") => {
+    setApprovalBusy(true)
+    try {
+      await fetch("/api/tools/approve", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, action }),
+      })
+      await refreshApprovals()
+    } catch { /* the next poll shows the row again */ } finally { setApprovalBusy(false) }
+  }, [refreshApprovals])
+  useEffect(() => {
+    void refreshApprovals()
+    const t = window.setInterval(() => void refreshApprovals(), 15_000)
+    const onFocus = () => void refreshApprovals()
+    window.addEventListener("focus", onFocus)
+    return () => { window.clearInterval(t); window.removeEventListener("focus", onFocus) }
+  }, [refreshApprovals])
   const textRef = useRef<HTMLTextAreaElement>(null)
   // Up-arrow history: the prompts already sent in THIS chat (the session's user lines), not a global list.
   const histPos = useRef<number | null>(null)
@@ -1693,6 +1725,15 @@ export default function Home() {
                 {goal.state === "paused" && <button type="button" onClick={() => handleGoalCommand("/goal resume")}>Resume</button>}
                 <button type="button" onClick={() => handleGoalCommand("/goal clear")}>Clear</button>
               </span>
+            </div>
+          )}
+          {approvals.length > 0 && (
+            <div role="region" aria-label="Tool approvals" style={{ padding: "0 4px 8px" }}>
+              {approvals.slice(0, 3).map((a) => (
+                <ApprovalCard key={a.id} approval={a} busy={approvalBusy}
+                  onApprove={(id) => void decideApproval(id, "approve")}
+                  onDeny={(id) => void decideApproval(id, "deny")} />
+              ))}
             </div>
           )}
           <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>

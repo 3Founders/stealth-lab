@@ -211,10 +211,10 @@ cd ..\desktop; npx tsc --noEmit
 - `routing_kell_frontend/lib/tools/approvals.ts` — approval client.
 - `routing_kell_frontend/components/tools/ApprovalCard.tsx` — web card.
 - `routing_kell_frontend/components/chat/RoomView.tsx` — polls approvals and renders the cards.
+- `desktop/app/page.tsx` — renders the pending-approval cards above the composer (polls `/api/tools/approve`).
 - `desktop/app/api/tools/approve/route.ts` — desktop proxy.
 - `desktop/components/chat/ApprovalCard.tsx` — desktop card.
 - `desktop/lib/tools.ts` — `toolApprovals`, `approveTool`, `denyTool`.
-- **Gap:** `desktop/app/page.tsx` does **not** render the desktop card yet. The route/component/lib are ready.
 
 **Providers**
 
@@ -229,8 +229,8 @@ cd ..\desktop; npx tsc --noEmit
    unknown. Public probing found no `api.hinoki.security`; `app.hinoki.security/api/v1/*` and
    `hinoki.security/api/v1/*` are 404. HO1 is a model, not the enterprise scanner. Ask #26 for the endpoint/model name
    or an OpenAI-compatible base. Do not invent one.
-2. **Desktop approval card is not rendered.** Integrate it into `desktop/app/page.tsx` near the composer, mirroring
-   `RoomView.tsx`.
+2. **Desktop approval card is rendered** above the composer (`desktop/app/page.tsx`), polling the
+   `/api/tools/approve` proxy every 15 s and on focus, mirroring `RoomView.tsx`.
 3. **`recommend_goal --call` bypasses the Exa adapter** (uses `mcp.exa.ai` directly). Fix per #34.
 4. **Gate defaults to shadow.** Production must set `TOOL_GATE=off` until migrations are applied, then `enforce`.
 5. **`goal_id` is `None` in `_gateway_call`.** Goal-scoped policies do not match.
@@ -266,7 +266,7 @@ cd ..\desktop; npx tsc --noEmit
 
 1. **Fix #34 and #29** — **done in `1839f665`** (fail-closed gate, environment-first DSN, adapter path,
    signing secret, append-only trigger).
-2. **Integrate the desktop approval card** into `desktop/app/page.tsx`.
+2. **Integrate the desktop approval card** — **done** in `desktop/app/page.tsx` (polls `/api/tools/approve`).
 3. **P3-06** pricing/metering (in progress, #45, holds `server.py`); then **P3-07** market report.
 4. **P1-09** when the Hinoki API base/schema is known.
 
