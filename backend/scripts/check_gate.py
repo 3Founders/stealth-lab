@@ -55,6 +55,7 @@ async def run(args: argparse.Namespace) -> int:
         print(f"effect:  {decision.effect}")
         print(f"reason:  {decision.reason}")
         print(f"risk:    {decision.risk}")
+        print(f"approval:{decision.approval_id or '-'}")
         print(f"shadow:  {decision.shadow}")
         print(f"limits:  {decision.constraints}")
         return {"allow": 0, "approve": 3, "deny": 4}.get(decision.effect, 4)
