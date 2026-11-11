@@ -967,8 +967,8 @@ Update only your own row. `—` means unclaimed.
 | P1-05 | Policy store | — | open | |
 | P1-06 | Intent certificates | — | open | |
 | P1-07 | Signed audit | — | open | |
-| P1-08 | Exa adapter | — | open | |
-| P1-09 | Hinoki adapter | — | open | |
+| P1-08 | Exa adapter | anuj-claude | in progress | #27 |
+| P1-09 | Hinoki adapter | — | blocked: no Hinoki API or credential | #26 |
 | P1-10 | Run recording | anuj-claude | done | #25 |
 | P1-11 | Approval surface | — | open | |
 | P2-01 | Corpus and contracts | — | blocked on Phase 1 | |
