@@ -1023,7 +1023,7 @@ Update only your own row. `—` means unclaimed.
 | P1-10 | Run recording | anuj-claude | done | #25 |
 | P1-11 | Approval surface | — | open | |
 | P2-01 | Corpus and contracts | anuj-claude | done | #30 |
-| P2-02 | Procedure runner | anuj-claude | in progress | #32 |
+| P2-02 | Procedure runner | anuj-claude | done | #32 |
 | P2-03 | Tool runner | — | blocked on P2-01 | |
 | P2-04 | Scorers | anuj-claude | done | #31 |
 | P2-05 | Orchestrator | — | blocked on P2-02..04 | |
