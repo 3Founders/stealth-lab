@@ -182,9 +182,12 @@ export function importSession(s: {
   createdAt?: number; updatedAt?: number; messages: InMessage[]
 }): string {
   const d = open()
-  const id = ensureSession(s)
+  const id = s.id || randomUUID()
+  // The session row goes inside the same transaction: a message that fails used to leave an empty session shell
+  // behind (the row was inserted before BEGIN, so ROLLBACK could not take it back).
   d.exec("BEGIN")
   try {
+    ensureSession({ ...s, id })
     for (const m of s.messages) appendMessage(id, m)
     d.prepare("update sessions set title = coalesce(?, title), updated_at = ? where id = ?")
       .run(s.title ?? null, s.updatedAt ?? Date.now(), id)
@@ -295,4 +298,18 @@ export function forgetProject(path: string): void {
 export function unhideProject(path: string): void {
   const d = open()
   d.prepare("update projects set hidden = 0 where path = ?").run(path)
+}
+
+/** A small key/value row in the app's store. The page's localStorage is wiped on every start (electron/memory.ts), so
+ *  the folder and chat to reopen live here instead of there. */
+export function getMeta(key: string): string | null {
+  const d = open()
+  const r = d.prepare("select value from meta where key = ?").get(key) as { value: string } | undefined
+  return r?.value ?? null
+}
+
+export function setMeta(key: string, value: string | null): void {
+  const d = open()
+  if (value === null) d.prepare("delete from meta where key = ?").run(key)
+  else d.prepare("insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value").run(key, value)
 }

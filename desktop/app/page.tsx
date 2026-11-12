@@ -243,6 +243,88 @@ export default function Home() {
   const [rightOpen, setRightOpen] = useState(true)
   const [resizing, setResizing] = useState<"left" | "right" | null>(null)
   const shellRef = useRef<HTMLDivElement>(null)
+  // Only the middle of the project sidebar scrolls. The wordmark above it and the account row below it stay put, the way
+  // the website chat's .dg-side-scroll / .dg-me-wrap do (routing_kell_frontend/app/chat/chat.css). Each fixed band gets a
+  // soft shadow while the list has content hidden behind it; it is written to the element, not to state, so scrolling
+  // never re-renders this component.
+  const sideEdgeCleanup = useRef<(() => void) | null>(null)
+  const sideScrollRef = useCallback((el: HTMLDivElement | null) => {
+    sideEdgeCleanup.current?.(); sideEdgeCleanup.current = null
+    const side = el?.closest<HTMLElement>(".dg-side")
+    if (!el || !side) return
+    const calc = () => {
+      side.dataset.top = String(el.scrollTop > 1)
+      side.dataset.bottom = String(el.scrollTop + el.clientHeight < el.scrollHeight - 1)
+    }
+    calc()
+    el.addEventListener("scroll", calc, { passive: true })
+    const ro = new ResizeObserver(calc); ro.observe(el)
+    const mo = new MutationObserver(calc); mo.observe(el, { childList: true, subtree: true })
+    sideEdgeCleanup.current = () => { el.removeEventListener("scroll", calc); ro.disconnect(); mo.disconnect() }
+  }, [])
+  // The project row's ⋮ menu: a fixed sheet at the pointer, so the sidebar's scroll area can never clip it, plus the
+  // one-line note that says what an action did. Copy path, export the chats as Markdown, copy a summary, or remove the
+  // folder from the list (a red item; the files are never touched).
+  const [projMenu, setProjMenu] = useState<{ path: string; name: string; top: number; left: number } | null>(null)
+  const [projNote, setProjNote] = useState("")
+  const projNoteTimer = useRef<number>(undefined)
+  const noteProject = (text: string) => {
+    setProjNote(text)
+    window.clearTimeout(projNoteTimer.current)
+    projNoteTimer.current = window.setTimeout(() => setProjNote(""), 2400)
+  }
+  const openProjectMenu = (e: React.MouseEvent<HTMLButtonElement>, p: string) => {
+    e.stopPropagation()
+    const r = e.currentTarget.getBoundingClientRect()
+    const width = 208, height = 190
+    const left = Math.min(window.innerWidth - width - 8, Math.max(8, r.right - width))
+    const top = r.bottom + 6 + height > window.innerHeight ? Math.max(8, r.top - height - 6) : r.bottom + 6
+    const name = p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p
+    setProjMenu((m) => (m?.path === p ? null : { path: p, name, top, left }))
+  }
+  const copyProjectPath = async (p: string) => {
+    try { await navigator.clipboard.writeText(p); noteProject("Path copied.") }
+    catch { noteProject("The clipboard is blocked here.") }
+  }
+  const exportProject = async (p: string) => {
+    try {
+      const r = await fetch(`/api/projects/export?path=${encodeURIComponent(p)}`)
+      if (!r.ok) throw new Error(`Export failed (${r.status}).`)
+      const url = URL.createObjectURL(await r.blob())
+      const safe = (p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "project").replace(/[^A-Za-z0-9._-]+/g, "-")
+      const a = document.createElement("a"); a.href = url; a.download = `${safe}-chats.md`; a.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+      noteProject("Chats exported as Markdown.")
+    } catch (e: any) { noteProject(String(e?.message || e)) }
+  }
+  const shareProject = async (p: string) => {
+    try {
+      const r = await fetch(`/api/projects/export?path=${encodeURIComponent(p)}&format=summary`)
+      if (!r.ok) throw new Error(`Share failed (${r.status}).`)
+      await navigator.clipboard.writeText(await r.text())
+      noteProject("Summary copied — paste it anywhere.")
+    } catch (e: any) { noteProject(String(e?.message || e)) }
+  }
+  // The menu is anchored to a row that can move: close it on Escape, a click anywhere else, a scroll or a resize.
+  useEffect(() => {
+    if (!projMenu) return
+    const away = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null
+      if (!t?.closest(".dk-proj-menu") && !t?.closest(".dk-recent-more")) setProjMenu(null)
+    }
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setProjMenu(null) }
+    const close = () => setProjMenu(null)
+    document.addEventListener("pointerdown", away)
+    document.addEventListener("keydown", esc)
+    window.addEventListener("scroll", close, true)
+    window.addEventListener("resize", close)
+    return () => {
+      document.removeEventListener("pointerdown", away)
+      document.removeEventListener("keydown", esc)
+      window.removeEventListener("scroll", close, true)
+      window.removeEventListener("resize", close)
+    }
+  }, [projMenu])
   useEffect(() => {
     try {
       const w = JSON.parse(window.localStorage.getItem("kell.layout") || "null")
@@ -357,7 +439,9 @@ export default function Home() {
   const [ledger, setLedger] = useState<LedgerRow[]>([])
   const [sessionID, setSessionID] = useState<string | null>(null)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
-  const [sessions, setSessions] = useState<{ id: string; title: string; updated: number }[]>([])
+  const [sessions, setSessions] = useState<{ id: string; title: string; updated: number; directory?: string | null }[]>([])
+  const dirRef = useRef("")                             // the open folder, for callbacks that outlive a render
+  dirRef.current = directory
   const [sessOpen, setSessOpen] = useState(false)
   // Import chats from other agents (Claude Code, Codex, OpenCode) into this project: the sessions the sidebar
   // deliberately hides, plus the other agents' own stores on this machine.
@@ -498,12 +582,17 @@ export default function Home() {
   const [stopNote, setStopNote] = useState("")
 
   useEffect(() => {
-    const last = window.localStorage.getItem("kell.directory") || ""
-    setDirectory(last)
-    fetch("/api/engine").then((r) => r.json()).then((j) => {
+    fetch("/api/engine").then((r) => r.json()).then(async (j) => {
       setEngine({ up: !!j.up })
-      if (j.up) loadSessions()
-      else if (last && desktop()) void openProject(last)    // the app reopens the project you had open, with its sessions
+      if (j.up) { void loadSessions(); return }
+      // The folder and the chat to reopen come from the app's own store (app/api/last): the page's localStorage is
+      // wiped on every start, which is why the app used to open on nothing and look like the chats were gone.
+      let last: { directory?: string | null; sessionID?: string | null } | null = null
+      try { last = (await (await fetch("/api/last")).json()).last } catch { /* none yet */ }
+      if (last?.directory) {
+        setDirectory(last.directory)
+        void openProject(last.directory, last.sessionID || undefined)
+      }
     })
     fetch("/api/settings").then((r) => r.json()).then(setSettings).catch(() => undefined)
   }, [])
@@ -545,7 +634,8 @@ export default function Home() {
     try {
       // Backfill once from the engine, then read the app's own store (docs/localdb.md).
       await fetch("/api/local/sync", { method: "POST" }).catch(() => undefined)
-      const j = await (await fetch("/api/local/sessions")).json()
+      const dir = dirRef.current
+      const j = await (await fetch(`/api/local/sessions${dir ? `?directory=${encodeURIComponent(dir)}` : ""}`)).json()
       setSessions(Array.isArray(j.sessions) ? j.sessions : [])
       const p = await (await fetch("/api/sessions?projects=1")).json()
       if (Array.isArray(p.projects)) mergeProjects(p.projects.map((x: { dir: string }) => x.dir))
@@ -612,6 +702,7 @@ export default function Home() {
     if (busy || id === sessionID) return
     setQueued([]); setSteps([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
     setSessionID(id); setLines([])
+    void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: id }) }).catch(() => undefined)
     try {
       // The app's own history first (docs/localdb.md); the engine is only the one-time backfill source.
       let j = await (await fetch(`/api/local/sessions?id=${encodeURIComponent(id)}`)).json()
@@ -642,7 +733,7 @@ export default function Home() {
 
   // Open project: with no folder typed, the system's folder picker first (in the app). Says what it is doing and what happened:
   // it used to change nothing on screen when it worked, so it looked broken (2026-11-06).
-  const openProject = async (picked?: string) => {
+  const openProject = async (picked?: string, session?: string) => {
     let dir = picked ?? directory
     if (!dir.trim()) {
       const chosen = await desktop()?.pickFolder?.()
@@ -650,7 +741,6 @@ export default function Home() {
       dir = chosen; setDirectory(chosen)
     }
     setEngine(null); setOpening(true)
-    window.localStorage.setItem("kell.directory", dir)
     let j: { up?: boolean; error?: string }
     try {
       const r = await fetch("/api/engine", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir }) })
@@ -659,8 +749,14 @@ export default function Home() {
     finally { setOpening(false) }
     setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
     if (j.up) remember(dir)
-    if (j.up) { setQueued([]); setLines([]); setSteps([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null); loadSessions() }
-    else setSessions([])
+    if (j.up) {
+      setQueued([]); setLines([]); setSteps([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null)
+      // The folder (and the chat to reopen, when the app is restoring the last one) is kept in the app's store.
+      void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir, sessionID: session ?? null }) }).catch(() => undefined)
+    }
+    // The app's own store is read even when the engine is down: the chats are still there to read.
+    await loadSessions()
+    if (j.up && session) void openSession(session)
   }
 
   const appendAssistant = (delta: string) => setLines((l) => {
@@ -833,7 +929,10 @@ export default function Home() {
         try { ev = JSON.parse(part.slice(6)) } catch { continue }
         const t = ev.type as string
         const d = ev.data || {}
-        if (t === "session") { sid = ev.sessionID; setSessionID(ev.sessionID) }
+        if (t === "session") {
+          sid = ev.sessionID; setSessionID(ev.sessionID)
+          void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: ev.sessionID }) }).catch(() => undefined)
+        }
         else if (t === "session.text.delta") appendAssistant(d.delta ?? d.text ?? "")
         else if (t === "session.tool.input.started") {
           // The tool's name comes only here; the called / success / failed events carry the call's id (2026-11-07: every chip read "tool").
@@ -1479,6 +1578,10 @@ export default function Home() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
           </button>
 
+          {/* Only this part scrolls: the wordmark above and the account row below stay put, as in the website chat
+              (routing_kell_frontend/app/chat/chat.css's .dg-side-scroll / .dg-me-wrap). */}
+          <div className="dg-side-scroll" ref={sideScrollRef}>
+
           <h2>Project</h2>
           {/* One way in: the folder picker (the app), or a typed path where there is no picker (a browser during development). Projects
               opened before are in the list below. */}
@@ -1548,8 +1651,15 @@ export default function Home() {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
                       <span className="nm">{name}</span>
                     </button>
-                    <button type="button" className="dk-recent-x" aria-label={`Remove ${name} from the list`} title="Remove from the list" onClick={() => forget(d)}>×</button>
-                    {here && engine?.up && (
+                    <button type="button" className="dk-recent-more" aria-haspopup="menu" aria-expanded={projMenu?.path === d}
+                      aria-label={`Actions for ${name}`} title="More actions" onClick={(e) => openProjectMenu(e, d)}>
+                      {/* Lucide's ellipsis-vertical (ISC), drawn the way the account / console icons at the foot are:
+                          24×24, currentColor, round caps. */}
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" />
+                      </svg>
+                    </button>
+                    {here && (engine?.up || sessions.length > 0) && (
                       // The open project's sessions under it, one list: the newest shows, a chevron shows the rest.
                       <div className="dk-sess">
                         {sessions.length > 0 && (sessOpen || sessions.slice(1).some((x) => x.id === sessionID) ? sessions : sessions.slice(0, 1)).map(sessionRow)}
@@ -1567,8 +1677,10 @@ export default function Home() {
               })}
             </ul>
           )}
+          </div>
 
           <div className="dk-foot">
+            {projNote && <p className="dk-note" role="status">{projNote}</p>}
             {signinNote && <p className="dk-note" role="status">{signinNote}</p>}
             {consoleNote && <p className="dk-note">{consoleNote}</p>}
             {accountOpen && settings && (
@@ -1607,6 +1719,29 @@ export default function Home() {
               )}
             </div>
           </div>
+          {projMenu && (
+            // Fixed, not absolute: the sidebar scrolls, and an absolutely positioned menu would be clipped by it.
+            <div className="dk-proj-menu" role="menu" aria-label={`Actions for ${projMenu.name}`}
+              style={{ top: projMenu.top, left: projMenu.left }}>
+              <button type="button" role="menuitem" onClick={() => { void copyProjectPath(projMenu.path); setProjMenu(null) }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="14" height="14" rx="2" /><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2" /></svg>
+                Copy path
+              </button>
+              <button type="button" role="menuitem" onClick={() => { void exportProject(projMenu.path); setProjMenu(null) }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></svg>
+                Export chats
+              </button>
+              <button type="button" role="menuitem" onClick={() => { void shareProject(projMenu.path); setProjMenu(null) }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></svg>
+                Share
+              </button>
+              <hr />
+              <button type="button" role="menuitem" className="danger" onClick={() => { forget(projMenu.path); setProjMenu(null) }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                Remove from list
+              </button>
+            </div>
+          )}
         </aside>
 
         <section className="dg-main" aria-label={`Chat in ${project}`}>

@@ -54,6 +54,27 @@
 .dk-page .dg-shell[data-right="closed"] .dk-resize[data-side="right"] { opacity: 0; pointer-events: none; }
 .dk-page .dk-side-close { position: absolute; top: 10px; right: 10px; z-index: 6; }
 .dk-page .dg-brand { padding-right: 36px; }
+/* Only the middle of the project sidebar scrolls: the wordmark above it and the account row below it stay put, the way
+   the website chat's .dg-side-scroll / .dg-me-wrap do (routing_kell_frontend/app/chat/chat.css). The two fixed bands
+   run edge to edge and take a soft shadow while the list has content behind them (the ref writes data-top/data-bottom). */
+.dk-page .dg-side { overflow: hidden; }
+.dk-page .dg-side > .dg-side-scroll {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px;
+  margin: 0 -12px; padding: 0 12px; overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable;
+}
+.dk-page .dg-side > .dg-side-scroll > * { flex-shrink: 0; }
+.dk-page .dg-side > .dg-brand, .dk-page .dg-side > .dk-foot {
+  position: relative; z-index: 2; margin-left: -12px; margin-right: -12px; padding-left: 12px; padding-right: 12px;
+  background: var(--paper); transition: box-shadow var(--dg-smooth-d, 300ms) var(--dg-smooth, ease);
+}
+.dk-page .dg-side > .dg-brand { padding-right: 36px; }
+.dk-page .dg-side > .dk-foot { margin-top: 0; padding-top: 10px; }
+.dk-page .dg-side[data-top="true"] > .dg-brand { box-shadow: 0 9px 10px -9px rgba(0, 0, 0, .3); }
+.dk-page .dg-side[data-bottom="true"] > .dk-foot { box-shadow: 0 -9px 10px -9px rgba(0, 0, 0, .3); }
+:root[data-theme="dark"] .dk-page .dg-side[data-top="true"] > .dg-brand { box-shadow: 0 9px 10px -9px rgba(0, 0, 0, .75); }
+:root[data-theme="dark"] .dk-page .dg-side[data-bottom="true"] > .dk-foot { box-shadow: 0 -9px 10px -9px rgba(0, 0, 0, .75); }
+@media (prefers-reduced-motion: reduce) { .dk-page .dg-side > .dg-brand, .dk-page .dg-side > .dk-foot { transition: none; } }
 .dk-head-toggle { animation: dg-tok-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; transform-origin: center; }
 /* The app's icon buttons and Send enter with the same motion as the chat's buttons and text. */
 .dk-page :is(.dk-icon, .dk-stop, .dk-send):not(:disabled) { animation: dg-tok-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
@@ -275,8 +296,38 @@
 .dk-recent .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-recents li[data-here] .nm { font-weight: 600; }
 .dk-recent svg { flex: none; color: var(--grey); }
-.dk-recent-x { all: unset; cursor: pointer; padding: 2px 8px; color: var(--grey); opacity: 0; font-size: 15px; }
-.dk-recents li:hover .dk-recent-x, .dk-recent-x:focus-visible { opacity: 1; }
+/* The row's ⋮: hidden until the row is hovered or the button is focused/expanded, like the × it replaced. Lucide's
+   ellipsis-vertical, drawn in the same 24-grid, currentColor, round-cap style as the icons at the sidebar's foot. */
+.dk-recent-more { all: unset; box-sizing: border-box; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px;
+  color: var(--grey); cursor: pointer; opacity: 0;
+  transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease), background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-recents li:hover .dk-recent-more, .dk-recent-more:focus-visible, .dk-recent-more[aria-expanded="true"] { opacity: 1; }
+.dk-recent-more:hover, .dk-recent-more[aria-expanded="true"] { background: var(--soft, rgba(0, 0, 0, .06)); color: var(--ink); }
+.dk-recent-more:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+
+/* The project row's menu: fixed at the pointer, so the sidebar's scroll area cannot clip it. Copy path, export the
+   chats, copy a summary, and a red "Remove from list" that only hides the folder (the files are never touched). */
+.dk-proj-menu {
+  position: fixed; z-index: 70; width: 208px; padding: 5px; display: flex; flex-direction: column;
+  border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .22), 0 2px 8px rgba(0, 0, 0, .1);
+  animation: dg-pop var(--dg-micro-d, 160ms) var(--dg-micro, ease) both; transform-origin: top right;
+}
+.dk-proj-menu button {
+  all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 8px 9px; border-radius: 8px; font: inherit; font-size: 13.5px; color: var(--ink); cursor: pointer;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease);
+}
+.dk-proj-menu button svg { flex: none; color: var(--grey); }
+.dk-proj-menu button:hover, .dk-proj-menu button:focus-visible { background: var(--soft, rgba(0, 0, 0, .06)); }
+.dk-proj-menu button:focus-visible { outline: 2px solid var(--cobalt); outline-offset: -2px; }
+.dk-proj-menu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 2px; }
+.dk-proj-menu button.danger { color: #b3261e; }
+.dk-proj-menu button.danger svg { color: #b3261e; }
+.dk-proj-menu button.danger:hover { background: rgba(179, 38, 30, .1); }
+:root[data-theme="dark"] .dk-proj-menu button.danger, :root[data-theme="dark"] .dk-proj-menu button.danger svg { color: #ff8a80; }
+:root[data-theme="dark"] .dk-proj-menu button.danger:hover { background: rgba(255, 138, 128, .12); }
+@media (prefers-reduced-motion: reduce) { .dk-proj-menu { animation: none !important; } }
 
 /* Account, console and sign-out as small icon buttons at the foot of the sidebar. */
 .dk-foot { margin-top: auto; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; position: relative; }

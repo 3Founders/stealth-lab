@@ -68,7 +68,11 @@ export async function POST(req: Request) {
             ? body.files.map(({ dataUrl: _drop, ...f }: any) => f)
             : undefined
           appendMessage(sessionID, { role: "user", text: String(body.text || ""), attachments: meta })
-        } catch { /* the turn still runs */ }
+        } catch (err) {
+          // The turn still runs without the local row, but a silent failure is why a chat could vanish from the
+          // app's own store with no trace (2026-11-12): say it in the server log.
+          console.error("local history write failed:", err)
+        }
         let assistant = ""
         const pump = (async () => {
           try {
@@ -126,7 +130,8 @@ export async function POST(req: Request) {
           await pump
         } finally {
           // One assistant row per turn, assembled from the stream. A failed turn keeps the user row and any text received.
-          try { if (assistant.trim()) appendMessage(sessionID, { role: "assistant", text: assistant, summary: summarize(assistant) }) } catch { /* history is an addition */ }
+          try { if (assistant.trim()) appendMessage(sessionID, { role: "assistant", text: assistant, summary: summarize(assistant) }) }
+          catch (err) { console.error("local history write failed (assistant):", err) }
         }
       },
     })

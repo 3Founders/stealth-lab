@@ -71,6 +71,29 @@ The composer has the website chat's slash menu (`SLASH_COMMANDS` in `app/page.ts
 typed in full closes the menu so Enter runs it instead of picking it again. Commands are dispatched in `send()`, before
 anything reaches the engine; the same two are in the Ctrl/Cmd-K palette.
 
+## Where chats live (0.1.18)
+
+Two SQLite files, and the app owns only one of them.
+
+| File | Owner | Holds | Read by |
+|---|---|---|---|
+| `~/.stealthlab/chats.db` | the app (`lib/localdb.ts`) | `sessions`, `messages`, `attachments`, `summaries`, `projects`, `meta`, plus an FTS index | the sidebar (`/api/local/sessions`), a chat's messages, search, the project export |
+| `~/.local/share/opencode/opencode.db` | the engine (`opencode serve`), shared with the `opencode` CLI | `session`/`session_v2`, `message`, `part` | the engine itself; the app uses it to execute turns and as a one-time backfill |
+
+A turn: `/api/prompt` writes the user row before the engine runs and the assistant row when the turn ends; the engine
+keeps its own copy for execution. The sidebar reads the app's store, not the engine (`/api/local/sessions`), and a chat
+with no local messages is copied from the engine once, lazily, on first open (`/api/local/sessions?id=`). That is why
+the engine database can be deleted, upgraded or replaced without taking the chats with it.
+
+Why the app opens where it left off: the page's `localStorage` is wiped on every start (`electron/memory.ts`, because
+the origin changes each run), so the folder and the chat to reopen live in `chats.db`'s `meta` table (`app/api/last`).
+That wipe is also what made "my chats are gone" look true — the chats were in `chats.db` all along, but the app started
+on nothing and never asked for the list. Fixed in 0.1.18: the project is reopened from `meta`, the sidebar lists its
+local chats even when the engine is down, and a chat opens from the local copy.
+
+Import (`app/api/import`) writes the whole conversation in one transaction; a message that fails no longer leaves an
+empty session row behind (the row used to be inserted before `BEGIN`, so `ROLLBACK` could not take it back).
+
 ## Right panel resize (0.1.17)
 
 The changes panel uses the same recipe as the website's docs panel (`docs/ios_animation.md` §4.4): drag the hairline or
