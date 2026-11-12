@@ -52,3 +52,26 @@ async def route_payload(
 
         payload["tools"] = [asdict(t) for t in await search_tools(pool, text, limit=max(k, 8))]
     return payload
+
+
+async def rank_payload(
+    pool: Any,
+    query: str,
+    *,
+    limit: int = 10,
+    scope: Any = None,
+) -> dict[str, Any]:
+    """Goals only, from the in-process catalog: the sub-second first tier.
+
+    `route_payload` adds the ways and tools (and the tool-tier search). This one answers
+    "which Goals does this task mean" without touching the network beyond the cached
+    catalog refresh.
+    """
+    from app.tool_routing.goal_router import rank_goals
+
+    text = " ".join(str(query or "").split())[:2000]
+    if not text:
+        return {"query": "", "goals": []}
+    k = max(1, min(int(limit or 10), 50))
+    hits = await rank_goals(pool, text, limit=k)
+    return {"query": text, "goals": [asdict(hit) for hit in hits]}

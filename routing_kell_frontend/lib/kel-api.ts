@@ -361,9 +361,23 @@ export interface RouteResult extends Row {
   tools?: RouteTool[];
 }
 
+/** The fast first tier: Goals only, from the in-process catalog (no ways/tools). */
+export interface GoalRankResult extends Row {
+  query: string;
+  goals: RouteGoal[];
+}
+
 /** Goal -> Way -> Tool for one task. Read-only; the same answer the desktop Route page shows. */
 export const routeGoals = (query: string, k = 5, signal?: AbortSignal) =>
   apiGet<RouteResult>(`/v1/goals/route?q=${j(query)}&k=${Math.min(Math.max(k, 1), 20)}`, signal);
+
+/** Ways only: the Goal and its procedures, without the slower tool-tier search. */
+export const routeWays = (query: string, k = 5, signal?: AbortSignal) =>
+  apiGet<RouteResult>(`/v1/goals/route?q=${j(query)}&k=${Math.min(Math.max(k, 1), 20)}&include_tools=false`, signal);
+
+/** Goal ranking alone: sub-second once the catalog is warm. */
+export const rankGoals = (query: string, k = 10, signal?: AbortSignal) =>
+  apiGet<GoalRankResult>(`/v1/goals/rank?q=${j(query)}&k=${Math.min(Math.max(k, 1), 50)}`, signal);
 
 export interface GoalInput {
   canonical_name: string;

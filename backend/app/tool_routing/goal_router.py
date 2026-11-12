@@ -556,6 +556,35 @@ async def search_tools(pool: Any, query: str, *, limit: int = 8) -> list[ToolHit
     return [_from_retrieval(h, None) for h in hits[: max(1, int(limit))]]
 
 
+async def rank_goals(pool: Any, query: str, *, limit: int = 10) -> list[GoalHit]:
+    """Goal ranking alone: exact, alias and token match from the in-process catalog.
+
+    No database round trip once the catalog is warm. This is the sub-second first tier; the
+    ways and tools are attached by `route_goal` when a caller asks for them.
+    """
+    text = " ".join(str(query or "").split())[:2000]
+    if not text:
+        return []
+    from app.tool_routing import goal_catalog
+
+    catalog = await goal_catalog.load(pool)
+    return [
+        GoalHit(
+            goal_id=str(row["id"]),
+            canonical_name=str(row["canonical_name"] or ""),
+            description=str(row["description"] or ""),
+            status=str(row["status"] or ""),
+            score=float(row["score"]),
+            matched_by=str(row["matched_by"]),
+            home_shard=str(row["home_shard_id"] or HOME_SHARD),
+            ways=[],
+            tools=[],
+            trace=[],
+        )
+        for row in catalog.match(text, limit)
+    ]
+
+
 async def route_goal(
     pool: Any,
     query: str,
@@ -598,33 +627,49 @@ async def route_goal(
                 "name": str(row["canonical_name"] or ""),
             })
 
-    normalized = normalize_goal_name(text)
-    exact_rows, k000_rows = await asyncio.gather(
-        _exact(pool, normalized, max(limit * 2, 10)),
-        _k000_full_text(pool, text, max(limit * 4, 20)),
-    )
-    for rank, row in enumerate(exact_rows):
-        exact = normalize_goal_name(str(row["canonical_name"])) == normalized
-        score = EXACT_SCORE if exact else ALIAS_SCORE
-        _merge(found, row, score, "exact" if exact else "alias")
-        note(row, "exact" if exact else "alias", rank, score)
-
-    for rank, row in enumerate(k000_rows):
-        score = 1.25 / (RRF_K + rank + 1)
-        _merge(found, row, score, "fts")
-        note(row, "k000_fts", rank, score)
-
-    # The global search leg is only a second opinion: when the search group is not configured,
-    # `search_goals` falls back to this same control database, which the K000 full-text leg above
-    # already covers. Skipping it there saves the slow round trip (measured 8.2 s vs 1.0 s) and
-    # cannot change the answer on a single-database deployment.
-    grouped = False
+    # Goal ranking is local: the 30 Goals and their aliases are held in process, so this
+    # step costs no database round trip. The old DB legs stay as a fallback for a failed
+    # refresh (an older database, a cold pool).
+    catalog = None
     try:
-        from app.services.search_group import grouped as _grouped
+        from app.tool_routing import goal_catalog as _goal_catalog
 
-        grouped = await _grouped(pool)
-    except Exception:  # noqa: BLE001 -- an unreadable registry is a single database
-        grouped = False
+        catalog = await _goal_catalog.load(pool)
+    except Exception:  # noqa: BLE001 -- the DB legs below are the fallback
+        catalog = None
+    if catalog is not None:
+        for rank, row in enumerate(catalog.match(text, max(limit * 4, 20))):
+            _merge(found, row, float(row["score"]), str(row["matched_by"]))
+            note(row, str(row["matched_by"]), rank, float(row["score"]))
+    else:
+        normalized = normalize_goal_name(text)
+        exact_rows, k000_rows = await asyncio.gather(
+            _exact(pool, normalized, max(limit * 2, 10)),
+            _k000_full_text(pool, text, max(limit * 4, 20)),
+        )
+        for rank, row in enumerate(exact_rows):
+            is_exact = normalize_goal_name(str(row["canonical_name"])) == normalized
+            score = EXACT_SCORE if is_exact else ALIAS_SCORE
+            _merge(found, row, score, "exact" if is_exact else "alias")
+            note(row, "exact" if is_exact else "alias", rank, score)
+
+        for rank, row in enumerate(k000_rows):
+            score = 1.25 / (RRF_K + rank + 1)
+            _merge(found, row, score, "fts")
+            note(row, "k000_fts", rank, score)
+
+    # The catalog covers the K000 Goals, which is all 30 today. The global search group is
+    # only a second opinion for Goals outside it; ask it only when the catalog is unavailable
+    # or the deployment explicitly turns it on (GOAL_SEARCH_GROUP=on). The check itself was a
+    # database round trip on the hot path.
+    grouped = False
+    if catalog is None or os.environ.get("GOAL_SEARCH_GROUP", "").strip().lower() in ("1", "true", "on", "yes"):
+        try:
+            from app.services.search_group import grouped as _grouped
+
+            grouped = await _grouped(pool)
+        except Exception:  # noqa: BLE001 -- an unreadable registry is a single database
+            grouped = False
     if grouped:
         search_leg = "fts+vector" if query_embedding is not None else "fts"
         for rank, row in enumerate(await _search(pool, text, max(limit * 4, 20), query_embedding, scope)):
@@ -638,7 +683,13 @@ async def route_goal(
             await query_task  # fills the cache for the no-Goal fallback in route_api
         return []
 
-    ways = await _ways(pool, ranked) if include_ways else {}
+    ways: dict[str, list[WayHit]] = {}
+    if include_ways:
+        if catalog is not None and catalog.ways:
+            for h in ranked:
+                ways[h["goal_id"]] = [WayHit(**w) for w in catalog.ways.get(h["goal_id"], [])]
+        else:
+            ways = await _ways(pool, ranked)
     tools = await _tools(pool, [h["goal_id"] for h in ranked], owner_id=owner_id,
                          request_id=request_id, query=text,
                          query_hits=(await query_task) if query_task is not None else None) if include_tools else {}

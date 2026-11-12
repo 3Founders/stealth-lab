@@ -230,6 +230,23 @@ async def route_goals_route(
     )
 
 
+@router.get("/rank")
+async def rank_goals_route(
+    q: str = Query(min_length=1, max_length=2000),
+    k: int = Query(default=10, ge=1, le=50),
+    pool=Depends(get_pool),
+    scope: AccessScope = Depends(get_scope),
+) -> dict[str, Any]:
+    """Goals only, from the in-process catalog: the sub-second first tier.
+
+    `GET /v1/goals/route` adds ways and tools; this one answers "which Goals does this
+    task mean" without a database round trip once the catalog is warm.
+    """
+    from app.tool_routing.route_api import rank_payload
+
+    return await rank_payload(pool, q, limit=k, scope=scope)
+
+
 @router.get("/{goal_id}")
 async def inspect_goal_route(
     goal_id: str,

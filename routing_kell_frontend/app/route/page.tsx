@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import type { ApiState } from "@/lib/api";
-import { routeGoals, type RouteGoal, type RouteResult, type RouteTool } from "@/lib/kel-api";
+import { rankGoals, routeGoals, routeWays, type GoalRankResult, type RouteGoal, type RouteTool } from "@/lib/kel-api";
 import "./route.css";
 
 const EXAMPLES = [
@@ -67,9 +67,28 @@ function GoalBlock({ goal }: { goal: RouteGoal }) {
         </section>
         <section>
           <h3>Tools <span className="caption">what executes a step</span></h3>
-          {goal.tools.length === 0 && <p className="caption">No tool is mapped to this Goal yet.</p>}
+          {goal.tools.length === 0 && <p className="caption">Tools are the next tier; not loaded in this view.</p>}
           {goal.tools.map((tool) => <ToolCard key={tool.card_id} tool={tool} />)}
         </section>
+      </div>
+    </article>
+  );
+}
+
+function RankedGoal({ goal, busy, onLoad }: { goal: RouteGoal; busy: boolean; onLoad: () => void }) {
+  return (
+    <article className="route-goal">
+      <header>
+        <h2>{goal.canonical_name}</h2>
+        <span className="caption">
+          {goal.matched_by} · score {Number(goal.score || 0).toFixed(3)}
+        </span>
+      </header>
+      {goal.description && <p className="route-lead">{goal.description}</p>}
+      <div className="route-actions">
+        <button type="button" className="btn-line" onClick={onLoad} disabled={busy}>
+          {busy ? "Loading ways…" : "Show ways"}
+        </button>
       </div>
     </article>
   );
@@ -78,7 +97,11 @@ function GoalBlock({ goal }: { goal: RouteGoal }) {
 export default function RoutePage() {
   const [query, setQuery] = useState("");
   const [asked, setAsked] = useState("");
-  const [state, setState] = useState<ApiState<RouteResult>>({ kind: "idle" });
+  const [state, setState] = useState<ApiState<GoalRankResult>>({ kind: "idle" });
+  const [details, setDetails] = useState<Record<string, RouteGoal>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState("");
+  const [fallbackTools, setFallbackTools] = useState<RouteTool[] | null>(null);
   const controller = useRef<AbortController | undefined>(undefined);
 
   async function load(term: string) {
@@ -89,9 +112,35 @@ export default function RoutePage() {
     controller.current = active;
     setAsked(normalized);
     setState({ kind: "loading" });
-    const response = await routeGoals(normalized, 5, active.signal);
+    setDetails({});
+    setDetailError("");
+    setFallbackTools(null);
+    const response = await rankGoals(normalized, 5, active.signal);
     if (controller.current !== active) return;
     setState(response);
+  }
+
+  async function loadDetails(goalId: string) {
+    setBusy(goalId);
+    setDetailError("");
+    const response = await routeWays(asked, 5);
+    if (response.kind === "ok") {
+      const goal = response.data.goals.find((g) => g.goal_id === goalId);
+      if (goal) setDetails((prev) => ({ ...prev, [goalId]: goal }));
+      else setDetailError("That Goal is no longer in the top results. Search again.");
+    } else if (response.kind === "error") {
+      setDetailError(response.message);
+    }
+    setBusy(null);
+  }
+
+  async function searchTools() {
+    setBusy("tools");
+    setDetailError("");
+    const response = await routeGoals(asked, 5);
+    if (response.kind === "ok") setFallbackTools(response.data.tools ?? []);
+    else if (response.kind === "error") setDetailError(response.message);
+    setBusy(null);
   }
 
   function run(event: React.FormEvent) {
@@ -108,7 +157,7 @@ export default function RoutePage() {
         <h1 className="display"><AnimatedHeading>What are you trying to get done?</AnimatedHeading></h1>
         <p className="lead small">
           A task becomes a Goal, the Goal&apos;s ways (the steps), and the tools that execute them.
-          Read-only: nothing is called here.
+          Goal ranking is local; ways and tools load when you ask. Read-only: nothing is called here.
         </p>
       </section>
 
@@ -148,28 +197,37 @@ export default function RoutePage() {
         )}
         {state.kind === "loading" && (
           <p className="route-note" role="status">
-            Resolving the Goal, then ranking its ways and tools. The first search can take a few seconds.
+            Ranking the Goals. This is local and usually answers in well under a second.
           </p>
         )}
 
         {state.kind === "ok" && (
           <div className="route-results" aria-live="polite">
-            {state.data.goals.length === 0 && !(state.data.tools && state.data.tools.length) && (
-              <p className="route-note">Nothing matched &ldquo;{asked}&rdquo;. Try the task in other words.</p>
-            )}
-
-            {state.data.goals.length === 0 && state.data.tools && state.data.tools.length > 0 && (
+            {state.data.goals.length === 0 && (
               <section className="route-fallback">
-                <h2>No Goal matched <span className="caption">tools that may help</span></h2>
+                <h2>No Goal matched <span className="caption">the tool tier can still answer</span></h2>
                 <p className="route-lead">
-                  The Goal tier has no category for this task yet. These are the tools the catalog
-                  found for the request, not a Goal&apos;s ways.
+                  The Goal tier has no category for this task yet. Search the tool catalog instead;
+                  it is a separate, slower path.
                 </p>
-                {state.data.tools.map((tool) => <ToolCard key={tool.card_id} tool={tool} />)}
+                <button type="button" className="btn-line" onClick={() => void searchTools()} disabled={busy === "tools"}>
+                  {busy === "tools" ? "Searching the tools…" : "Search the tools instead"}
+                </button>
+                {fallbackTools && fallbackTools.map((tool) => <ToolCard key={tool.card_id} tool={tool} />)}
               </section>
             )}
 
-            {state.data.goals.map((goal) => <GoalBlock key={goal.goal_id} goal={goal} />)}
+            {state.data.goals.map((goal) => details[goal.goal_id]
+              ? <GoalBlock key={goal.goal_id} goal={details[goal.goal_id]} />
+              : <RankedGoal
+                  key={goal.goal_id}
+                  goal={goal}
+                  busy={busy === goal.goal_id}
+                  onLoad={() => void loadDetails(goal.goal_id)}
+                />
+            )}
+
+            {detailError && <p className="route-note">{detailError}</p>}
           </div>
         )}
       </section>

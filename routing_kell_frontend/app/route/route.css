@@ -61,6 +61,10 @@
   line-height: 1.55;
 }
 
+.route-actions {
+  margin-top: 12px;
+}
+
 .route-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);

@@ -117,6 +117,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Trust, trials, lifecycle, verification, pricing | **built (P3-01…P3-07)** | `trust.py`, `trials.py`, `lifecycle.py`, `verification.py`, `pricing.py`, `scripts/tool_market_report.py` |
 | Per-goal ranking | **materialized (db/200)** | `goal_tool_rankings`; `scripts/refresh_goal_rankings.py`. The router reads one row per card and applies only the trial overlay; a Goal with no rows falls back to the live ranker |
 | Route surface | **built** | `GET /v1/goals/route` (`app/api/goals.py` + `app/tool_routing/route_api.py`) and its MCP twin (`room_agent_routes.py`); `/route` on the website and in the desktop app. The tool tier now ranks a Goal's cards by the request (`goal_router._query_hits`: BM25 + vectors + reranker, 4 s bound, 2 min cache), and a no-Goal request falls back to the tool tier alone. `db/203` adds the HNSW index that makes the candidate scan ~2 s |
+| Goal ranking (fast tier) | **local, in process** | `app/tool_routing/goal_catalog.py`: the 30 Goals, their aliases and the top 5 ways per Goal, 60 s TTL, warmed at startup. `GET /v1/goals/rank` answers in ~3–6 ms warm (~0.9 s cold); `/route` adds ways, then tools |
 
 Known local constraint: goal semantic/FTS search warns that the search group's members are unconfigured. Exact
 `goal_names` lookup works and hydrates from the home shard; the K000 full-text fallback in `goal_router.py` keeps the
@@ -142,6 +143,9 @@ The same answer is now on the wire and in the product:
 ```powershell
 # the website and the desktop app both read this (read-only; nothing is called)
 curl "http://127.0.0.1:8000/v1/goals/route?q=send%20a%20slack%20message&k=5"
+
+# Goals only: the in-process catalog, ~3-6 ms warm
+curl "http://127.0.0.1:8000/v1/goals/rank?q=send%20a%20slack%20message&k=5"
 ```
 
 The website page is `/route` (`routing_kell_frontend/app/route/page.tsx`); the desktop page is

@@ -1,6 +1,7 @@
 """FastAPI application entrypoint."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -68,6 +69,16 @@ async def lifespan(app: FastAPI):
         hosted_execution_enabled=settings.hosted_execution_enabled,
     )
     app.state.pool = await create_pool()
+    # Goal ranking is local (app/tool_routing/goal_catalog.py). Warm the 30 Goals and their
+    # ways at startup so the first request is not the one that pays for loading them.
+    try:
+        from app.tool_routing import goal_catalog as _goal_catalog
+
+        _warm = asyncio.create_task(_goal_catalog.load(app.state.pool))
+        _warm.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+        app.state.goal_catalog_warm = _warm
+    except Exception:  # noqa: BLE001 -- a warm-up failure is not a startup failure
+        logging.getLogger(__name__).warning("goal catalog warm-up skipped", exc_info=True)
     from app.services import org_keys as _org_keys
     # companies' own provider keys -> the governed gateway (/v1/chat/completions)
     _org_keys.install(lambda: getattr(app.state, "pool", None))
