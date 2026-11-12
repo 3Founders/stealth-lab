@@ -1,4 +1,6 @@
 import { API_URL, apiDelete, apiGet, apiPost, apiPut, apiUpload, type ApiState } from "@/lib/api";
+import { MCP_ORIGIN } from "@/lib/connector";
+import { getAccessToken } from "@/lib/session";
 
 /**
  * Typed reads for the Goal → Procedure surface. Every shape here mirrors what
@@ -361,9 +363,36 @@ export interface RouteResult extends Row {
   tools?: RouteTool[];
 }
 
+/**
+ * The router's read, on whichever backend this deployment has.
+ *
+ * `NEXT_PUBLIC_KEL_API_URL` is the FastAPI app (`/v1/*`). When it is unset, the page
+ * still works: the hosted MCP server exposes the same `GET /v1/goals/route` (the
+ * desktop app uses it), and `MCP_ORIGIN` always has a value (lib/connector.ts).
+ * This is why /route does not show the "set NEXT_PUBLIC_KEL_API_URL" notice.
+ */
+async function routeGet<T>(path: string, signal?: AbortSignal): Promise<ApiState<T>> {
+  if (API_URL) return apiGet<T>(path, signal);
+  try {
+    const token = await getAccessToken();
+    if (!token) return { kind: "unauthenticated" };
+    const res = await fetch(`${MCP_ORIGIN}${path}`, {
+      signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 401) return { kind: "unauthenticated" };
+    if (res.status === 403) return { kind: "forbidden", message: "You don't have access to the router." };
+    if (!res.ok) return { kind: "error", message: `The router answered ${res.status}.`, status: res.status };
+    return { kind: "ok", data: (await res.json()) as T };
+  } catch (e) {
+    if ((e as Error).name === "AbortError") return { kind: "idle" };
+    return { kind: "error", message: "Could not reach the router." };
+  }
+}
+
 /** Goal -> Way -> Tool for one task. Read-only; the same answer the desktop Route page shows. */
 export const routeGoals = (query: string, k = 5, signal?: AbortSignal) =>
-  apiGet<RouteResult>(`/v1/goals/route?q=${j(query)}&k=${Math.min(Math.max(k, 1), 20)}`, signal);
+  routeGet<RouteResult>(`/v1/goals/route?q=${j(query)}&k=${Math.min(Math.max(k, 1), 20)}`, signal);
 
 export interface GoalInput {
   canonical_name: string;

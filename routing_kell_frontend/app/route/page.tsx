@@ -134,7 +134,10 @@ export default function RoutePage() {
         </div>
 
         {state.kind === "unconfigured" && (
-          <p className="route-note">Set <code>NEXT_PUBLIC_KEL_API_URL</code> to a running backend.</p>
+          <p className="route-note">
+            The router is not configured. Set <code>NEXT_PUBLIC_KEL_API_URL</code> (the FastAPI app) or{" "}
+            <code>NEXT_PUBLIC_KEL_MCP_URL</code> (the MCP server) to a running backend.
+          </p>
         )}
         {state.kind === "unauthenticated" && (
           <p className="route-note">Sign in to route a task. <Link href="/sign-in">Sign in</Link>.</p>
