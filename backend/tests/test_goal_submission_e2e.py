@@ -29,15 +29,30 @@ async def pool():
 
 @pytest.fixture
 def fakes(monkeypatch):
-    """The reviewer rejects any step whose prompt says VAGUE; the run model echoes; no email leaves."""
+    """The reviewer rejects any step whose prompt says VAGUE; the goal judge matches a candidate whose name shares the
+    submitted goal's first word when that word starts with "matchme"; the tool-argument writer picks the first tool;
+    the run model echoes; no email leaves; no embedder or reranker is called."""
     sent: list[dict] = []
     calls: list[str] = []
+    monkeypatch.setenv("SUBMISSION_GOAL_VECTORS", "off")
+    monkeypatch.setenv("TOOL_RERANK_MODEL", "off")
 
     async def fake_complete(messages, *, json_mode=False, max_tokens=1500, client=None):
         import json
         import re
 
-        body = messages[-1]["content"]
+        system, body = messages[0]["content"], messages[-1]["content"]
+        if system.startswith("You decide whether a goal"):
+            data = json.loads(re.search(r"\{.*\}", body, re.S).group(0))
+            calls.append("match")
+            word = data["submitted_goal"]["name"].split()[0]
+            hit = next((c["n"] for c in data["candidates"] if word.startswith("matchme")
+                        and c["name"].split()[0] == word), None)
+            return json.dumps({"match": hit, "reason": "fake"}), "fake-judge"
+        if system.startswith("You call one tool"):
+            calls.append("tool-args")
+            tools = json.loads(re.search(r"\[.*\]", body, re.S).group(0))
+            return json.dumps({"tool": tools[0]["name"], "arguments": {"query": "papers"}}), "fake-runner"
         if json_mode:
             data = json.loads(re.search(r"\{.*\}", body, re.S).group(0))
             calls.append("review")
@@ -196,3 +211,97 @@ async def test_http_routes(pool, fakes):
         run = (await c.post(f"/v1/goals/runs/{run['id']}/done", headers=me, json={"note": "read it"})).json()
         assert run["status"] == "done"
         assert (await c.get(f"/v1/goals/runs/{run['id']}", headers=me)).json()["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_a_goal_judged_the_same_is_reused_not_duplicated(pool, fakes):
+    import random
+    import string
+
+    tag = "".join(random.choice(string.ascii_lowercase) for _ in range(8))   # search drops tokens with digits
+    owner = f"test-{uuid.uuid4().hex[:8]}"
+    first = await api.submit(pool, owner, {"goal": f"matchme{tag} {tag[::-1]}", "steps": [{"prompt": "Find the papers"}]})
+    assert first["status"] == "ai_approved"                      # its goal is now public
+    from app.services.search_projection import drain_outbox
+
+    await drain_outbox(pool)                                     # the server's background drain, in a test
+    second = await api.submit(pool, owner, {"goal": f"matchme{tag} {tag[::-1]} quickly",
+                                            "steps": [{"prompt": "Find the newest papers"}]})
+    assert second["goal_id"] == first["goal_id"]
+    assert second["goal_match"]["decision"].startswith("judged_same")
+    other = await api.submit(pool, owner, {"goal": f"unrelated {tag} cooking", "steps": [{"prompt": "Plan a meal"}]})
+    assert other["goal_id"] != first["goal_id"] and other["goal_match"]["decision"].startswith(("judged_new",
+                                                                                                "no_candidates"))
+
+
+@pytest.mark.asyncio
+async def test_a_tool_step_runs_through_the_gateway_and_pauses_for_a_sign_in(pool, fakes, monkeypatch):
+    import json
+
+    calls: list[tuple] = []
+    answers = [json.dumps({"sign_in_required": True, "server": "fake/papers", "link": "https://sign.in/x"}),
+               "3 papers found"]
+
+    async def tool_list(owner, server):
+        if server != "fake/papers":
+            return f"REFUSED: no server named {server!r} in kell's catalog"
+        return json.dumps({"server": server, "tools": [{"name": "search", "input_schema": {"type": "object"}}]})
+
+    async def tool_call(owner, server, tool, arguments):
+        calls.append((owner, server, tool, arguments))
+        return answers.pop(0)
+
+    async def runnable(pool, value):
+        return None
+
+    monkeypatch.setattr(runs, "TOOL_LIST", tool_list)
+    monkeypatch.setattr(runs, "TOOL_CALL", tool_call)
+    monkeypatch.setattr(review, "_tool_runnable", runnable)
+    owner = f"test-{uuid.uuid4().hex[:8]}"
+    out = await api.submit(pool, owner, {"goal": f"find papers {uuid.uuid4().hex[:6]}", "steps": [
+        {"prompt": "Search for diffusion papers", "locator": "fake/papers/search"},
+        {"prompt": "Summarise them"}]})
+    assert out["status"] == "ai_approved" and out["mode"] == "fully_ai"
+    run = await api.start_run(pool, owner, out["id"])
+    assert run["status"] == "waiting_human" and run["waiting_on"]["kind"] == "signin"
+    assert "https://sign.in/x" in run["waiting_on"]["description"]
+    run = await api.finish_step(pool, owner, run["id"])                  # signed in: the same step again
+    assert run["status"] == "done", run["error"]
+    assert [c[1:3] for c in calls] == [("fake/papers", "search")] * 2 and calls[0][0] == owner
+    assert run["outputs"][0]["output"] == "3 papers found"
+
+
+@pytest.mark.asyncio
+async def test_a_script_step_is_reviewed_with_its_source_and_runs_in_the_sandbox(pool, fakes, monkeypatch):
+    from app.submissions import sandbox
+
+    seen: dict = {}
+
+    async def fetch(url, *, as_code=False, limit=12000):
+        return "import sys\nprint(len(sys.stdin.read()))\n"
+
+    async def run_script(code, name, stdin=""):
+        seen.update(code=code, name=name, stdin=stdin)
+        return sandbox.ScriptResult(0, "42\n", "")
+
+    monkeypatch.setattr(runs, "fetch_text", fetch)
+    monkeypatch.setattr(sandbox, "run_script", run_script)
+    owner = f"test-{uuid.uuid4().hex[:8]}"
+    out = await api.submit(pool, owner, {"goal": f"count words {uuid.uuid4().hex[:6]}", "steps": [
+        {"kind": "human", "description": "Paste the text to count"},
+        {"title": "Count the words in the text", "locator": "https://github.com/x/y/blob/main/count.py"}]})
+    assert out["status"] == "ai_approved"
+    run = await api.start_run(pool, owner, out["id"])
+    run = await api.finish_step(pool, owner, run["id"], "one two three")
+    assert run["status"] == "done", run["error"]
+    assert run["outputs"][1]["output"] == "42\n"
+    assert "one two three" in seen["stdin"] and seen["name"].endswith("count.py")
+
+
+@pytest.mark.asyncio
+async def test_a_script_on_the_submitters_computer_is_rejected(pool, fakes):
+    owner = f"test-{uuid.uuid4().hex[:8]}"
+    out = await api.submit(pool, owner, {"goal": f"local script {uuid.uuid4().hex[:6]}",
+                                         "steps": [{"title": "Train the model", "locator": "C:/Users/me/train.py"}]})
+    assert out["status"] == "needs_changes"
+    assert "on your computer" in out["steps"][0]["reason"]

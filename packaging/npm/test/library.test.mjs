@@ -322,7 +322,7 @@ test("findStealthRoot finds .kell from a sub-directory, and null outside one", (
   assert.equal(L.findStealthRoot(fs.mkdtempSync(path.join(os.tmpdir(), "none-"))), null);
 });
 
-test("share drafts a submit_way call from an entry, never the diff or paths", () => {
+test("share drafts a submit_goal call from an entry, never the diff or paths", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-share-"));
   fs.mkdirSync(path.join(root, ".kell"), { recursive: true });
   fs.writeFileSync(path.join(root, ".kell", "library.md"), [
@@ -333,9 +333,9 @@ test("share drafts a submit_way call from an entry, never the diff or paths", ()
     "",
   ].join("\n"));
   const d = L.shareDraft(root, "L-0a91f2");
-  assert.equal(d.call, "submit_way");
+  assert.equal(d.call, "submit_goal");
   assert.equal(d.arguments.goal, "Fix KeyError when the config has no db section");
-  assert.deepEqual(JSON.parse(d.arguments.steps_json), ["Use config.get(\"db\", {}) (check: pytest -q tests/test_config.py)"]);
+  assert.deepEqual(d.arguments.steps, [{ kind: "automated", prompt: "Use config.get(\"db\", {}) (check: pytest -q tests/test_config.py)" }]);
   const text = JSON.stringify(d.arguments);
   for (const leak of ["secret_loader", "services/api", "R-00aa11", ".diff", "77aa001"]) assert.ok(!text.includes(leak), leak);
   assert.throws(() => L.shareDraft(root, "L-77d3e0"), /failed attempt/);

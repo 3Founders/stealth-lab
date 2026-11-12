@@ -258,7 +258,7 @@ own every file in `.kell/`.
      repo's Goal and Way for the same problem and procedure, or pass `--goal <G-id>` / `--way <W-id>` to
      attach to existing ones from `.kell/library.md`'s G / W lines);
    - to offer a solved entry to everyone, `kell library share <L-id>` drafts the
-     submit_way call (problem, way, steps and checks only; never the diff or paths): fill its
+     submit_goal call (the problem as the goal, its steps; never the diff or paths): fill its
      placeholders, remove anything specific to this repo, then send it;
    - if it would help anyone doing this Procedure, not just this repo, call
      `report_discovery(kind, procedure_id, problem, solution, step_order, proof, repo)`
@@ -266,7 +266,7 @@ own every file in `.kell/`.
      Pass `repo` when it only holds for this repository.
 9. Finish: tell the user what was done, the proof, and what was learned.
 
-Tools named above that are not in your tool list (report_discovery, call_model, submit_way) are run with `use_tool(name, arguments)`; `discover_tools(names=[...])` shows their
+Tools named above that are not in your tool list (report_discovery, call_model, submit_goal) are run with `use_tool(name, arguments)`; `discover_tools(names=[...])` shows their
 arguments."""
 
 

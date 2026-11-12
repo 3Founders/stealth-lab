@@ -15,7 +15,7 @@ import pytest
 import app.mcp_server.prompts as prm
 import app.mcp_server.server as srv
 
-_TOOLS = {"find_ways", "submit_way", "report_discovery", "recommend_models", "report_model_run"}
+_TOOLS = {"find_ways", "submit_goal", "report_discovery", "recommend_models", "report_model_run"}
 _GONE = ("find_best_way", "search_procedures", "init_workspace", "commit_local_sync", "inspect_run",
          "report_execution", "solve_task", "apply_change_set")
 _AUTONOMY_SMELLS = ("without asking", "automatically execute and commit", "do not ask the user",

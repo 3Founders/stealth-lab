@@ -80,7 +80,7 @@ def test_an_anonymous_caller_may_read_but_every_write_and_execute_tool_is_refuse
     assert token is not None and getattr(token, "subject", None) is None      # never attributed as a user
     monkeypatch.setattr(srv, "get_access_token", lambda: token)
     reads = {"find_ways", "recommend_models"}
-    writes = {"report_result", "report_model_run", "submit_way", "report_discovery", "call_model"}
+    writes = {"report_result", "report_model_run", "submit_goal", "report_discovery", "call_model"}
     assert reads | writes == set(srv.V1_TOOLS)                                # all seven v1 tools are classified
     for tool in reads:
         srv._enforce_tool_scope(tool)                                         # allowed

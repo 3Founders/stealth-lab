@@ -31,7 +31,7 @@ def _surface() -> list[tuple[str, str]]:
 
 def test_the_surface_is_not_empty():
     names = {n.split(".")[0] for n, _ in _surface()}
-    assert {"find_ways", "report_result", "call_model", "submit_way"} <= names
+    assert {"find_ways", "report_result", "call_model", "submit_goal"} <= names
 
 
 @pytest.mark.parametrize("name,text", _surface())

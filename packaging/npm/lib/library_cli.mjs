@@ -26,7 +26,7 @@ export const LIBRARY_HELP = `kell library <command> [--root <repo>]   (.kell/lib
   link                          give every entry a reusable Goal (G-) and Way (W-): the same problem shares one
                                 Goal, the same procedure one Way (content-hash ids, merge-safe); then re-index
   goal <G-id> --parent <G-id|-> place a Goal under a parent Goal (or clear it); cycles are refused
-  share <L-id>                  draft the submit_way call that offers this entry to everyone: problem, way and
+  share <L-id>                  draft the submit_goal call that offers this entry to everyone: problem, way and
                                 steps with checks only (never the diff or paths); you fill the rest and send it
   payload                       the find_ways arguments the knowledge hook sends (library_rows, route_obs,
                                 repo_identity) -- to see exactly what leaves this machine

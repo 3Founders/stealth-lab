@@ -22,7 +22,7 @@ def test_mode_is_worked_out_from_the_steps():
 
 
 def test_kind_defaults_from_what_the_step_has():
-    sub = intake.parse(_sub("Open the dataset page", {"locator": "https://example.org/data"}))
+    sub = intake.parse(_sub("Open the dataset page", {"title": "Read the dataset", "locator": "https://example.org/data"}))
     assert [s.kind for s in sub.steps] == ["human", "automated"]
 
 
@@ -71,8 +71,8 @@ def test_title_is_the_first_sentence():
 
 def test_bindings_never_let_a_model_stand_in_for_a_person_or_a_script():
     human, script, url, prompt = intake.parse(_sub(
-        {"kind": "human", "description": "do it"}, {"locator": "train.py"},
-        {"locator": "https://example.org"}, {"prompt": "p"})).steps
+        {"kind": "human", "description": "do it"}, {"title": "Train", "locator": "train.py"},
+        {"title": "Read it", "locator": "https://example.org"}, {"prompt": "p"})).steps
     assert store.step_binding(human) == {"kind": "runtime", "runtime": "human"}
     assert store.step_binding(script)["kind"] == "command"
     assert store.step_binding(url)["kind"] == "http_api"
@@ -113,3 +113,8 @@ async def test_checks_reject_injection_secrets_and_unknown_tools():
     assert not tool["ok"] and "knows no tool" in tool["problems"][0]
     local = await review.check_step(Pool(), {"title": "t", "locator": {"type": "url", "value": "http://127.0.0.1/x"}})
     assert not local["ok"] and "not a public address" in local["problems"][0]
+
+
+def test_a_locator_only_step_needs_a_title():
+    with pytest.raises(intake.SubmissionError, match="give it a title"):
+        intake.parse(_sub({"locator": "https://example.org/count.py"}))

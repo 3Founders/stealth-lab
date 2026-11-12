@@ -84,3 +84,8 @@ Pillow
 platformdirs
 keyring
 cryptography
+
+# goal submission (docs/goal_submission.md): submitted scripts run in an isolated Modal Sandbox (app/submissions/sandbox.py);
+# a linked PDF is read as text for a step
+modal==1.6.4
+pypdf==6.1.1

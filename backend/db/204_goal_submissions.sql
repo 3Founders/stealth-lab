@@ -81,10 +81,16 @@ CREATE TABLE IF NOT EXISTS goal_submission_runs (
     next_step      integer NOT NULL DEFAULT 1,                -- the step_order to run (or wait on) next
     outputs        jsonb NOT NULL DEFAULT '[]',               -- one entry per finished step
     error          text NOT NULL DEFAULT '',
+    waiting        jsonb,                                     -- what the person must do: {kind: step | signin, ...}
     started_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     finished_at    timestamptz
 );
+
+-- How each goal was matched to an existing one (app/submissions/matching.py: exact, or retrieve -> rerank -> judge):
+-- the decision, the candidates the judge saw and its reason. Kept for review and for tuning the matcher.
+ALTER TABLE goal_submissions ADD COLUMN IF NOT EXISTS goal_match jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE goal_submission_steps ADD COLUMN IF NOT EXISTS goal_match jsonb NOT NULL DEFAULT '{}';
 
 CREATE INDEX IF NOT EXISTS idx_goal_submission_runs_owner ON goal_submission_runs (owner_id, started_at DESC);
 

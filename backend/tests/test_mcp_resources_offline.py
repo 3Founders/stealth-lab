@@ -98,7 +98,7 @@ def test_existing_tools_still_registered():
     # Intent: registering resources did not clobber the tool surface. The v1 tools must all
     # still be there (no frozen count: tools get added).
     names = {t.name for t in srv.server._tool_manager.list_tools()}
-    assert {"find_ways", "report_discovery", "submit_way", "report_result"} <= names
+    assert {"find_ways", "report_discovery", "submit_goal", "report_result"} <= names
 
 
 # --------------------------------------------------------------------------

@@ -175,7 +175,7 @@ async def lifespan(server: MCPServer) -> AsyncIterator[dict]:
 
 
 async def _warm_up() -> None:
-    """Pay the one-time costs at startup instead of on the first find_ways / submit_way (measured 2026-10-02: the
+    """Pay the one-time costs at startup instead of on the first find_ways / submit (measured 2026-10-02: the
     first call was ~6 s slower): the TLS trust store, the Vertex credential refresh, and the semantic judge's
     provider chain. No model is called. Best-effort: a failure here only means the first request pays it."""
     try:
@@ -514,7 +514,7 @@ def _transport_security():
 
 _TOKEN_VERIFIER = _build_token_verifier(_require_mcp_token())
 
-# The MCP surface: five tools (find_ways, submit_way, report_discovery,
+# The MCP surface: five tools (find_ways, submit_goal, report_discovery,
 # recommend_models, report_model_run), read-only claim and prompt resources,
 # and the survey_repo / plan_and_run prompts. The older v2 tool surface
 # (find_best_way, search_procedures, run tracking, ...) was removed.
@@ -548,13 +548,11 @@ _V1_INSTRUCTIONS = (
     "report_discovery(...) anything you had to fix or found a better way to "
     "do -- it's saved privately and comes back through "
     "stealth://procedures/{procedure_id}/claims next time. 4) If find_ways "
-    "found no good way (or a clearly better one), submit_way(...) "
-    "proposes yours: pass goal_id from find_ways' resolved or ambiguous "
-    "candidates, or -- when find_ways said no_match -- goal + goal_objective "
-    "and the Goal is created too, only if nothing like it exists; a way too "
-    "like an existing one is not stored. No links allowed; an automated "
-    "screen rejects malicious or NSFW content, then it is live (never "
-    "verified on submission). When your user suggests a tool or a better "
+    "found no good way (or a clearly better one), submit_goal(goal, steps) "
+    "proposes yours, step by step (a step a person does: a description; a "
+    "step kell does: a prompt and/or a locator). Each step is reviewed on its "
+    "own and goes into the rankings once approved ("
+    "AI approved). When your user suggests a tool or a better "
     "prompt while you work a goal, submit(kind, title, content, why, goal_id) "
     "saves it (private to them). 5) Optional, to pick the cheapest model that "
     "will pass: pass candidates=[\"model|scaffold\", ...] to find_ways and a "
@@ -566,10 +564,10 @@ _V1_INSTRUCTIONS = (
     "for any other prompt). This is the one routing path; recommend_models and "
     "report_model_run are older manual tools kept only for existing callers. "
     "On a local server reads need no "
-    "token (a hosted one asks you to sign in); report_discovery, submit_way, "
+    "token (a hosted one asks you to sign in); report_discovery, submit_goal, "
     "report_model_run, report_result and report_check_evidence need a signed-in user or write token. "
     "Tools: find_ways is listed; discover_tools(need) finds the others (report_result, "
-    "call_model, submit_way, report_discovery, recommend_models, report_model_run, report_check_evidence) with "
+    "call_model, submit_goal, run_way, report_discovery, recommend_models, report_model_run, report_check_evidence) with "
     "their arguments, and use_tool(name, arguments) runs one. find_ways' full guide: "
     "stealth://guides/find_ways or discover_tools(names=[\"find_ways\"])."
 )
@@ -639,7 +637,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
-        "report_discovery", "submit_way", "submit", "submit_goal", "run_way", "report_model_run", "report_result", "report_audit", "report_check_evidence",
+        "report_discovery", "submit", "submit_goal", "run_way", "report_model_run", "report_result", "report_audit", "report_check_evidence",
         "report_tools", "room_post", "memory_write",
         "delegate_inbox", "delegate_result", "delegate_call")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
@@ -664,7 +662,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 
 V1_TOOLS: frozenset[str] = frozenset({
-    "find_ways", "report_discovery", "submit_way", "submit", "submit_goal", "run_way", "recommend_models", "report_model_run", "report_result",
+    "find_ways", "report_discovery", "submit", "submit_goal", "run_way", "recommend_models", "report_model_run", "report_result",
     "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool", "delegate_inbox",
     "delegate_result", "delegate_call", "room_list", "room_read", "room_post", "room_members", "canvas_list", "canvas_read", "canvas_write",
     "memory_read", "memory_search", "memory_write"})
@@ -725,9 +723,7 @@ _V1_ANNOTATIONS: dict[str, dict] = {
     # stores a private candidate for the signed-in caller; nothing is published
     "submit": {"title": "Submit a tool, prompt or tip", "read_only_hint": False, "destructive_hint": False,
                "idempotent_hint": False, "open_world_hint": False},
-    # publishes to a shared library other people's agents read
-    "submit_way": {"title": "Submit a way", "read_only_hint": False, "destructive_hint": False,
-                   "idempotent_hint": False, "open_world_hint": True},
+    # publishes to a shared library other people's agents read, once its steps are approved
     "submit_goal": {"title": "Submit a goal and its steps", "read_only_hint": False, "destructive_hint": False,
                     "idempotent_hint": False, "open_world_hint": True},
     # fetches websites and calls a model; pauses for the person at a human step
@@ -1507,6 +1503,12 @@ _room_doc_routes.register(
 )
 
 from app.mcp_server import submission_routes as _submission_routes  # noqa: E402 -- goal submission (docs/goal_submission.md)
+from app.submissions import runs as _submission_runs  # noqa: E402
+
+# A tool step of a submitted Way runs for the person running it, through the same path as the room agent's tool calls
+# (use_tool's gate, consent, secret scan, rate limits and audit, without an MCP session).
+_submission_runs.TOOL_CALL = _room_agent_use
+_submission_runs.TOOL_LIST = _room_agent_tools_of
 
 _submission_routes.register(
     server,
@@ -3661,7 +3663,7 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
 #
 # Why: every listed tool's name, description and argument schema goes into the agent's context on EVERY turn, and
 # most turns need only find_ways. So tools/list shows a small core -- find_ways and the two tools below -- and
-# the rest (report_result, call_model, recommend_models, report_model_run, submit_way, report_discovery) are found
+# the rest (report_result, call_model, recommend_models, report_model_run, submit_goal, report_discovery) are found
 # when needed: discover_tools(need) returns the matching tools with their full arguments, and use_tool(name,
 # arguments) runs one. This works on every client, including ones that cannot refresh their tool list mid-session
 # (the transport is stateless, so the server cannot push tools/list_changed). Hidden tools stay callable by name,
@@ -4105,6 +4107,9 @@ async def use_tool(ctx: Context, name: str, arguments: dict[str, Any] | None = N
                                    cert_id=cert, task_id=task_id)
     if name in DISCOVERY_TOOLS:
         return f"REFUSED: {name!r} is called directly, not through use_tool"
+    if name == "submit_way":                    # retired 2026-11-12; older clients and the npm `library share` draft
+        return ("REFUSED: submit_way was replaced by submit_goal(goal, steps, description): each step is "
+                "{\"kind\": \"human\", \"description\": ...} or {\"kind\": \"automated\", \"prompt\": ..., \"locator\": ...}")
     if name not in V1_TOOLS:
         return f"REFUSED: no tool named {name!r}; call discover_tools(need=...) to find one"
     # Deliberate exemption (#34 item 4): kell's own V1/DISCOVERY tools are not third-party calls and
@@ -5068,15 +5073,9 @@ async def report_discovery(
     }, default=str)
 
 
-_WAY_MAX_STEPS = 50
-_WAY_TEXT_MAX = 4000
-_WAY_TOTAL_MAX = 64_000
-_WAY_PATH = "mcp/submit_way"
-
-
 async def _find_or_create_submitted_goal(pool, *, scope: AccessScope, goal: str, objective: str,
                                          rationale: str):
-    """The Goal half of submit_way: reuse a Goal that already exists, create one
+    """The Goal half of `submit`: reuse a Goal that already exists, create one
     only when nothing like it does. "Like it" is decided exactly as find_ways
     decides it (intent_resolution.resolve_intent over the caller's visible
     Goals, lexical + semantic, no LLM normalization so a submission costs no
@@ -5100,7 +5099,7 @@ async def _find_or_create_submitted_goal(pool, *, scope: AccessScope, goal: str,
             "outcome": "goal_ambiguous",
             "candidates": [{"goal_id": str(c.goal["id"]), "canonical_name": c.goal.get("canonical_name"),
                             "score": round(c.score, 3)} for c in found.candidates],
-            "next": "Nothing was stored. If one of these is your Goal, call submit_way again with its goal_id.",
+            "next": "Nothing was stored. If one of these is your Goal, call again with its goal_id.",
         }
     try:
         made = await create_goal_from_user(
@@ -5130,7 +5129,7 @@ async def submit(
     """
     Save something that came up while you were working a goal: a tool, a script, a better prompt, or a tip that your user (or you)
     suggested. Call it when the person says "use X for this", "ask it like this instead", or "next time do Y first" --
-    it is how the library learns from the people doing the work. Not for a whole new way to do a goal (submit_way) or
+    it is how the library learns from the people doing the work. Not for a whole new way to do a goal (submit_goal) or
     a fix to a step of a way you were following (report_discovery).
 
     kind: tool (a command, library or MCP server that did the job better) | script (code a person or you wrote that did it
@@ -5157,200 +5156,6 @@ async def submit(
         find_or_create_goal=_find_or_create_submitted_goal, resolve_procedure=_resolve_live_procedure,
         created_by=_resolve_caller_identity(fallback="submit"), goal_id=goal_id, goal=goal, goal_objective=goal_objective,
         procedure_id=procedure_id, step_order=step_order, suggested_by=suggested_by, repo=repo))
-
-
-@server.tool()
-async def submit_way(
-    name: str, steps_json: str, rationale: str,
-    preconditions_json: str, expected_outcome_json: str, ctx: Context,
-    goal_id: Optional[str] = None, goal: Optional[str] = None,
-    goal_objective: Optional[str] = None, goal_rationale: Optional[str] = None,
-    submission_type: str = "new", parent_procedure_id: Optional[str] = None,
-) -> str:
-    """
-    Contribute a way to do something -- and its Goal, if the Goal is new.
-    One call; nothing is stored when something like it already exists.
-    Requires a signed-in user; your identity comes from the token, never from
-    an argument (a shared or anonymous token is refused).
-
-    Name the Goal ONE of two ways:
-      goal_id -- a Goal find_ways returned (`resolved` or an `ambiguous`
-        candidate). Use it whenever find_ways found the Goal.
-      goal -- one plain sentence naming the capability ("Export a Word
-        document from a Node service"), plus goal_objective (what counts as
-        done). The server looks for the Goal first, the same way find_ways
-        does: an existing match is used; several close matches are returned
-        for you to pick from (nothing written; call again with goal_id); only
-        when nothing like it exists is a new Goal created (a candidate, owned
-        by you). goal_rationale (why it is worth doing) defaults to
-        `rationale`.
-
-    Then the way itself is compared with every way that Goal already has
-    (live Procedures and open submissions). If one is too similar, nothing is
-    written and you get that way's id back -- report_discovery a fix to it
-    instead, or submission_type "improvement" with parent_procedure_id.
-
-    No human review for now: an automated screen decides. The submission may
-    contain NO links (any URL refuses it), and an LLM rejects malicious or
-    NSFW content; if the screen can't run, nothing is stored (fail-closed).
-    Accepted ways go live for other agents at once, as unverified candidates:
-    they become "verified" only through real, evidenced reuse, and earn no
-    Credits while acceptance is automated.
-
-    steps_json: JSON array, 1-50 steps, each a plain-language string or
-      {"order": int, "goal": str}. Say what to do and how to tell it worked.
-    rationale: why this works (required, plain sentences).
-    preconditions_json: required, a non-empty JSON array of
-      {"subject","predicate","value"} facts that must hold for this to apply.
-    expected_outcome_json: required, a non-empty JSON object describing the
-      success state.
-    submission_type: "new", or "improvement" (then parent_procedure_id, the
-      version row id of the Procedure you improve, is required).
-
-    Returns one of:
-      {"outcome": "accepted", "goal": {..., "created": bool}, "submission_id", ...}
-      {"outcome": "rejected_by_screen", "screen": {...}}    -- nothing written
-      {"outcome": "goal_ambiguous", "candidates": [...]}   -- nothing written
-      {"outcome": "duplicate_way", "existing": {...}}      -- nothing written
-    Limits: 10 submissions per hour and 30 per day per user, and a cap across
-    all users; secrets are redacted before storage.
-    """
-    from app.economy import constants as econ
-    from app.economy import submissions as submissions_service
-    from app.services.governance import RateLimit, RateLimiter, RateLimitExceeded
-    from app.services.trace_redaction import redact_value
-
-    scope = _caller_access_scope()
-    if not scope.viewer_id:
-        return "REFUSED: sign in to contribute -- submit_way needs a real user identity"
-    goal = (goal or "").strip() or None
-    if bool(goal_id) == bool(goal):
-        return "REFUSED: name the Goal with exactly one of goal_id (an existing Goal) or goal (a new one)"
-    if goal and not (goal_objective and goal_objective.strip()):
-        return "REFUSED: a new goal needs goal_objective -- what counts as done"
-
-    def _load(text: str, label: str, kind: type):
-        try:
-            value = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{label} must be valid JSON ({exc})") from exc
-        if not isinstance(value, kind):
-            raise ValueError(f"{label} must be a JSON {'array' if kind is list else 'object'}")
-        return value
-
-    try:
-        if len(steps_json) + len(preconditions_json) + len(expected_outcome_json) + len(rationale) > _WAY_TOTAL_MAX:
-            raise ValueError(f"submission is larger than {_WAY_TOTAL_MAX} characters")
-        steps = _load(steps_json, "steps_json", list)
-        preconditions = _load(preconditions_json, "preconditions_json", list)
-        expected_outcome = _load(expected_outcome_json, "expected_outcome_json", dict)
-        if not 1 <= len(steps) <= _WAY_MAX_STEPS:
-            raise ValueError(f"steps_json needs 1-{_WAY_MAX_STEPS} steps")
-        for step in steps:
-            text = step if isinstance(step, str) else (step.get("goal") if isinstance(step, dict) else None)
-            if not isinstance(text, str) or not text.strip():
-                raise ValueError('each step must be a non-empty string or {"order": int, "goal": str}')
-            if len(text) > _WAY_TEXT_MAX:
-                raise ValueError(f"a step is longer than {_WAY_TEXT_MAX} characters")
-        if len(name) > 200 or len(rationale) > _WAY_TEXT_MAX:
-            raise ValueError("name (200) or rationale (4000) is too long")
-        if goal and (len(goal) > 200 or len(goal_objective or "") > _WAY_TEXT_MAX
-                     or len(goal_rationale or "") > _WAY_TEXT_MAX):
-            raise ValueError("goal (200), goal_objective or goal_rationale (4000) is too long")
-    except ValueError as exc:
-        return f"REFUSED: {exc}"
-
-    pool = ctx.request_context.lifespan_context["pool"]
-    # Rate limit before anything is looked up or written: a refused call must
-    # not leave a new Goal behind.
-    limiter = RateLimiter(pool, limits={
-        _WAY_PATH: RateLimit(max_requests=econ.SUBMISSION_RATE_LIMIT_MAX,
-                             window=timedelta(hours=econ.SUBMISSION_RATE_LIMIT_WINDOW_HOURS)),
-        _WAY_PATH + "/day": RateLimit(max_requests=econ.SUBMISSION_DAILY_MAX, window=timedelta(days=1)),
-        _WAY_PATH + "/all": RateLimit(max_requests=econ.SUBMISSION_GLOBAL_HOURLY_MAX, window=timedelta(hours=1)),
-    })
-    try:
-        await limiter.check_and_record(f"user:{scope.viewer_id}", _WAY_PATH)
-        await limiter.check_and_record(f"user:{scope.viewer_id}", _WAY_PATH + "/day")
-        # one bucket for everyone: bounds screening spend however many accounts exist
-        await limiter.check_and_record("global:submit_way", _WAY_PATH + "/all")
-    except RateLimitExceeded as exc:
-        return f"REFUSED: rate limit -- retry in {exc.retry_after_seconds}s ({exc})"
-
-    from app.economy.content_screen import screen_contribution
-
-    verdict = await screen_contribution({
-        "goal": goal, "goal_objective": goal_objective, "goal_rationale": goal_rationale,
-        "name": name, "rationale": rationale, "steps": steps,
-        "preconditions": preconditions, "expected_outcome": expected_outcome,
-    })
-    if not verdict.allowed:
-        return json.dumps({
-            "outcome": "rejected_by_screen", "screen": verdict.as_dict(),
-            "next": "Nothing was stored. Remove any links and anything flagged, then submit again.",
-        }, default=str)
-
-    goal_info: dict = {"goal_id": goal_id, "created": False}
-    if goal:
-        resolved = await _find_or_create_submitted_goal(
-            pool, scope=scope, goal=goal, objective=goal_objective or "",
-            rationale=(goal_rationale or rationale),
-        )
-        if isinstance(resolved, str):
-            return resolved
-        if resolved.get("outcome") == "goal_ambiguous":
-            return json.dumps(resolved, default=str)
-        goal_info = resolved
-        goal_id = resolved["goal_id"]
-
-    matched: list[str] = []
-    payload = redact_value({
-        "name": name.strip(), "rationale": rationale.strip(), "steps": steps,
-        "preconditions": preconditions, "expected_outcome": expected_outcome,
-    }, matched)
-
-    org_ids = tuple(scope.org_ids or ())
-    tenant_scope = TenantScope.for_tenant(org_ids[0]) if org_ids else TenantScope.commons()
-    try:
-        row = await submissions_service.create_procedure_submission(
-            pool, goal_id=goal_id, submission_type=submission_type,
-            parent_procedure_row_id=parent_procedure_id, actor_subject=scope.viewer_id,
-            access_scope=scope, tenant_scope=tenant_scope,
-            refuse_duplicate_at=econ.DUPLICATE_REVIEW_THRESHOLD, **payload,
-        )
-    except submissions_service.DuplicateWay as dup:
-        return json.dumps({
-            "outcome": "duplicate_way", "goal": goal_info,
-            "existing": {"id": dup.match_id, "kind": dup.match_kind, "similarity": round(dup.score, 3)},
-            "next": "Nothing was stored. If that way needs a fix, report_discovery it; if yours is better, "
-                    "submit it as submission_type='improvement' with parent_procedure_id.",
-        }, default=str)
-    except ValueError as exc:
-        return f"REFUSED: {exc}"
-
-    try:
-        row = await submissions_service.review_procedure_submission(
-            pool, submission_id=str(row["id"]), decision="accepted", actor_subject="system:content-screen",
-            note=f"accepted by the automated content screen ({verdict.provider}); no human review",
-            access_scope=scope, tenant_scope=tenant_scope, award_credits=False,
-        )
-    except ValueError as exc:
-        return f"REFUSED: stored but could not be made live -- {exc} (submission {row['id']})"
-
-    layer1 = row.get("layer1_result")
-    if isinstance(layer1, str):
-        layer1 = json.loads(layer1)
-    return json.dumps({
-        "outcome": "accepted", "screen": verdict.as_dict(),
-        "goal": {**goal_info, "goal_id": str(row["goal_id"])},
-        "submission_id": str(row["id"]), "goal_id": str(row["goal_id"]),
-        "procedure_row_id": str(row["procedure_row_id"]) if row.get("procedure_row_id") else None,
-        "status": row["status"], "status_reason": row.get("status_reason"),
-        "automated_check_issues": (layer1 or {}).get("issues", []),
-        "redacted": bool(matched),
-        "next": "Live now for other agents as an unverified way; it becomes verified only through "
-                "evidenced reuse. Track it at GET /v1/economy/procedure-submissions/{submission_id}.",
-    }, default=str)
 
 
 async def _submission_call(ctx: Context, call: Any) -> str:

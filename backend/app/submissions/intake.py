@@ -97,9 +97,9 @@ def classify_locator(raw: Any, where: str) -> Optional[dict]:
     if path.endswith(SCRIPT_EXT):
         return {"type": "script", "value": value}
     looks_like_path = ("\\" in value or value.startswith(("/", "./", "../", "~")) or re.match(r"^[a-z]:", path)
-                       or value.count("/") > 1 or re.search(r"\.[a-z0-9]{1,8}$", path.rsplit("/", 1)[-1]))
-    if not looks_like_path and re.fullmatch(r"[A-Za-z0-9_.:@-]+(/[A-Za-z0-9_.:@-]+)?", value):
-        return {"type": "tool", "value": value}              # a tool name, or "<server>/<tool>"
+                       or re.search(r"\.[a-z0-9]{1,8}$", path.rsplit("/", 1)[-1]))
+    if not looks_like_path and re.fullmatch(r"[A-Za-z0-9_.:@-]+(/[A-Za-z0-9_.:@-]+){0,3}", value):
+        return {"type": "tool", "value": value}              # a tool name, "<server>/<tool>", "io.github.x/y/tool"
     if "/" in value or looks_like_path:
         return {"type": "file", "value": value}
     raise SubmissionError(f"{where}: not a website, file, script or tool name; pass {{\"type\", \"value\"}}")
@@ -148,7 +148,11 @@ def parse(payload: Any) -> Submission:
         elif not (prompt or locator):
             raise SubmissionError(f"{where} is automated: give kell a prompt, a locator (a script, website, file or "
                                   "tool), or both")
-        title = _text(raw.get("title"), f"{where} title", MAX_NAME) or _title(description_i or prompt or locator["value"])
+        title = _text(raw.get("title"), f"{where} title", MAX_NAME)
+        if not title and not (description_i or prompt):
+            raise SubmissionError(f"{where} has only a locator: give it a title that says what it achieves "
+                                  "(e.g. \"Count the words in the text\"), which becomes the step's own goal")
+        title = title or _title(description_i or prompt)
         steps.append(Step(i, kind, title, description_i, prompt, locator))
     return Submission(goal, description, steps)
 
