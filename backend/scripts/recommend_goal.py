@@ -259,6 +259,17 @@ async def run(args: argparse.Namespace) -> None:
 
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2, timeout=30)
     try:
+        if args.goals_only:
+            # The fast first tier: the in-process Goal catalog, no ways or tools.
+            from app.tool_routing.goal_router import rank_goals
+
+            hits = await rank_goals(pool, args.query, limit=args.k)
+            for i, hit in enumerate(hits, 1):
+                print(f"{i}. {hit.canonical_name}  [{hit.matched_by}, score {hit.score:.3f}]")
+            if not hits:
+                print("no goals matched")
+            return
+
         from app.tool_routing.goal_router import route_goal
 
         hits = await route_goal(
@@ -308,6 +319,8 @@ def main() -> None:
     ap.add_argument("--semantic", action="store_true",
                     help="add the vector leg (needs DEEPINFRA_KEY and the matching model)")
     ap.add_argument("--tools-only", action="store_true", help="print only the mapped tools")
+    ap.add_argument("--goals-only", action="store_true",
+                    help="rank Goals only (in-process catalog, sub-second)")
     ap.add_argument("--call", action="store_true",
                     help="authorize and call the top tool (needs P1-04 and P1-07)")
     ap.add_argument("--tool", default=None,

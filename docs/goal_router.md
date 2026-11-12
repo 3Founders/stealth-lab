@@ -132,6 +132,7 @@ cd backend
 python scripts/recommend_goal.py "check what the page looks like after login" --explain
 python scripts/recommend_goal.py "scan this repository for vulnerabilities" --json
 python scripts/recommend_goal.py "search the web for the latest Postgres release" --call
+python scripts/recommend_goal.py "send a slack message" --goals-only   # in-process catalog, sub-second
 python scripts/map_tool_cards_to_goals.py --dry-run --report
 ```
 
