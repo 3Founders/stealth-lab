@@ -135,8 +135,8 @@ export default function RoutePage() {
 
         {state.kind === "unconfigured" && (
           <p className="route-note">
-            The router is not configured. Set <code>NEXT_PUBLIC_KEL_API_URL</code> (the FastAPI app) or{" "}
-            <code>NEXT_PUBLIC_KEL_MCP_URL</code> (the MCP server) to a running backend.
+            The router is not configured. Set <code>NEXT_PUBLIC_KEL_API_URL</code> to the backend&apos;s base URL
+            (for example <code>https://api.example.com</code>, without <code>/v1</code>).
           </p>
         )}
         {state.kind === "unauthenticated" && (

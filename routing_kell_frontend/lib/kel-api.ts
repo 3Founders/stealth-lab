@@ -1,6 +1,4 @@
 import { API_URL, apiDelete, apiGet, apiPost, apiPut, apiUpload, type ApiState } from "@/lib/api";
-import { MCP_ORIGIN } from "@/lib/connector";
-import { getAccessToken } from "@/lib/session";
 
 /**
  * Typed reads for the Goal → Procedure surface. Every shape here mirrors what
@@ -363,44 +361,9 @@ export interface RouteResult extends Row {
   tools?: RouteTool[];
 }
 
-/**
- * The router's read, on whichever backend this deployment has.
- *
- * `NEXT_PUBLIC_KEL_API_URL` is the FastAPI app (`/v1/*`). When it is unset, the page
- * still works: the hosted MCP server exposes the same `GET /v1/goals/route` (the
- * desktop app uses it), and `MCP_ORIGIN` always has a value (lib/connector.ts).
- * This is why /route does not show the "set NEXT_PUBLIC_KEL_API_URL" notice.
- */
-async function routeGet<T>(path: string, signal?: AbortSignal): Promise<ApiState<T>> {
-  const onLocalhost = typeof window !== "undefined"
-    && ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
-  const bases = API_URL
-    ? [API_URL]
-    : [...(onLocalhost ? ["http://localhost:8000"] : []), MCP_ORIGIN];
-  let last: ApiState<T> = { kind: "unconfigured" };
-  for (const base of bases) {
-    try {
-      const token = await getAccessToken();
-      const headers: Record<string, string> = { Accept: "application/json" };
-      if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(`${base}${path}`, {
-        signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer", headers,
-      });
-      if (res.status === 401) { last = { kind: "unauthenticated" }; continue; }
-      if (res.status === 403) { last = { kind: "forbidden", message: "You don't have access to the router." }; continue; }
-      if (!res.ok) { last = { kind: "error", message: `The router answered ${res.status}.`, status: res.status }; continue; }
-      return { kind: "ok", data: (await res.json()) as T };
-    } catch (e) {
-      if ((e as Error).name === "AbortError") return { kind: "idle" };
-      last = { kind: "error", message: "Could not reach the router." };
-    }
-  }
-  return last;
-}
-
 /** Goal -> Way -> Tool for one task. Read-only; the same answer the desktop Route page shows. */
 export const routeGoals = (query: string, k = 5, signal?: AbortSignal) =>
-  routeGet<RouteResult>(`/v1/goals/route?q=${j(query)}&k=${Math.min(Math.max(k, 1), 20)}`, signal);
+  apiGet<RouteResult>(`/v1/goals/route?q=${j(query)}&k=${Math.min(Math.max(k, 1), 20)}`, signal);
 
 export interface GoalInput {
   canonical_name: string;
