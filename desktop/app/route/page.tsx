@@ -7,7 +7,10 @@ type Tool = {
   card_id: string; name: string; server: string; title: string; description: string
   source: string; score: number; rank_score?: number | null; trial?: boolean
 }
-type Way = { procedure_id: string; name: string; approval_status: string; cards: { card_id?: string }[] }
+type Way = {
+  procedure_id: string; name: string; approval_status: string; approval_label?: string
+  cards: { card_id?: string }[]
+}
 type Goal = {
   goal_id: string; canonical_name: string; description: string; matched_by: string
   score: number; ways: Way[]; tools: Tool[]
@@ -137,7 +140,17 @@ export default function RoutePage() {
                     {goal.ways.map((way) => (
                       <div key={way.procedure_id} className="dk-card" style={{ gridTemplateColumns: "1fr", gap: 4, marginBottom: 6 }}>
                         <span className="name">{way.name}</span>
-                        <span className="meta" style={{ textTransform: "uppercase", letterSpacing: ".06em" }}>{way.approval_status}</span>
+                        <span
+                          className="meta"
+                          title={way.approval_status}
+                          style={{
+                            textTransform: "uppercase", letterSpacing: ".06em",
+                            // ai_approved passed the checks and the AI reviewer but no person yet (db/204)
+                            ...(way.approval_status === "ai_approved"
+                              ? { border: "1px dashed var(--rule-strong)", borderRadius: 3, padding: "0 4px", justifySelf: "start" }
+                              : {}),
+                          }}
+                        >{way.approval_label || way.approval_status}</span>
                         {way.cards?.length > 0 && (
                           <span className="meta" style={{ fontFamily: "Cascadia Mono, ui-monospace, Consolas, monospace", fontSize: 10.5 }}>
                             {way.cards.map((c) => c.card_id).filter(Boolean).join(" · ")}

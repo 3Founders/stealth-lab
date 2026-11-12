@@ -336,8 +336,10 @@ export interface RouteWay extends Row {
   preconditions: unknown[];
   verification_state: string;
   availability: string;
-  /** submitted < proposed < approved; rejected is never shown. */
+  /** submitted < proposed < ai_approved < approved; rejected is never shown. */
   approval_status: string;
+  /** The words the router prints for that tier, e.g. "AI approved". */
+  approval_label?: string;
   cards: Row[];
 }
 

@@ -419,3 +419,17 @@ def test_what_worked_for_a_goal_moves_a_relevant_tool_up():
     proven, _ = run(rank("look up the library docs", [a, b], goal="docs", k=2, reranker=both_fit,
                          outcomes={"b.example": (9, 10), "a.example": (1, 10)}, refs=card_refs))
     assert proven[0].card.id == b.id                                   # b worked on this goal's tasks; a did not
+
+
+def test_an_ai_approved_way_carries_the_ai_approved_label():
+    """db/204 added the tier between proposed and approved; every surface prints its words."""
+    from app.tool_routing.goal_router import WayHit, approval_label
+
+    way = WayHit(procedure_id="p", name="send it", steps=[], preconditions=[],
+                 verification_state="unverified", availability="active",
+                 approval_status="ai_approved")
+    assert way.approval_label == "AI approved"
+    assert approval_label("approved") == "Approved"
+    assert approval_label("submitted") == "Submitted"
+    assert approval_label("a_tier_from_the_future") == "a_tier_from_the_future"
+

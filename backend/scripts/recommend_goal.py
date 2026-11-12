@@ -73,7 +73,7 @@ def print_hit(number: int, hit: Any, explain: bool) -> None:
         print("   ways:")
         for way in hit.ways:
             cards = ", ".join(str(c.get("card_id") or "") for c in (way.cards or []))
-            print(f"     - {way.name}  ({way.verification_state}/{way.approval_status}/{way.availability})"
+            print(f"     - {way.name}  ({way.verification_state}/{way.approval_label or way.approval_status}/{way.availability})"
                   + (f"  cards={cards}" if cards else ""))
     else:
         print("   ways: none")

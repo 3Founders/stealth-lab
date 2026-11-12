@@ -14,7 +14,7 @@ const EXAMPLES = [
 ];
 
 function tier(t: string) {
-  return t === "approved" ? "approved" : t === "proposed" ? "proposed" : "submitted";
+  return t === "approved" || t === "ai_approved" || t === "proposed" ? t : "submitted";
 }
 
 function ToolCard({ tool }: { tool: RouteTool }) {
@@ -54,7 +54,7 @@ function GoalBlock({ goal }: { goal: RouteGoal }) {
               <div className="route-way-head">
                 <b>{way.name}</b>
                 <span className="route-tier" data-tier={tier(way.approval_status)}>
-                  {way.approval_status}
+                  {way.approval_label || way.approval_status}
                 </span>
               </div>
               <div className="route-cards">

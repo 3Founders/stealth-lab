@@ -51,6 +51,24 @@ class ToolHit:
     trial: bool = False                                        # shown as "New - free trial" (P3-02)
 
 
+# The review ladder (db/201, db/204): submitted < proposed < ai_approved < approved. `rejected` is
+# never shown. The label travels with the Way so the website, the desktop app and the CLI print the
+# same words; the runner still executes only `approved` (app/submissions/runs.py).
+APPROVAL_LABELS: dict[str, str] = {
+    "submitted": "Submitted",
+    "proposed": "Proposed",
+    "ai_approved": "AI approved",
+    "approved": "Approved",
+    "rejected": "Rejected",
+}
+
+
+def approval_label(status: str) -> str:
+    """The words shown for an approval tier; an unknown tier is shown as itself."""
+    key = str(status or "submitted")
+    return APPROVAL_LABELS.get(key, key)
+
+
 @dataclass
 class WayHit:
     procedure_id: str
@@ -59,8 +77,13 @@ class WayHit:
     preconditions: list[Any]
     verification_state: str
     availability: str
-    approval_status: str = "submitted"   # submitted < proposed < approved; rejected is never shown
+    approval_status: str = "submitted"   # submitted < proposed < ai_approved < approved; rejected is never shown
     cards: list[dict[str, Any]] = field(default_factory=list)  # procedure_tool_cards: the binding targets
+    approval_label: str = ""             # set from approval_status below; "AI approved" for ai_approved
+
+    def __post_init__(self) -> None:
+        if not self.approval_label:
+            self.approval_label = approval_label(self.approval_status)
 
 
 @dataclass

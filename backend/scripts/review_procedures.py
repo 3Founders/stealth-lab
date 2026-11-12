@@ -1,6 +1,6 @@
 """Review the procedure approval tiers (db/201, docs/goal_router.md).
 
-    submitted < proposed < approved        (rejected is never shown or run)
+    submitted < proposed < ai_approved < approved        (rejected is never shown or run)
 
     python scripts/review_procedures.py --list --status submitted --limit 20
     python scripts/review_procedures.py --promote <procedure-row-id> --to proposed --by dev-local
@@ -32,7 +32,7 @@ from dotenv import dotenv_values, load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-TIERS = ("submitted", "proposed", "approved", "rejected")
+TIERS = ("submitted", "proposed", "ai_approved", "approved", "rejected")
 
 
 def dsn_from_env() -> str:
@@ -115,7 +115,8 @@ async def run(args: argparse.Namespace) -> int:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Review procedure approval tiers.")
     ap.add_argument("--list", action="store_true")
-    ap.add_argument("--status", default=None, help="with --list: submitted | proposed | approved | rejected")
+    ap.add_argument("--status", default=None,
+                    help="with --list: submitted | proposed | ai_approved | approved | rejected")
     ap.add_argument("--limit", type=int, default=20)
     ap.add_argument("--promote", default=None, metavar="PROCEDURE_ROW_ID")
     ap.add_argument("--to", default="proposed")

@@ -172,7 +172,7 @@ submitted through it, and their moderation routes (`/v1/economy/procedure-submis
 | GS-5 | runs that pause at human steps | Anuj's agent | done (scratch) |
 | GS-6 | surfaces: HTTP, MCP `submit_goal` + `run_way`, CLI `scripts/submissions.py`, tests | Anuj's agent | done (scratch) |
 | GS-7 | tool and script steps run by themselves (gateway; Modal sandbox) | Anuj's agent | done (scripts need Modal keys on the server) |
-| GS-8 | router label: show "AI approved" for `ai_approved` Ways in `goal_router.py` / route view | open | not started |
+| GS-8 | router label: show "AI approved" for `ai_approved` Ways in `goal_router.py` / route view | — | done |
 | GS-9 | website / desktop UI on the HTTP API | owner decides the interface | do not start yet |
 | GS-10 | goal matching: retrieve → rerank → judge | Anuj's agent | done |
 | GS-11 | retire `submit_way` | Anuj's agent | done |

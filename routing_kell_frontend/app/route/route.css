@@ -182,6 +182,13 @@
   color: var(--ink);
 }
 
+/* Passed the checks and the AI reviewer, not yet seen by a person (db/204). */
+.route-tier[data-tier="ai_approved"] {
+  border-color: var(--ink);
+  border-style: dashed;
+  color: var(--ink);
+}
+
 .route-fallback {
   border-top: 2px solid var(--ink);
   padding-top: 22px;
