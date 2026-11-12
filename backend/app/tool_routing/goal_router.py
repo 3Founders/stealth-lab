@@ -17,8 +17,10 @@ mapped to it by `tool_card_goals` (db/186_tool_card_goals.sql).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
@@ -362,8 +364,120 @@ async def _rank(pool: Any, goal_id: str, cards: list[ToolHit], *, owner_id: Opti
     return cards
 
 
+_QUERY_HITS: dict[str, tuple[float, list[Any]]] = {}
+_QUERY_TTL_S = 120.0
+
+
+async def _query_hits(pool: Any, query: str) -> list[Any]:
+    """The request's relevant cards, from the tool tier's own search (app/tool_routing/retrieve.py).
+
+    The Goal's cards are a category; this is what makes the *request* decide the order inside
+    it. It runs once per request for all Goals, not once per Goal, and any failure leaves the
+    Goal's stable order in place (a search that cannot run is not an error).
+
+    Two bounds make it fit a page: the reranker gets 4 s (it answers in ~2 s warm; a cold or
+    slow call would otherwise hold the request for its own 10 s), and a repeated query reuses
+    its answer for two minutes.
+    """
+    key = " ".join(str(query or "").split())[:2000]
+    now = time.monotonic()
+    cached = _QUERY_HITS.get(key)
+    if cached is not None and now - cached[0] < _QUERY_TTL_S:
+        return cached[1]
+    try:
+        from app.tool_routing import store as _store
+        from app.tool_routing.providers import ToolEmbedder
+        from app.tool_routing.rerank import rerank
+        from app.tool_routing.retrieve import _query_vector, need_text, rank as _rank_tools
+
+        async def _bounded_rerank(need: str, docs: Sequence[str]) -> Optional[list[float]]:
+            try:
+                return await asyncio.wait_for(rerank(need, docs), 4.0)
+            except Exception:  # noqa: BLE001 -- the first-stage order stands
+                return None
+
+        embedder = ToolEmbedder()
+        embedder = embedder if embedder.available() else None
+        qvec = await _query_vector(need_text(key, None), embedder) if embedder else None
+        cards, known = await _store.candidates(pool, key, qvec)
+        if not cards:
+            return []
+        hits, _info = await _rank_tools(
+            key, cards, embedder=embedder, k=max(MAX_TOOLS_PER_GOAL * 4, 24),
+            reranker=_bounded_rerank, known_sims=known, query_vector=qvec,
+            refs=_store.card_refs,
+            outcomes_for=(lambda g: _store.tool_outcomes(pool, g)),
+        )
+        _QUERY_HITS[key] = (now, hits)
+        if len(_QUERY_HITS) > 128:
+            for old in sorted(_QUERY_HITS, key=lambda x: _QUERY_HITS[x][0])[:32]:
+                _QUERY_HITS.pop(old, None)
+        return hits
+    except Exception:  # noqa: BLE001 -- the Goal's stable order is the fallback
+        return []
+
+
+def _from_retrieval(hit: Any, base: Optional[ToolHit]) -> ToolHit:
+    """A tool-tier hit as a ToolHit, keeping the Goal's trust inputs when the card had them."""
+    card = hit.card
+    inputs = dict(base.rank_inputs) if base is not None else {}
+    inputs.update({
+        "relevance": round(float(hit.score), 4),
+        "bm25_rank": hit.bm25_rank,
+        "vector_rank": hit.vector_rank,
+        "rerank": round(float(hit.rerank), 4) if hit.rerank is not None else None,
+        "goal_match": bool(hit.goal_match),
+    })
+    return ToolHit(
+        card_id=str(card.id),
+        name=str(card.name or ""),
+        server=str(card.server or card.name or ""),
+        title=str(card.title or ""),
+        description=str(card.description or ""),
+        source=str(card.source or ""),
+        score=float(base.score) if base is not None else 0.0,
+        rank_score=round(float(hit.score), 4),
+        rank_inputs=inputs,
+        trial=bool(base.trial) if base is not None else False,
+    )
+
+
+def _apply_query(out: dict[str, list[ToolHit]], hits: Sequence[Any]) -> dict[str, list[ToolHit]]:
+    """Reorder each Goal's tools by the request, inside that Goal.
+
+    The Goal's existing order (the stored ranking, or goal fit) is the stable base: a relevant
+    card moves up, everything else keeps its place, and a Goal whose cards the search did not
+    reach is untouched. The set stays the Goal's cards -- the query changes the order, not the
+    membership.
+    """
+    for goal_id, base in out.items():
+        key = _goal_key(goal_id)
+        base_ids = {t.card_id for t in base}
+        stable = {t.card_id: i for i, t in enumerate(base)}
+        scoped = [h for h in hits if key in getattr(h.card, "goals", ()) or h.card.id in base_ids]
+        chosen: dict[str, Any] = {}
+        for h in scoped:
+            current = chosen.get(h.card.id)
+            if current is None or h.score > current.score:
+                chosen[h.card.id] = h
+        ordered = sorted(chosen.values(), key=lambda h: (-float(h.score), stable.get(h.card.id, 10**6), h.card.id))
+        merged: list[ToolHit] = []
+        for h in ordered[:MAX_TOOLS_PER_GOAL]:
+            merged.append(_from_retrieval(h, next((t for t in base if t.card_id == h.card.id), None)))
+        if len(merged) < MAX_TOOLS_PER_GOAL:
+            have = {t.card_id for t in merged}
+            for t in base:
+                if t.card_id not in have:
+                    merged.append(t)
+                if len(merged) >= MAX_TOOLS_PER_GOAL:
+                    break
+        out[goal_id] = merged
+    return out
+
+
 async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] = None,
-                 request_id: Optional[str] = None) -> dict[str, list[ToolHit]]:
+                 request_id: Optional[str] = None, query: Optional[str] = None,
+                 query_hits: Optional[Sequence[Any]] = None) -> dict[str, list[ToolHit]]:
     if not goal_ids:
         return {}
     ranked = trust_ranking()
@@ -425,7 +539,21 @@ async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] 
             else:
                 out[goal_id] = await _rank(pool, goal_id, out[goal_id], owner_id=owner_id,
                                            request_id=request_id)
+    if query:
+        hits = query_hits if query_hits is not None else await _query_hits(pool, query)
+        if hits:
+            out = _apply_query(out, hits)
     return out
+
+
+async def search_tools(pool: Any, query: str, *, limit: int = 8) -> list[ToolHit]:
+    """The tool tier on its own, for a request no Goal matched.
+
+    The same search `_tools` uses inside a Goal; it is the honest answer to "what tools could
+    do this" when the Goal tier has nothing. Read-only.
+    """
+    hits = await _query_hits(pool, query)
+    return [_from_retrieval(h, None) for h in hits[: max(1, int(limit))]]
 
 
 async def route_goal(
@@ -454,6 +582,9 @@ async def route_goal(
     if not text:
         return []
     scope = scope or AccessScope.unrestricted()
+    # The tool tier's own search does not depend on which Goal wins, so it starts now and runs
+    # beside the Goal legs and the ways. It is bounded and cached (see `_query_hits`).
+    query_task = asyncio.create_task(_query_hits(pool, text)) if include_tools else None
 
     found: dict[str, dict[str, Any]] = {}
     traces: dict[str, list[dict[str, Any]]] = {}
@@ -468,30 +599,49 @@ async def route_goal(
             })
 
     normalized = normalize_goal_name(text)
-    for rank, row in enumerate(await _exact(pool, normalized, max(limit * 2, 10))):
+    exact_rows, k000_rows = await asyncio.gather(
+        _exact(pool, normalized, max(limit * 2, 10)),
+        _k000_full_text(pool, text, max(limit * 4, 20)),
+    )
+    for rank, row in enumerate(exact_rows):
         exact = normalize_goal_name(str(row["canonical_name"])) == normalized
         score = EXACT_SCORE if exact else ALIAS_SCORE
         _merge(found, row, score, "exact" if exact else "alias")
         note(row, "exact" if exact else "alias", rank, score)
 
-    for rank, row in enumerate(await _k000_full_text(pool, text, max(limit * 4, 20))):
+    for rank, row in enumerate(k000_rows):
         score = 1.25 / (RRF_K + rank + 1)
         _merge(found, row, score, "fts")
         note(row, "k000_fts", rank, score)
 
-    search_leg = "fts+vector" if query_embedding is not None else "fts"
-    for rank, row in enumerate(await _search(pool, text, max(limit * 4, 20), query_embedding, scope)):
-        score = 1.0 / (RRF_K + rank + 1)
-        _merge(found, row, score, search_leg)
-        note(row, search_leg, rank, score)
+    # The global search leg is only a second opinion: when the search group is not configured,
+    # `search_goals` falls back to this same control database, which the K000 full-text leg above
+    # already covers. Skipping it there saves the slow round trip (measured 8.2 s vs 1.0 s) and
+    # cannot change the answer on a single-database deployment.
+    grouped = False
+    try:
+        from app.services.search_group import grouped as _grouped
+
+        grouped = await _grouped(pool)
+    except Exception:  # noqa: BLE001 -- an unreadable registry is a single database
+        grouped = False
+    if grouped:
+        search_leg = "fts+vector" if query_embedding is not None else "fts"
+        for rank, row in enumerate(await _search(pool, text, max(limit * 4, 20), query_embedding, scope)):
+            score = 1.0 / (RRF_K + rank + 1)
+            _merge(found, row, score, search_leg)
+            note(row, search_leg, rank, score)
 
     ranked = sorted(found.values(), key=lambda h: (-h["score"], h["canonical_name"]))[: max(1, int(limit))]
     if not ranked:
+        if query_task is not None:
+            await query_task  # fills the cache for the no-Goal fallback in route_api
         return []
 
     ways = await _ways(pool, ranked) if include_ways else {}
     tools = await _tools(pool, [h["goal_id"] for h in ranked], owner_id=owner_id,
-                         request_id=request_id) if include_tools else {}
+                         request_id=request_id, query=text,
+                         query_hits=(await query_task) if query_task is not None else None) if include_tools else {}
 
     # A one-step Way is its tool: build the Ways from the ranked tools so the first Way is the
     # first tool (trust when GOAL_RANKING=trust, goal fit otherwise). A tool with no materialized

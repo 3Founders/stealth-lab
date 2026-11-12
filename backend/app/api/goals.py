@@ -207,6 +207,29 @@ async def search_goals_route(
     return results
 
 
+@router.get("/route")
+async def route_goals_route(
+    q: str = Query(min_length=1, max_length=2000),
+    k: int = Query(default=5, ge=1, le=20),
+    include_ways: bool = Query(default=True),
+    include_tools: bool = Query(default=True),
+    pool=Depends(get_pool),
+    scope: AccessScope = Depends(get_scope),
+) -> dict[str, Any]:
+    """Goal -> Way -> Tool for one task, in one read.
+
+    The product surface for the goal-first router (`app/tool_routing/goal_router.py`):
+    each Goal comes back with its ways (procedures, with their approval tier) and its
+    tools (the cards bound to the Goal, ordered by the request). Read-only; a call
+    still goes through `app.tool_routing.gate.authorize`.
+    """
+    from app.tool_routing.route_api import route_payload
+
+    return await route_payload(
+        pool, q, limit=k, include_ways=include_ways, include_tools=include_tools, scope=scope,
+    )
+
+
 @router.get("/{goal_id}")
 async def inspect_goal_route(
     goal_id: str,

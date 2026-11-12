@@ -193,7 +193,7 @@ cd ..\desktop; npx tsc --noEmit
 - `186` card→goal, `187` security subgoals, `188` policies, `189` certificates, `190` audit, `191` task runs +
   comparison results, `192` trust view, `196` approvals, `193` trials, `194` verification, `195` listings,
   `197` append-only audit, `198` OSV policy, `199` procedure↔card mapping, `200` goal tool rankings,
-  `201` approval tiers, `202` moderation promoted action.
+  `201` approval tiers, `202` moderation promoted action, `203` tool-card vector index.
 
 **Scripts**
 

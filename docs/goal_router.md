@@ -116,6 +116,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Tool-vs-procedure comparison | **built (P2-01…P2-07)**; reports in `docs/compare_*.md` | `scripts/compare/*`. The procedure arm now runs a tool-backed one-step Way through the same gate as the tool arm; the existing reports predate the materialized ways, so re-run them |
 | Trust, trials, lifecycle, verification, pricing | **built (P3-01…P3-07)** | `trust.py`, `trials.py`, `lifecycle.py`, `verification.py`, `pricing.py`, `scripts/tool_market_report.py` |
 | Per-goal ranking | **materialized (db/200)** | `goal_tool_rankings`; `scripts/refresh_goal_rankings.py`. The router reads one row per card and applies only the trial overlay; a Goal with no rows falls back to the live ranker |
+| Route surface | **built** | `GET /v1/goals/route` (`app/api/goals.py` + `app/tool_routing/route_api.py`) and its MCP twin (`room_agent_routes.py`); `/route` on the website and in the desktop app. The tool tier now ranks a Goal's cards by the request (`goal_router._query_hits`: BM25 + vectors + reranker, 4 s bound, 2 min cache), and a no-Goal request falls back to the tool tier alone. `db/203` adds the HNSW index that makes the candidate scan ~2 s |
 
 Known local constraint: goal semantic/FTS search warns that the search group's members are unconfigured. Exact
 `goal_names` lookup works and hydrates from the home shard; the K000 full-text fallback in `goal_router.py` keeps the
@@ -135,6 +136,17 @@ python scripts/map_tool_cards_to_goals.py --dry-run --report
 
 `GOAL_RANKING=trust` switches the tool order from goal fit to verified reuse (P3-03); `TOOL_GATE=enforce`
 turns the gate from shadow into the answer. Neither is on by default yet.
+
+The same answer is now on the wire and in the product:
+
+```powershell
+# the website and the desktop app both read this (read-only; nothing is called)
+curl "http://127.0.0.1:8000/v1/goals/route?q=send%20a%20slack%20message&k=5"
+```
+
+The website page is `/route` (`routing_kell_frontend/app/route/page.tsx`); the desktop page is
+`/route` (`desktop/app/route/page.tsx`, opened from the magnifier in the top bar). The desktop
+route is served by the MCP server (`room_agent_routes.py`), so it uses the app's existing sign-in.
 
 ## Ground rules for parallel agents
 

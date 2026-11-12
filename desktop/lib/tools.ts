@@ -107,6 +107,27 @@ export async function toolSignInStatus(server: string, link = ""): Promise<boole
   }
 }
 
+/** Goal -> Way -> Tool for a task, from the MCP server the app is already signed in to. The same answer as the website's
+ *  GET /v1/goals/route (app/tool_routing/route_api.py): the Goal, its ways with their approval tier, and the tools the
+ *  request ranks inside it. Read-only -- nothing is called, no plan is written. */
+export async function routeGoals(need: string, k = 5): Promise<any> {
+  await freshSignIn()
+  const { url, token } = config()
+  const base = url && sibling(url, "/v1/goals/route")
+  if (!base) throw Object.assign(new Error("kell is not signed in on this machine (no server in ~/.stealthlab/config.json)"), { status: 401 })
+  const target = new URL(base)
+  target.search = new URLSearchParams({
+    q: need.slice(0, 4000),
+    k: String(Math.min(Math.max(Number(k) || 5, 1), 20)),
+  }).toString()
+  const r = await fetch(target.toString(), {
+    method: "GET", signal: AbortSignal.timeout(60_000),
+    headers: { accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  })
+  if (!r.ok) throw Object.assign(new Error(`kell's router answered ${r.status}`), { status: 502 })
+  return r.json()
+}
+
 // The room agent's TOOLS_ON and WORK_RULES (backend/app/services/room_agent.py), for a coding agent: local work stays on the engine's
 // own tools, outside tools are for what lives outside the folder. The sign-in sentence matches page.tsx, which turns a sign-in answer
 // into a button. The delegate line: the session's model already is kell's cheapest, and a delegated answer was paid for twice and then

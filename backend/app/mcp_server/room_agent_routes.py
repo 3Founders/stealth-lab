@@ -293,6 +293,33 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             return _error(request, "not pending, expired, or not yours", 409)
         return _json(request, {"approval": await _approvals.get(pool, approval_id, subject)})
 
+    @server.custom_route("/v1/goals/route", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def goal_route(request: Request) -> Response:
+        """Goal -> Way -> Tool for one task (app/tool_routing/route_api.py).
+
+        The desktop's Route page reads this. It is the same answer as the website's
+        `GET /v1/goals/route`, on the MCP server the app is already signed in to.
+        Query: ?q=<the task>&k=<1..20>. Read-only; nothing is called.
+        """
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        q = str(request.query_params.get("q") or "").strip()[:2000]
+        if not q:
+            return _error(request, "say what you are trying to do: ?q=<the task>", 400)
+        try:
+            k = min(max(int(request.query_params.get("k") or 5), 1), 20)
+        except ValueError:
+            k = 5
+        from app.tool_routing.route_api import route_payload
+
+        return _json(request, await route_payload(pool, q, limit=k, owner_id=subject))
+
     @server.custom_route("/v1/rooms/{room_id}/agent/stop", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_stop(request: Request) -> Response:
         """The Stop button: cancels the caller's own running answers in this room (one agent when {"agent": "name"} is sent). Nothing of theirs is posted

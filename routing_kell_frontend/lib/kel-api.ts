@@ -312,6 +312,59 @@ export function findGoals(
     .then((result) => result.kind === "ok" ? { ...result, data: goalPage(result.data) } : result);
 }
 
+/** One tool the router bound to a Goal (app/tool_routing/goal_router.py ToolHit). */
+export interface RouteTool extends Row {
+  card_id: string;
+  name: string;
+  server: string;
+  title: string;
+  description: string;
+  source: string;
+  /** Goal fit (tool_card_goals.score). */
+  score: number;
+  /** The request's relevance, when the tool tier ranked it; null in the stable order. */
+  rank_score?: number | null;
+  rank_inputs?: Row;
+  trial?: boolean;
+}
+
+/** One Way: the ordered steps that achieve the Goal, and the cards bound to them. */
+export interface RouteWay extends Row {
+  procedure_id: string;
+  name: string;
+  steps: Row[];
+  preconditions: unknown[];
+  verification_state: string;
+  availability: string;
+  /** submitted < proposed < approved; rejected is never shown. */
+  approval_status: string;
+  cards: Row[];
+}
+
+export interface RouteGoal extends Row {
+  goal_id: string;
+  canonical_name: string;
+  description: string;
+  status: string;
+  score: number;
+  matched_by: string;
+  home_shard: string;
+  ways: RouteWay[];
+  tools: RouteTool[];
+  trace: Row[];
+}
+
+export interface RouteResult extends Row {
+  query: string;
+  goals: RouteGoal[];
+  /** Only when no Goal matched: the tool tier's own answer. */
+  tools?: RouteTool[];
+}
+
+/** Goal -> Way -> Tool for one task. Read-only; the same answer the desktop Route page shows. */
+export const routeGoals = (query: string, k = 5, signal?: AbortSignal) =>
+  apiGet<RouteResult>(`/v1/goals/route?q=${j(query)}&k=${Math.min(Math.max(k, 1), 20)}`, signal);
+
 export interface GoalInput {
   canonical_name: string;
   description?: string;

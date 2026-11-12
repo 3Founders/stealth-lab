@@ -1,0 +1,190 @@
+/* The Route page: Goal -> Way -> Tool. Uses the site's ink/paper/rule tokens; no new palette. */
+
+.route-results {
+  grid-column: 1 / -1;
+  margin-top: clamp(28px, 4vw, 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.route-note {
+  grid-column: 1 / -1;
+  margin-top: 24px;
+  color: var(--grey);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.route-note code {
+  font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.route-goal {
+  border-top: 1px solid var(--rule-strong);
+  padding: clamp(22px, 3vw, 34px) 0 clamp(26px, 3.4vw, 42px);
+}
+
+.route-goal:first-child {
+  border-top: 2px solid var(--ink);
+}
+
+.route-goal > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.route-goal h2,
+.route-fallback h2 {
+  font-size: clamp(22px, 3vw, 34px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: 0;
+  font-weight: 400;
+}
+
+.route-goal > header .caption,
+.route-fallback h2 .caption {
+  color: var(--grey);
+  white-space: nowrap;
+}
+
+.route-lead {
+  margin: 10px 0 0;
+  max-width: 68ch;
+  color: var(--grey);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.route-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: clamp(20px, 3vw, 44px);
+  margin-top: 22px;
+}
+
+.route-cols h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 400;
+  color: var(--ink);
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.route-cols h3 .caption {
+  color: var(--grey);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.route-way,
+.route-tool {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.route-way-head,
+.route-tool-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.route-way-head b,
+.route-tool-head b {
+  font-weight: 500;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.route-tool-head .caption {
+  color: var(--grey);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+.route-tool p {
+  margin: 6px 0 0;
+  color: var(--grey);
+  font-size: 13px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.route-tool-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--grey);
+  font-variant-numeric: tabular-nums;
+}
+
+.route-cards {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.route-cards code {
+  font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--grey);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 2px 8px;
+  overflow-wrap: anywhere;
+}
+
+.route-tier {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  padding: 2px 6px 1px;
+  white-space: nowrap;
+  color: var(--grey);
+}
+
+.route-tier[data-tier="approved"] {
+  background: var(--yellow);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.route-tier[data-tier="proposed"] {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.route-fallback {
+  border-top: 2px solid var(--ink);
+  padding-top: 22px;
+}
+
+@media (max-width: 860px) {
+  .route-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
