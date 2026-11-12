@@ -470,7 +470,11 @@ def test_every_registered_mcp_tool_is_classified(mcp):
     names = set(re.findall(r"@server\.tool\([^)]*\)\s*\n(?:@[\w.]+(?:\([^)]*\))?\s*\n)*async def (\w+)\(", src))
     assert names == {"find_ways", "submit", "report_discovery", "recommend_models", "report_model_run",
                      "report_result", "report_audit", "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool",
-                     "delegate_inbox", "delegate_result", "delegate_call", "submit_goal", "run_way"}
+                     "delegate_inbox", "delegate_result", "delegate_call", "submit_goal", "run_way",
+                     # rooms, canvas and memory: read through the signed-in person's own membership
+                     "room_list", "room_read", "room_members", "room_post",
+                     "canvas_list", "canvas_read", "canvas_write",
+                     "memory_read", "memory_search", "memory_write"}
     unclassified = sorted(n for n in names if n not in mcp._TOOL_SCOPES)
     assert not unclassified, f"classify these MCP tools in _TOOL_SCOPES (default is deny-to-readers): {unclassified}"
 
