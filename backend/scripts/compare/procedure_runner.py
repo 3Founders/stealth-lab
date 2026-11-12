@@ -61,16 +61,17 @@ async def resolve_goal(pool: Any, task: Task) -> tuple[Optional[str], Optional[s
 
 async def pick_procedure(pool: Any, goal_id: Optional[str], wanted: Optional[str]) -> Optional[dict]:
     if wanted:
-        row = await pool.fetchrow("SELECT id::text AS id, name, steps, domain_payload FROM procedures "
-                                  "WHERE id = $1::uuid AND t_invalid IS NULL", wanted)
+        row = await pool.fetchrow("SELECT id::text AS id, name, steps, domain_payload, approval_status "
+                                  "FROM procedures WHERE id = $1::uuid AND t_invalid IS NULL", wanted)
         return dict(row) if row else None
     if not goal_id:
         return None
     row = await pool.fetchrow(
         """
-        SELECT id::text AS id, name, steps, domain_payload
+        SELECT id::text AS id, name, steps, domain_payload, approval_status
         FROM procedures
         WHERE achieves_goal_id = $1::uuid AND t_invalid IS NULL AND availability = 'active'
+          AND approval_status = 'approved'
         ORDER BY (verification_state::text = 'verified') DESC,
                  COALESCE((verification_stats->>'successes')::int, 0) DESC,
                  COALESCE((domain_payload->>'goal_score')::float, 0) DESC,
@@ -117,7 +118,10 @@ async def run_task(pool: Any, task: Task, *, procedure_id: Optional[str] = None,
 
     if proc is None:
         error_class = "no_procedure"
-        trace.append(f"no active procedure for goal {goal_key}")
+        trace.append(f"no active approved procedure for goal {goal_key}")
+    elif str(proc.get("approval_status") or "") != "approved":
+        error_class = "not_approved"
+        trace.append(f"procedure {proc.get('name')} is {proc.get('approval_status')}, not approved")
     else:
         nodes = nodes_for(proc["steps"] if isinstance(proc["steps"], list) else json.loads(proc["steps"] or "[]"))
         payload = proc.get("domain_payload") or {}

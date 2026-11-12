@@ -57,6 +57,7 @@ class WayHit:
     preconditions: list[Any]
     verification_state: str
     availability: str
+    approval_status: str = "submitted"   # submitted < proposed < approved; rejected is never shown
     cards: list[dict[str, Any]] = field(default_factory=list)  # procedure_tool_cards: the binding targets
 
 
@@ -190,6 +191,7 @@ async def _ways(pool: Any, hits: Sequence[dict[str, Any]]) -> dict[str, list[Way
                 """
                 SELECT pr.id::text AS id, pr.name, pr.steps, pr.preconditions,
                        pr.verification_state::text AS verification_state,
+                       pr.approval_status,
                        pr.availability::text AS availability,
                        COALESCE((SELECT jsonb_agg(jsonb_build_object(
                                             'card_id', pc.card_id, 'name', tc.name,
@@ -202,6 +204,7 @@ async def _ways(pool: Any, hits: Sequence[dict[str, Any]]) -> dict[str, list[Way
                 FROM procedures pr
                 WHERE pr.achieves_goal_id = $1::uuid
                   AND pr.t_invalid IS NULL
+                  AND pr.approval_status <> 'rejected'
                   AND pr.availability = 'active'
                 ORDER BY (pr.verification_state = 'verified') DESC,
                          COALESCE((pr.verification_stats->>'successes')::int, 0) DESC,
@@ -231,6 +234,7 @@ async def _ways(pool: Any, hits: Sequence[dict[str, Any]]) -> dict[str, list[Way
                 preconditions=list(row["preconditions"] or []),
                 verification_state=str(row["verification_state"] or ""),
                 availability=str(row["availability"] or ""),
+                approval_status=str(row["approval_status"] or "submitted"),
                 cards=_cards(row),
             )
             for row in rows
@@ -510,6 +514,7 @@ async def route_goal(
                         preconditions=[],
                         verification_state="candidate",
                         availability="active",
+                        approval_status="submitted",
                         cards=[{"card_id": t.card_id, "name": t.name, "server": t.server,
                                 "step_order": 0}],
                     )
