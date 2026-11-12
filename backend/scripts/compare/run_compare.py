@@ -212,7 +212,7 @@ async def main_async(args: argparse.Namespace) -> int:
             pass
         if save is not None and comparisons:
             await save(pool, comparisons)
-        # The runs marked their Goals stale (db/204); refresh them now so the next search
+        # The runs marked their Goals stale (db/205); refresh them now so the next search
         # sees the new evidence. The app's background loop does the same on a timer.
         try:
             from app.tool_routing import ranking as _ranking

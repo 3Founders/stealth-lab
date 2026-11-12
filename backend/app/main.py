@@ -37,7 +37,7 @@ logging.basicConfig(
 
 
 async def _goal_rankings_loop(pool: Any) -> None:
-    """Refresh the Goals the db/204 triggers marked stale; a burst is one refresh."""
+    """Refresh the Goals the db/205 triggers marked stale; a burst is one refresh."""
     from app.tool_routing import ranking
 
     while True:
@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
         app.state.goal_catalog_warm = _warm
     except Exception:  # noqa: BLE001 -- a warm-up failure is not a startup failure
         logging.getLogger(__name__).warning("goal catalog warm-up skipped", exc_info=True)
-    # Per-Goal tool ranking (db/200): db/204 marks a Goal stale when its cards, ways or
+    # Per-Goal tool ranking (db/200): db/205 marks a Goal stale when its cards, ways or
     # evidence change; this loop recomputes the marked Goals every 15 s.
     app.state.goal_rankings_task = asyncio.create_task(_goal_rankings_loop(app.state.pool))
     from app.services import org_keys as _org_keys

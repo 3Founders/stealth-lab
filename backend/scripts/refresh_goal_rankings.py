@@ -61,7 +61,7 @@ def main() -> None:
     ap.add_argument("--no-trust-refresh", action="store_true",
                     help="use the current tool_trust view instead of refreshing it first")
     ap.add_argument("--drain", action="store_true",
-                    help="process the db/204 dirty queue once (limit 100, no coalescing)")
+                    help="process the db/205 dirty queue once (limit 100, no coalescing)")
     ap.add_argument("--dsn", default="")
     raise SystemExit(asyncio.run(run(ap.parse_args())))
 

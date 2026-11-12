@@ -1,6 +1,6 @@
--- 204_goal_ranking_dirty.sql
+-- 205_goal_ranking_dirty.sql
 --
--- Next free number: 203 (tool-card vector index) was highest before this file.
+-- Next free number: 204 (goal submissions, which added `ai_approved`) was highest before this file.
 --
 -- What this adds: a small queue of Goals whose materialized tool ranking (db/200) is stale.
 -- The ranking is a function of the card→Goal map, the procedure→card map and verified

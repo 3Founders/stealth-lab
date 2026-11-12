@@ -146,7 +146,7 @@ async def refresh(pool: Any, *, goal: Optional[str] = None, trust_refresh: bool 
 
 
 async def mark_dirty(pool: Any, goal_ids: list[str], reason: str = "manual") -> int:
-    """Queue Goals whose ranking is stale; the drain recomputes them (db/204)."""
+    """Queue Goals whose ranking is stale; the drain recomputes them (db/205)."""
     ids = [str(g) for g in goal_ids if g]
     if not ids:
         return 0
@@ -163,7 +163,7 @@ async def mark_dirty(pool: Any, goal_ids: list[str], reason: str = "manual") -> 
 
 async def drain(pool: Any, *, limit: int = 8, min_age_s: float = 5.0,
                 trust_refresh: bool = True) -> int:
-    """Recompute up to `limit` Goals marked stale by the db/204 triggers. -> Goals refreshed.
+    """Recompute up to `limit` Goals marked stale by the db/205 triggers. -> Goals refreshed.
 
     `min_age_s` coalesces a burst of writes (a remap, a test batch) into one refresh. The
     trust view is refreshed once per batch, so the new outcomes are visible to every Goal.
