@@ -96,6 +96,11 @@
   .dk-page .dg-shell[data-left="closed"],
   .dk-page .dg-shell[data-right="closed"],
   .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: minmax(0, 1fr); }
+  /* One track here, but the base rule still puts the chat in grid-column 2. That creates an IMPLICIT second
+     column, sized to the chat's max-content width (~594px): the window can shrink past 760px while the chat
+     stays 594px wide, leaving a blank strip on the left and clipping the right edge (found 2026-11-12). The
+     chat belongs in the one track; both sidebars are fixed drawers at this width, so they are out of flow. */
+  .dk-page .dg-main { grid-column: 1 / -1; }
   /* The project sidebar becomes the drawer the chat.css mobile rules describe, driven by data-left. */
   .dk-page .dg-side {
     position: fixed; inset: 0 auto 0 0; width: min(88vw, 340px); z-index: 40;
@@ -163,7 +168,7 @@
 .dk-signin[data-state="done"] { border-color: var(--yellow); }
 
 /* right panel: changes, steps, tools */
-.dk-panel { border-left: 1px solid var(--rule); background: var(--paper); overflow-y: auto; padding: 14px 12px; display: flex;
+.dk-panel { border-left: 1px solid var(--rule); background: var(--paper); overflow-y: auto; overflow-x: hidden; padding: 14px 12px; display: flex;
   flex-direction: column; gap: 6px; min-height: 0; box-shadow: -8px 0 28px rgba(0, 0, 0, .08); position: relative; }
 .dk-panel h2 { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--grey); font-weight: 400; margin: 10px 6px 4px; }
 .dk-panel h2:first-child { margin-top: 0; }
@@ -186,8 +191,10 @@
 .dk-file .path { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 11.5px; overflow-wrap: anywhere; }
 .dk-file .stat { margin-left: auto; font-size: 11.5px; white-space: nowrap; }
 .dk-file .stat .add { color: #1F6B3A; } .dk-file .stat .del { color: #9B2C2C; }
-.dk-diff { border-top: 1px solid var(--rule); font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 11.5px; line-height: 1.45; overflow-x: auto; }
-.dk-diff div { white-space: pre; padding: 0 10px; }
+.dk-diff { border-top: 1px solid var(--rule); font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 11.5px; line-height: 1.45; overflow-x: hidden; }
+/* A diff line wraps to the panel's width instead of scrolling sideways (the owner asked that a horizontal scrollbar
+   never appear, 2026-11-12). `pre-wrap` keeps the leading whitespace the patch's own indentation carries. */
+.dk-diff div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 10px; }
 .dk-diff .add { background: rgba(31, 107, 58, 0.08); color: #1F4F30; }
 .dk-diff .del { background: rgba(155, 44, 44, 0.07); color: #6E2323; }
 .dk-diff .hunk { color: var(--grey); background: rgba(23, 23, 23, 0.03); }
@@ -382,7 +389,7 @@
    the whole tree is keyboard-walkable. */
 .dk-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 10px 6px 4px; }
 .dk-sec-head h2 { margin: 0; }
-.dk-tree { margin: 0 2px; max-height: min(46vh, 420px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.dk-tree { margin: 0 2px; max-height: min(46vh, 420px); overflow: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; }
 .dk-tree-level { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .dk-tree-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px;
   border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--ink); min-width: 0;
@@ -403,8 +410,8 @@
 .dk-viewer-head { padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--rule); }
 .dk-viewer-head h2 { margin: 0; font-size: 11.5px; letter-spacing: .02em; text-transform: none; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-code { margin: 0; padding: 10px 12px; max-height: 58vh; overflow: auto; font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
-  font-size: 11.5px; line-height: 1.5; white-space: pre; tab-size: 2; }
+.dk-code { margin: 0; padding: 10px 12px; max-height: 58vh; overflow: auto; overflow-x: hidden; font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
 .dk-code:focus-visible { outline: 2px solid var(--cobalt); outline-offset: -2px; }
 
 /* The command palette (Ctrl/Cmd-K, reqs §1): a sheet over the app, the same glass recipe as the chat's menus. */
@@ -416,7 +423,7 @@
   box-shadow: 0 24px 70px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.12);
   animation: dg-glass-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; transform-origin: top center; }
 .dk-palette-input { font: inherit; font-size: 16px; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--rule); background: transparent; color: var(--ink); outline: none; }
-.dk-palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; overscroll-behavior: contain; }
+.dk-palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .dk-palette-row { all: unset; box-sizing: border-box; display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 9px 10px; border-radius: 9px; cursor: pointer; color: var(--ink); font-size: 14px;
   transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-palette-row .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -456,7 +463,7 @@
 .dk-import-empty { padding: 14px 4px; }
 .dk-import-tools { display: flex; align-items: center; gap: 6px; }
 .dk-import-tools .dk-note { margin: 0 0 0 auto; }
-.dk-import-list { list-style: none; margin: 0; padding: 4px; overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 2px; min-height: 0; }
+.dk-import-list { list-style: none; margin: 0; padding: 4px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; display: grid; gap: 2px; min-height: 0; }
 .dk-import-list label { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px;
   transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-import-list label:hover { background: rgba(0,0,0,.045); }

@@ -56,7 +56,10 @@
 .dg-banner { animation: dg-drop var(--dg-smooth-d) var(--dg-smooth) both; background: #fdecea; color: #7a1812; border-bottom: 1px solid #f3c1bd; padding: 7px 18px; font-size: 13.5px; }
 
 .dg-scroll { position: relative; flex: 1; min-height: 0; display: flex; }
-.dg-viewport { flex: 1; overflow-y: auto; padding: 14px 18px 6px; }
+/* A conversation never scrolls sideways: every block inside wraps (code, tables, payloads). `overflow-y: auto` alone
+   computes `overflow-x: auto` too, which is how a wide code line used to put a horizontal scrollbar under the chat
+   (2026-11-12). Hiding x is the guarantee; the wrap rules below do the real work. */
+.dg-viewport { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 14px 18px 6px; }
 .dg-content { animation: dg-fade var(--dg-smooth-d) var(--dg-smooth) both; display: flex; flex-direction: column; gap: 14px; min-height: 100%; justify-content: flex-end; }
 .dg-empty { color: var(--grey); font-size: 14px; }
 .dg-run { animation: dg-rise var(--dg-smooth-d) var(--dg-smooth) both; display: grid; grid-template-columns: 36px 1fr; gap: 12px; }
@@ -84,7 +87,7 @@
 .dg-payload[open]::details-content { block-size: auto; }
 .dg-payload code { color: var(--dg-code-ink); font-size: 12px; }
 .dg-hop { margin-left: auto; font-size: 11.5px; color: var(--grey); }
-.dg-payload pre { margin: 0; padding: 8px 12px 10px; border-top: 1px solid var(--dg-code-border); background: var(--dg-code-bg); color: var(--dg-code-ink); overflow-x: auto; font-size: 12px; line-height: 1.45; }
+.dg-payload pre { margin: 0; padding: 8px 12px 10px; border-top: 1px solid var(--dg-code-border); background: var(--dg-code-bg); color: var(--dg-code-ink); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.45; }
 .dg-notice { animation: dg-pop var(--dg-bouncy-d) var(--dg-bouncy) both; text-align: center; font-size: 12.5px; color: #6b4e00; background: var(--soft); border-radius: 999px; padding: 4px 14px; align-self: center; }
 .dg-jump { animation: dg-pop var(--dg-bouncy-d) var(--dg-bouncy) both; transition: background-color var(--dg-micro-d) var(--dg-micro), transform var(--dg-micro-d) var(--dg-micro); position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); font: inherit; font-size: 13px; background: var(--ink); color: var(--paper); border: 0; border-radius: 999px; padding: 6px 14px; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.2); }
 
@@ -229,7 +232,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 /* Notifications: the bell in the room header, its list and its settings. */
 .dg-bell { position: relative; }
 .dg-bell > .dg-mini { display: inline-flex; align-items: center; gap: 6px; }
-.dg-bell-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(380px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto; background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 8px; padding: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .14); display: grid; gap: 10px; }
+.dg-bell-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(380px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto; overflow-x: hidden; background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 8px; padding: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .14); display: grid; gap: 10px; }
 .dg-bell-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .dg-bell-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .dg-bell-list button { width: 100%; text-align: left; display: grid; gap: 2px; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; font: inherit; cursor: pointer; }
@@ -296,11 +299,11 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-set-x { width: 36px; height: 36px; border-radius: 10px; border: 0; background: transparent; font-size: 24px; line-height: 1; cursor: pointer; color: var(--ink); }
 .dg-set-x:hover { background: var(--soft); }
 .dg-set-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; }
-.dg-set-nav { display: grid; align-content: start; gap: 2px; padding: 12px; border-right: 1px solid var(--rule); background: var(--paper); overflow-y: auto; }
+.dg-set-nav { display: grid; align-content: start; gap: 2px; padding: 12px; border-right: 1px solid var(--rule); background: var(--paper); overflow-y: auto; overflow-x: hidden; }
 .dg-set-nav button { text-align: left; padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; font: inherit; font-size: 15px; color: var(--ink); cursor: pointer; }
 .dg-set-nav button:hover { background: rgba(0, 0, 0, .05); }
 .dg-set-nav button[aria-selected="true"] { background: var(--surface); box-shadow: 0 4px 12px rgba(0, 0, 0, .1), 0 1px 2px rgba(0, 0, 0, .08); font-weight: 500; }
-.dg-set-panel { padding: 22px 26px 30px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; min-height: 0; outline: none; }
+.dg-set-panel { padding: 22px 26px 30px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; min-height: 0; outline: none; }
 .dg-set-panel section { display: grid; gap: 14px; max-width: 600px; }
 .dg-set-panel h3 { font-size: 20px; margin: 0; font-weight: 400; }
 .dg-set-lead { color: var(--text-2); font-size: 15px; line-height: 1.45; margin: 0; }
@@ -612,14 +615,14 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-artifact-btn:hover, .dg-artifact-btn[aria-pressed="true"] { background: var(--yellow); }
 .dg-artifact-frame { display: block; width: 100%; height: min(420px, 60vh); border: 0; background: var(--surface); }
 .dg-artifact-note { padding: 6px 10px; margin: 0; }
-.dg-artifact-src { margin: 0; max-height: 320px; overflow: auto; padding: 10px; font-size: 12px; background: rgba(0, 0, 0, .04); }
+.dg-artifact-src { margin: 0; max-height: 320px; overflow: auto; overflow-x: hidden; padding: 10px; font-size: 12px; background: rgba(0, 0, 0, .04); }
 .dg-artifact-src code { white-space: pre-wrap; word-break: break-word; }
 
 /* "+ Add agent": a small popup over the chat. It reuses the Settings dialog's frame, animation and backdrop, at a smaller size. */
 .dg-settings.dg-addagent { width: min(760px, 96vw); height: auto; max-height: 92dvh; }
 /* The model-key panel can outgrow the max-height, and the base .dg-settings sets overflow: visible, which left the
    overflow unreachable (no scroll). The dialog itself scrolls; scrolling is kept inside it. */
-.dg-settings.dg-addagent { overflow: auto; overscroll-behavior: contain; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+.dg-settings.dg-addagent { overflow: auto; overflow-x: hidden; overscroll-behavior: contain; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
 .dg-addagent .dg-set-frame { height: auto; display: block; }
 .dg-addagent .dg-set-head { padding: 14px 18px; }
 .dg-addagent .dg-set-head h2 { font-size: 19px; }
@@ -649,14 +652,17 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-md .dg-md-h { font-size: 1.05em; line-height: 1.3; margin: 2px 0 0; }
 .dg-md ul, .dg-md ol { margin: 0; padding-left: 20px; display: grid; gap: 3px; }
 .dg-md li { line-height: 1.42; font-weight: 400; }
-.dg-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: var(--dg-code-inline); color: var(--dg-code-ink); border-radius: 4px; padding: 0 4px; }
-.dg-md pre.dg-md-pre { margin: 0; padding: 10px 12px; background: var(--dg-code-bg); color: var(--dg-code-ink); border: 1px solid var(--dg-code-border); border-radius: 8px; overflow-x: auto; tab-size: 2; }
+.dg-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: var(--dg-code-inline); color: var(--dg-code-ink); border-radius: 4px; padding: 0 4px; overflow-wrap: anywhere; }
+/* Fenced code wraps instead of scrolling: a horizontal scrollbar inside a reply was the one the owner asked never to
+   see. `pre-wrap` keeps the indentation; `anywhere` breaks a long token (a path, a base64 blob) at the edge. */
+.dg-md pre.dg-md-pre { margin: 0; padding: 10px 12px; background: var(--dg-code-bg); color: var(--dg-code-ink); border: 1px solid var(--dg-code-border); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
 .dg-md pre.dg-md-pre code { background: none; color: inherit; padding: 0; font-size: .9em; }
 .dg-md blockquote { margin: 0; padding-left: 10px; border-left: 3px solid var(--rule-strong); color: var(--text-2); }
 .dg-md a { color: var(--cobalt); text-decoration: underline; }
 .dg-md hr { border: 0; border-top: 1px solid var(--rule); margin: 2px 0; }
-.dg-md .dg-md-table { border-collapse: collapse; font-size: .95em; }
-.dg-md th, .dg-md td { border: 1px solid var(--rule); padding: 3px 6px; text-align: left; }
+/* A table shares the width it is given, so a wide one wraps its cells instead of widening the conversation. */
+.dg-md .dg-md-table { border-collapse: collapse; font-size: .95em; width: 100%; table-layout: fixed; }
+.dg-md th, .dg-md td { border: 1px solid var(--rule); padding: 3px 6px; text-align: left; overflow-wrap: anywhere; }
 .dg-md .dg-md-raw { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
 
 /* Working indicators: the server agent (@kell) and connector tasks animate while they work. */
@@ -784,7 +790,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 
 /* Search (Cmd+K): a centred glass panel over a dimmed page. */
 .dg-search-wrap { position: fixed; inset: 0; z-index: 60; display: grid; justify-items: center; align-items: start; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .3); -webkit-backdrop-filter: blur(10px) saturate(1.15); backdrop-filter: blur(10px) saturate(1.15); animation: dg-glass-in 220ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
-.dg-search { width: min(620px, 100%); max-height: 70vh; overflow: auto; overscroll-behavior: contain; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; display: grid; gap: 8px; padding: 14px; border-radius: var(--dg-r-dialog, 10px); background: var(--dg-glass-strong, #fff); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); box-shadow: var(--dg-float, 0 28px 70px rgba(0, 0, 0, .3)); }
+.dg-search { width: min(620px, 100%); max-height: 70vh; overflow: auto; overflow-x: hidden; overscroll-behavior: contain; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; display: grid; gap: 8px; padding: 14px; border-radius: var(--dg-r-dialog, 10px); background: var(--dg-glass-strong, #fff); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); box-shadow: var(--dg-float, 0 28px 70px rgba(0, 0, 0, .3)); }
 .dg-search > input { font: inherit; font-size: 16px; padding: 11px 14px; border: 0; border-radius: var(--dg-r-btn, 6px); background: rgba(255, 255, 255, .8); box-shadow: var(--dg-dent, inset 0 1px 3px rgba(0, 0, 0, .14)); outline: none; }
 .dg-search-here { display: flex; align-items: center; gap: 6px; color: var(--grey); }
 .dg-search-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
@@ -903,8 +909,8 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-cv-close { display: inline-flex; padding: 4px; border: 0; border-radius: 999px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .dg-canvas-body { flex: 1; min-height: 0; position: relative; }
 .dg-canvas-frame { display: block; width: 100%; height: 100%; border: 0; border-radius: 0; background: #fff; }
-.dg-canvas-pre { margin: 0; height: 100%; overflow: auto; padding: 12px 16px; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 14px; line-height: 1.6; overscroll-behavior: contain; }
-.dg-canvas-pre[data-kind="code"] { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 13px; white-space: pre; word-break: normal; }
+.dg-canvas-pre { margin: 0; height: 100%; overflow: auto; overflow-x: hidden; padding: 12px 16px; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 14px; line-height: 1.6; overscroll-behavior: contain; }
+.dg-canvas-pre[data-kind="code"] { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dg-canvas-shield { position: absolute; inset: 0; z-index: 10; }
 @media (max-width: 767px) { .dg-shell { margin-right: 0; } .dg-canvas-wrap { width: 100vw !important; } .dg-canvas-resizer { display: none; } }
 .dg-canvas-card .dg-file-kind { background: #b97700; }
@@ -986,7 +992,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 /* The mention and command lists float above the box. The sliding highlight makes lists position: relative, which pulled these two into the
    composer row and pushed the text bar sideways when @ was pressed. */
 .dg-page .dg-mentions.dg-slide { position: absolute; }
-.dg-canvas-doc { height: 100%; overflow: auto; padding: 12px 20px 24px; font-size: 15px; line-height: 1.6; overscroll-behavior: contain; }
+.dg-canvas-doc { height: 100%; overflow: auto; overflow-x: hidden; padding: 12px 20px 24px; font-size: 15px; line-height: 1.6; overscroll-behavior: contain; }
 .dg-canvas-doc .dg-md { gap: 10px; }
 .dg-canvas-doc .dg-md p, .dg-canvas-doc .dg-md li { font-weight: 400; line-height: 1.6; }
 .dg-composer .dg-count { position: absolute; right: 96px; bottom: 4px; font-size: 11px; color: var(--grey); pointer-events: none; }
@@ -1050,10 +1056,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-doc-fmt button:hover { background: color-mix(in srgb, currentColor 10%, transparent); transform: translateY(-1px); }
 .dg-doc-body { position: relative; flex: 1; min-height: 0; display: flex; }
 .dg-doc-text { flex: 1; width: 100%; height: 100%; resize: none; border: 0; outline: none; padding: 14px 22px 28px; font: inherit; font-size: 15.5px; line-height: 1.7; background: transparent; color: inherit; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; caret-color: var(--yellow); }
-.dg-doc-text[data-kind="code"], .dg-doc-text[data-kind="html"] { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 13px; line-height: 1.55; white-space: pre; tab-size: 2; }
+.dg-doc-text[data-kind="code"], .dg-doc-text[data-kind="html"] { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
 .dg-doc-history { position: absolute; inset: 0 0 0 auto; width: min(320px, 92%); z-index: 5; display: flex; flex-direction: column; background: color-mix(in srgb, var(--surface) 86%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3); box-shadow: -12px 0 32px rgba(0, 0, 0, .14); animation: dg-doc-slide .28s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
 .dg-doc-history-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 6px; }
-.dg-doc-history ul { list-style: none; margin: 0; padding: 4px 8px 12px; overflow: auto; overscroll-behavior: contain; }
+.dg-doc-history ul { list-style: none; margin: 0; padding: 4px 8px 12px; overflow: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .dg-doc-history li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 6px; border-radius: 8px; font-size: 13px; transition: background-color .15s; }
 .dg-doc-history li:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
 .dg-doc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 8px 12px 10px; border-top: 1px solid var(--rule); }
@@ -1068,7 +1074,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 @media (prefers-reduced-motion: reduce) { .dg-canvas-wrap { animation: none; } }
 
 /* ---- Page viewers: a small browser, and the page edge to edge ---- */
-.dg-viewer { height: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 12px 12px; overflow: auto; overscroll-behavior: contain; background: color-mix(in srgb, currentColor 4%, transparent); }
+.dg-viewer { height: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 12px 12px; overflow: auto; overflow-x: hidden; overscroll-behavior: contain; background: color-mix(in srgb, currentColor 4%, transparent); }
 .dg-viewer-page { height: 100%; }
 .dg-browser { width: 100%; flex: 1; min-height: 240px; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: 0 12px 34px rgba(0, 0, 0, .22), 0 2px 6px rgba(0, 0, 0, .12), 0 0 0 1px var(--rule); transition: width .35s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)); }
 .dg-browser-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: color-mix(in srgb, currentColor 6%, var(--surface)); border-bottom: 1px solid var(--rule); }
@@ -1158,7 +1164,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-doc-pane { flex: 1; min-width: 0; min-height: 0; display: flex; }
 .dg-doc-pane[data-split] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .dg-doc-pane[data-split] > .dg-doc-text { border-right: 1px solid var(--rule); }
-.dg-doc-pane[data-split] > .dg-doc-read, .dg-doc-pane[data-split] > .dg-viewer { overflow: auto; min-width: 0; height: 100%; }
+.dg-doc-pane[data-split] > .dg-doc-read, .dg-doc-pane[data-split] > .dg-viewer { overflow: auto; overflow-x: hidden; min-width: 0; height: 100%; }
 @media (max-width: 1100px) { .dg-doc-pane[data-split] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } .dg-doc-pane[data-split] > .dg-doc-text { border-right: 0; border-bottom: 1px solid var(--rule); } }
 
 /* Bigger, easier controls: the Write / Side by side / Read tabs, the formatting buttons, the picker and the action chips. */
@@ -1181,7 +1187,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-picker-btn svg { flex: none; transition: transform .25s var(--dg-apple, ease); }
 .dg-picker-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
 .dg-picker-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dg-picker-list { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; min-width: 260px; max-width: min(360px, 80vw); max-height: 320px; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 6px; list-style: none; border-radius: 14px; background: color-mix(in srgb, var(--surface) 88%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); box-shadow: 0 18px 48px rgba(0, 0, 0, .28), 0 0 0 1px var(--rule); animation: dg-pick-in .22s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; transform-origin: top left; }
+.dg-picker-list { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; min-width: 260px; max-width: min(360px, 80vw); max-height: 320px; overflow: auto; overflow-x: hidden; overscroll-behavior: contain; margin: 0; padding: 6px; list-style: none; border-radius: 14px; background: color-mix(in srgb, var(--surface) 88%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); box-shadow: 0 18px 48px rgba(0, 0, 0, .28), 0 0 0 1px var(--rule); animation: dg-pick-in .22s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; transform-origin: top left; }
 .dg-picker-list li { margin: 0; }
 .dg-picker-list button { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: background-color .15s; }
 .dg-picker-list button:hover, .dg-picker-list li[aria-selected="true"] button { background: var(--yellow); color: #171717; }
