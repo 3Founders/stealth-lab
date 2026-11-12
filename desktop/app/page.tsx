@@ -168,6 +168,15 @@ type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission" | "go
               state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string
               files?: Attachment[] }
 type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string; state?: "running" | "done" | "failed"; hint?: string }
+/** /btw: a side question and its answer. Deliberately NOT a Line: an overlay never enters the conversation, so it
+ *  cannot reach the next turn or the session history (Claude Code's /btw works the same way). */
+type SideAnswer = { q: string; a: string; state: "asking" | "done" | "error" }
+/** What the message box understands as a slash command (the website chat's SLASH_COMMANDS, reduced to this app's own).
+ *  send() is the dispatcher: /goal and /btw are both handled there, before anything reaches the engine. */
+const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
+  { name: "/btw", hint: "ask a side question about this chat; answered from it, not added to it" },
+  { name: "/goal", hint: "set a completion condition; kell keeps working until it holds" },
+]
 /** A /goal condition: one per session, judged after every turn by a separate cheap model (app/api/goal). */
 type GoalState = { condition: string; started: number; turns: number; reason: string; state: "active" | "paused" | "met" | "impossible"
                    sessionID: string | null; max: number; spendAtStart: number; noProgress: number }
@@ -389,6 +398,13 @@ export default function Home() {
     } catch { /* storage blocked */ }
   }, [goal])
   const [big, setBig] = useState(false)                  // the message box: bigger / smaller, like the website chat
+  // /btw: the side answer on screen (an overlay, never a Line), and the last one, so bare /btw can bring it back.
+  const [btw, setBtw] = useState<SideAnswer | null>(null)
+  const btwLast = useRef<SideAnswer | null>(null)
+  const btwSeq = useRef(0)                               // two side questions: only the newest answer may land
+  // The slash menu: which row is highlighted, and the draft it was dismissed for (typing again reopens it).
+  const [cmdIdx, setCmdIdx] = useState(0)
+  const [cmdDismissedFor, setCmdDismissedFor] = useState<string | null>(null)
   // Pending tool approvals (P1-11): a call the gate wants the person to allow. The card sits above the
   // composer and polls the desktop proxy, which reaches kell's /tools/approvals with the MCP token; the
   // browser never sees the token or the server address.
@@ -716,10 +732,66 @@ export default function Home() {
     </div>
   ) : null
 
+  // /btw <question>: a side question about this chat, answered from the conversation already on screen with no tools, in
+  // one response, in an overlay. send() intercepts it BEFORE the busy check, so it works while a turn is running, and it
+  // never becomes a Line: nothing here enters the session, the history or the next prompt (Claude Code's /btw).
+  const transcriptForBtw = () => linesRef.current
+    .filter((l) => (l.who === "user" || l.who === "assistant") && l.text.trim())
+    .slice(-24)
+    .map((l) => `${l.who === "user" ? "User" : "kell"}: ${l.text.trim()}`)
+    .join("\n\n")
+
+  const askBtw = async (q: string) => {
+    const seq = ++btwSeq.current
+    setBtw({ q, a: "", state: "asking" })
+    try {
+      const r = await fetch("/api/btw", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question: q, transcript: transcriptForBtw() }),
+      })
+      const j = await r.json().catch(() => null)
+      if (seq !== btwSeq.current) return                    // a newer side question replaced this one
+      if (!r.ok || !j?.answer) {
+        setBtw({ q, a: String(j?.error || `The side question failed (${r.status}).`), state: "error" })
+        return
+      }
+      const done: SideAnswer = { q, a: String(j.answer), state: "done" }
+      btwLast.current = done
+      setBtw(done)
+    } catch (e: any) {
+      if (seq === btwSeq.current) setBtw({ q, a: String(e?.message || e), state: "error" })
+    }
+  }
+
+  const closeBtw = () => { setBtw(null); textRef.current?.focus() }
+
+  const handleBtwCommand = (raw: string) => {
+    const q = raw.replace(/^\/btw\b/i, "").trim()
+    if (q) { void askBtw(q); return }
+    // Bare /btw brings back the most recent side answer; with none yet, it says how to ask.
+    setBtw(btwLast.current ?? {
+      q: "", state: "done",
+      a: "Ask a side question about this chat: `/btw <question>`.\n\nIt sees everything already said here, cannot use tools, and is not added to the conversation.",
+    })
+  }
+
+  // Escape closes the side answer from anywhere; Enter or Space close it when the answer itself has focus.
+  useEffect(() => {
+    if (!btw) return
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); closeBtw(); return }
+      const el = e.target as HTMLElement | null
+      if ((e.key === "Enter" || e.key === " ") && el?.closest?.(".dk-btw")) { e.preventDefault(); closeBtw() }
+    }
+    document.addEventListener("keydown", key)
+    return () => document.removeEventListener("keydown", key)
+  }, [btw])
+
   const send = async (again?: string, filesOverride?: Attachment[], asGoal = false) => {
     const body = again ?? text
     const outgoing = again === undefined ? attachments : (filesOverride ?? [])
     if (!asGoal && /^\/goal\b/i.test(body.trim())) { goalCommand.current(body.trim()); return }
+    if (!asGoal && /^\/btw\b/i.test(body.trim())) { handleBtwCommand(body.trim()); if (again === undefined) { setText(""); histPos.current = null } return }
     if ((!body.trim() && !outgoing.length) || !directory) return
     if (busyRef.current) {                                    // still working: keep it for when this turn ends
       setQueued((q) => [...q, { text: body, files: outgoing }])
@@ -1193,6 +1265,20 @@ export default function Home() {
   const readEngine = engine?.up && !!directory
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
 
+  // The slash menu: opens on "/" and narrows as you type. A command typed in full closes it, so Enter runs that command
+  // instead of picking it again (the website chat's rule). Esc dismisses it for this exact draft only.
+  const slashQ = (() => { const m = /^\/([\w-]*)$/.exec(text); return m && cmdDismissedFor !== text ? m[1].toLowerCase() : null })()
+  const slashCmds = slashQ === null ? [] : SLASH_COMMANDS.filter((c) => {
+    const n = c.name.slice(1)
+    return n.startsWith(slashQ) && n !== slashQ
+  })
+  const slashAt = Math.min(cmdIdx, Math.max(0, slashCmds.length - 1))
+  const pickSlash = (name: string) => {
+    const next = `${name} `
+    setText(next); setCmdIdx(0); setCmdDismissedFor(null)
+    requestAnimationFrame(() => { textRef.current?.focus(); textRef.current?.setSelectionRange(next.length, next.length) })
+  }
+
   const project = directory ? directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || directory : "No project"
   const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null)
 
@@ -1233,6 +1319,7 @@ export default function Home() {
     { id: "rooms", title: "Go to the team rooms", run: () => setPane("rooms") },
     { id: "console", title: "Open the console", run: () => void openConsole() },
     { id: "goal", title: "Set a goal", hint: "/goal <condition> — kell keeps working until it holds", run: () => { setText("/goal "); textRef.current?.focus() } },
+    { id: "btw", title: "Ask a side question", hint: "/btw <question> — answered from this chat, without adding to it", run: () => { setText("/btw "); textRef.current?.focus() } },
     { id: "signin", title: "Sign in", run: () => void signIn() },
     { id: "signout", title: "Sign out", run: () => void signOut() },
     { id: "help", title: "Help: how kell works", run: () => window.open("https://www.kell.org.in/docs", "_blank", "noopener") },
@@ -1687,6 +1774,27 @@ export default function Home() {
                 Latest
               </button>
             )}
+            {btw && (
+              // /btw's answer, over the conversation and not in it. Escape, Enter/Space when it has focus, or the ×
+              // dismiss it. It runs beside the turn, so opening it never stops or queues anything.
+              <section className="dk-btw" role="dialog" aria-label="Side question" tabIndex={-1}>
+                <div className="dk-btw-head">
+                  <span className="dk-btw-tag" aria-hidden="true">/btw</span>
+                  <span className="dk-btw-q" title={btw.q}>{btw.q || "Side question"}</span>
+                  <button type="button" className="dk-icon dk-icon-sm" aria-label="Close the side answer" title="Close (Esc)" onClick={closeBtw}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                  </button>
+                </div>
+                <div className="dk-btw-a" aria-live="polite">
+                  {btw.state === "asking"
+                    ? <span className="dk-btw-think"><span className="dg-pulse" aria-hidden="true" /> Reading this chat…</span>
+                    : btw.state === "error"
+                      ? <p className="dk-btw-err">{btw.a}</p>
+                      : <Markdown text={btw.a} />}
+                </div>
+                <p className="dk-btw-foot">Answered from this chat only · no tools · not added to the conversation · Esc closes</p>
+              </section>
+            )}
           </div>
 
           {busy && steps.length > 0 && (
@@ -1744,12 +1852,37 @@ export default function Home() {
             {attachments.length > 0 && attachmentChips(attachments, true)}
             <input ref={fileInputRef} type="file" multiple hidden
               onChange={(e) => { const fs = Array.from(e.currentTarget.files || []); e.currentTarget.value = ""; void addBrowserFiles(fs) }} />
+            {slashCmds.length > 0 && (
+              // The slash menu: the website chat's .dg-commands list, same glass and yellow active row. Picking fills the
+              // command plus a space; the command itself runs when that draft is sent (send() dispatches it).
+              <ul id="dk-slash" role="listbox" aria-label="Commands" className="dg-mentions dg-commands">
+                {slashCmds.map((c, i) => (
+                  <li key={c.name} id={`dk-slash-${i}`} role="option" aria-selected={i === slashAt} data-active={i === slashAt}
+                    onMouseDown={(e) => { e.preventDefault(); pickSlash(c.name) }}>
+                    <code>{c.name}</code> <span className="dim small">{c.hint}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
             <textarea ref={textRef} rows={1} data-big={big || undefined} value={text}
-              onChange={(e) => { setText(e.target.value); histPos.current = null }}
-              placeholder={directory ? "Tell kell what to do…" : "Open a project first"}
+              role="combobox" aria-autocomplete="list" aria-expanded={slashCmds.length > 0}
+              aria-controls={slashCmds.length ? "dk-slash" : undefined}
+              aria-activedescendant={slashCmds.length ? `dk-slash-${slashAt}` : undefined}
+              onChange={(e) => { setText(e.target.value); histPos.current = null; setCmdIdx(0) }}
+              placeholder={directory ? "Tell kell what to do… (/ for commands)" : "Open a project first"}
               disabled={!!engine && !engine.up}
               onPaste={(e) => { const fs = Array.from(e.clipboardData.files || []); if (fs.length) { e.preventDefault(); void addBrowserFiles(fs) } }}
               onKeyDown={(e) => {
+                // While the slash menu is open it owns the arrows, Enter/Tab and Esc: Enter picks a command instead of
+                // sending a half-typed one (the website chat's composer behaves the same way).
+                if (slashCmds.length) {
+                  if (e.key === "ArrowDown") { e.preventDefault(); setCmdIdx((i) => (i + 1) % slashCmds.length); return }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setCmdIdx((i) => (i - 1 + slashCmds.length) % slashCmds.length); return }
+                  if (e.key === "Escape") { e.preventDefault(); setCmdDismissedFor(text); return }
+                  if ((e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) {
+                    e.preventDefault(); pickSlash(slashCmds[slashAt].name); return
+                  }
+                }
                 // IME-safe: Enter during a CJK composition selects a candidate, it must not send the prompt.
                 if (e.key === "Enter" && !e.shiftKey) {
                   if (e.nativeEvent.isComposing) return

@@ -53,6 +53,24 @@ it, and a condition may say `stop after N turns` (default 20). It stops on three
 turn pauses it. This mirrors Claude Code's `/goal` (`code.claude.com/docs/en/goal`), with kell's own engine and cheap
 model instead of Claude Code's Stop hook. The goal is session-scoped and restored with the session.
 
+## /btw (0.1.18)
+
+`/btw <question>` asks a side question about the chat on screen and shows the answer in a dismissible overlay (Esc, or
+the ×), never in the conversation. It mirrors Claude Code's `/btw` (`code.claude.com/docs/en/commands`): the question
+sees everything already said in the session, has **no tools** (it cannot read files, run commands or search), gets one
+response, and is not added to the history or sent with the next prompt. `app/api/btw` sends the recent transcript plus
+the question through the engine's one-shot `experimental.generate.text`, so it creates no session and leaves a running
+turn alone — `send()` intercepts `/btw` before the busy check, which is what makes it work mid-turn. Bare `/btw` brings
+back the most recent side answer. It costs one small model call on the same lane as the session.
+
+## Slash menu (0.1.18)
+
+The composer has the website chat's slash menu (`SLASH_COMMANDS` in `app/page.tsx`, rendered with the `.dg-mentions
+.dg-commands` styles already in `chat.css`): type `/` and it lists what this app actually understands — `/btw` and
+`/goal`. Up/Down move, Enter/Tab pick (filling the command and a space), Esc dismisses it for that draft, and a command
+typed in full closes the menu so Enter runs it instead of picking it again. Commands are dispatched in `send()`, before
+anything reaches the engine; the same two are in the Ctrl/Cmd-K palette.
+
 ## Right panel resize (0.1.17)
 
 The changes panel uses the same recipe as the website's docs panel (`docs/ios_animation.md` §4.4): drag the hairline or

@@ -529,12 +529,36 @@
 .dk-goal-line { white-space: pre-wrap; font-size: 13.5px; line-height: 1.5; padding: 8px 10px; border-left: 3px solid var(--yellow);
   background: var(--surface); border-radius: 0 6px 6px 0; }
 
+/* /btw: the side answer, over the conversation and never in it (app/api/btw; Claude Code's /btw). A sheet anchored to the
+   bottom of the message area, above the composer, on the same glass recipe as the chat's other menus. It runs beside the
+   turn, so it must not cover the composer's controls: it stops at 55% of the message area and scrolls inside itself. */
+.dk-btw {
+  position: absolute; left: 18px; right: 18px; bottom: 12px; z-index: 9;
+  max-height: min(55%, 420px); display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px; border: 1px solid var(--rule-strong); border-radius: 14px;
+  background: var(--dg-glass-strong, var(--surface)); color: var(--ink);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, .24), 0 2px 8px rgba(0, 0, 0, .1);
+  animation: dg-glass-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; transform-origin: bottom center;
+}
+.dk-btw:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dk-btw-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dk-btw-tag { flex: none; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey);
+  border: 1px solid var(--rule-strong); border-radius: 5px; padding: 1px 6px 0; }
+.dk-btw-q { min-width: 0; flex: 1; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-btw-a { min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; font-size: 14px; line-height: 1.55; }
+.dk-btw-a .dg-md p { font-weight: 300; }
+.dk-btw-think { display: inline-flex; align-items: center; gap: 8px; color: var(--grey); font-size: 13px; }
+.dk-btw-err { margin: 0; color: #b3261e; font-size: 13px; }
+.dk-btw-foot { margin: 0; color: var(--grey); font-size: 11px; }
+@media (max-width: 760px) { .dk-btw { left: 12px; right: 12px; bottom: 8px; padding: 10px 12px; } }
+
 /* One reduced-motion switch for everything this file adds: the rule in chat.css covers the chat's own selectors, not
    these. Nothing here may keep moving when the reader asked it not to. */
 @media (prefers-reduced-motion: reduce) {
   .dk-page .dk-step, .dk-page .dk-viewer, .dk-page .dk-account, .dk-page .dk-help-menu,
   .dk-page .dk-panel > *, .dk-page .dk-activity li, .dk-page .dk-activity li[data-state="running"] .dk-act-mark,
-  .dk-page .dk-head-toggle, .dk-palette-backdrop, .dk-palette { animation: none !important; }
+  .dk-page .dk-head-toggle, .dk-palette-backdrop, .dk-palette, .dk-btw { animation: none !important; }
   .dk-page .dk-icon, .dk-page .dk-winbtn, .dk-page .dk-tree-row, .dk-page .dk-tree-row .chev,
   .dk-page .dk-sess-toggle svg, .dk-page .dk-fold > summary h2::before, .dk-page .dk-sess-more > summary::before,
   .dk-page .dk-resize::after, .dk-page .dk-act-mark, .dk-page .dk-activity li, .dk-page .dk-help-menu a,
