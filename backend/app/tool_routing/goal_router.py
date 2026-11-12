@@ -421,6 +421,17 @@ def _from_retrieval(hit: Any, base: Optional[ToolHit]) -> ToolHit:
     """A tool-tier hit as a ToolHit, keeping the Goal's trust inputs when the card had them."""
     card = hit.card
     inputs = dict(base.rank_inputs) if base is not None else {}
+    # A card the tool tier found but the Goal's stable ranking did not carry still gets a
+    # complete input record: the CLI and the page read these keys.
+    inputs.setdefault("trust_lb", 0.0)
+    inputs.setdefault("wins", 0)
+    inputs.setdefault("judged", 0)
+    inputs.setdefault("exploration", 0.0)
+    inputs.setdefault("cost_penalty", 0.0)
+    inputs.setdefault("latency_penalty", 0.0)
+    inputs.setdefault("risk", "?")
+    inputs.setdefault("risk_penalty", 0.0)
+    inputs.setdefault("goal_fit", 0.0)
     inputs.update({
         "relevance": round(float(hit.score), 4),
         "bm25_rank": hit.bm25_rank,
