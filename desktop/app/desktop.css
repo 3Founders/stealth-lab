@@ -147,6 +147,7 @@
   .dk-page .dg-head { padding: 6px 12px; gap: 8px; }
   .dk-page .dk-chips { display: none; }
   .dk-page .dk-switch { padding: 0 4px; gap: 4px; }
+  .dk-page .dk-winbtns { margin-right: -4px; }
   .dk-page .dk-who { display: none; }
   .dk-page .dk-help { margin-left: auto; }
 }
@@ -241,15 +242,21 @@
   -webkit-app-region: drag; user-select: none; }
 .dk-switch button, .dk-switch a, .dk-switch .dk-help-menu { -webkit-app-region: no-drag; }
 .dk-menubtn { margin-right: 2px; }
-.dk-winbtns { display: flex; align-items: center; gap: 2px; margin-left: 2px; }
-.dk-winbtn { all: unset; box-sizing: border-box; width: 34px; height: 30px; display: grid; place-items: center; border-radius: 8px; cursor: pointer;
+/* The window's own buttons, drawn by the page because the frame is off (electron/main.ts). Windows 11's caption
+   buttons, which is what they should feel like: square, flush to the top-right edge, 46px wide and the full height of
+   the bar, a neutral grey hover (not the app's yellow `--soft`), no scale on press, and a full red close. */
+.dk-winbtns { display: flex; align-items: center; margin-left: 2px; margin-right: -6px; }
+.dk-winbtn { all: unset; box-sizing: border-box; width: 46px; height: 44px; display: grid; place-items: center; cursor: pointer;
   color: var(--grey); -webkit-app-region: no-drag;
-  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
-              transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
-.dk-winbtn:hover { background: var(--soft, rgba(0,0,0,.06)); color: var(--ink); }
-.dk-winbtn:active { transform: scale(.94); }
+  transition: background-color var(--dg-micro-d, 120ms) var(--dg-micro, ease), color var(--dg-micro-d, 120ms) var(--dg-micro, ease); }
+.dk-winbtn:hover { background: rgba(0, 0, 0, .055); color: var(--ink); }
+.dk-winbtn:active { background: rgba(0, 0, 0, .09); }
 .dk-winbtn-x:hover { background: #c42b1c; color: #fff; }
-.dk-winbtn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-winbtn-x:active { background: #b32a1c; color: #fff; }
+.dk-winbtn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: -2px; }
+:root[data-theme="dark"] .dk-winbtn:hover { background: rgba(255, 255, 255, .07); }
+:root[data-theme="dark"] .dk-winbtn:active { background: rgba(255, 255, 255, .11); }
+:root[data-theme="dark"] .dk-winbtn-x:hover, :root[data-theme="dark"] .dk-winbtn-x:active { background: #c42b1c; color: #fff; }
 .dk-switch [role="tablist"] { display: flex; gap: 4px; }
 .dk-switch [role="tablist"] button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent;
   color: var(--grey); cursor: pointer; }

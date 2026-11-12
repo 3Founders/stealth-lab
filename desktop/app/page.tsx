@@ -36,7 +36,7 @@ type KellDesktop = {
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void; showMenu?: () => void
   pickFiles?: () => Promise<string[]>; pathForFile?: (file: File) => string; openPath?: (path: string) => Promise<string>
   onFont?: (cb: (font: string) => void) => () => void; setFont?: (font: string) => void
-  window?: { minimize: () => void; toggleMaximize: () => void; close: () => void }
+  window?: { minimize: () => void; toggleMaximize: () => void; close: () => void; isMaximized?: () => Promise<boolean>; onState?: (cb: (max: boolean) => void) => () => void }
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
 /** A tool call's subject in a few words: the path, pattern, command or query it was given. */
@@ -413,6 +413,8 @@ export default function Home() {
   }
   const [accountOpen, setAccountOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
+  // The window is maximized: the page's maximize button then shows Windows' restore glyph, as the real caption does.
+  const [maximized, setMaximized] = useState(false)
   // File > Open folder and File > New session from the app's menu bar (electron/menu.ts).
   const menuRef = useRef<(what: string) => void>(() => {})
   menuRef.current = (what) => {
@@ -420,6 +422,14 @@ export default function Home() {
     if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }
   }
   useEffect(() => desktop()?.onMenu?.((w) => menuRef.current(w)), [])
+  // Follow the window's maximize state: our button, a double-click on the title bar, or Windows itself all keep the
+  // maximize/restore glyph in step.
+  useEffect(() => {
+    const w = desktop()?.window
+    if (!w) return
+    void w.isMaximized?.().then(setMaximized).catch(() => undefined)
+    return w.onState?.(setMaximized)
+  }, [])
   // The Help menu closes on a click anywhere else or on Escape, not only on its own button.
   const helpRef = useRef<HTMLSpanElement | null>(null)
   useEffect(() => {
@@ -741,6 +751,9 @@ export default function Home() {
       dir = chosen; setDirectory(chosen)
     }
     setEngine(null); setOpening(true)
+    // The callbacks below read the folder from a ref: set it now, so a fast engine failure cannot leave the previous
+    // project's directory in place when loadSessions asks for the list.
+    dirRef.current = dir
     let j: { up?: boolean; error?: string }
     try {
       const r = await fetch("/api/engine", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir }) })
@@ -1503,13 +1516,16 @@ export default function Home() {
         {dw?.window && (
           <span className="dk-winbtns">
             <button type="button" className="dk-winbtn" aria-label="Minimize" title="Minimize" onClick={() => dw.window!.minimize()}>
-              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" stroke="currentColor" strokeWidth="1" /></svg>
             </button>
-            <button type="button" className="dk-winbtn" aria-label="Maximize" title="Maximize" onClick={() => dw.window!.toggleMaximize()}>
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="2" y="2" width="6" height="6" stroke="currentColor" strokeWidth="1.1" /></svg>
+            <button type="button" className="dk-winbtn" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"}
+              onClick={() => dw.window!.toggleMaximize()}>
+              {maximized
+                ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="0.5" y="2.5" width="7" height="7" stroke="currentColor" strokeWidth="1" /><path d="M2.5 2.5v-2h7v7h-2" stroke="currentColor" strokeWidth="1" /></svg>
+                : <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" strokeWidth="1" /></svg>}
             </button>
             <button type="button" className="dk-winbtn dk-winbtn-x" aria-label="Close" title="Close" onClick={() => dw.window!.close()}>
-              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" stroke="currentColor" strokeWidth="1" /></svg>
             </button>
           </span>
         )}

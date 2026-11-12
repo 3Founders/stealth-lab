@@ -127,6 +127,9 @@ if (!app.requestSingleInstanceLock()) {
       else if (what === "maximize") { if (win.isMaximized()) win.unmaximize(); else win.maximize() }
       else if (what === "close") win.close()
     })
+    // The page's maximize button shows Windows' restore glyph while the window is maximized, so it asks once and then
+    // follows the window's own maximize/unmaximize events (below).
+    ipcMain.handle("kell:win-state", () => (win ? win.isMaximized() : false))
     // The project folder: the system's own folder picker (typing a path was the only way, and the button looked dead, 2026-11-06).
     ipcMain.handle("kell:pick-folder", async () => {
       const r = win ? await dialog.showOpenDialog(win, { title: "Choose a project folder", properties: ["openDirectory", "createDirectory"] })
@@ -147,6 +150,10 @@ if (!app.requestSingleInstanceLock()) {
     // nothing, 2026-11-03). show() is idempotent, so it is also called once the load has finished.
     win.once("ready-to-show", () => win?.show())
     win.on("closed", () => { win = undefined })
+    // Keep the page's maximize/restore glyph in step with the window, whichever way it was maximized (our button, a
+    // double-click on the title bar, or Windows itself).
+    win.on("maximize", () => win?.webContents.send("kell:win-state", true))
+    win.on("unmaximize", () => win?.webContents.send("kell:win-state", false))
     // The frame is off, so no Windows shadow; the page adds a hairline so the window's edge reads against a light desktop.
     const edge = () => void win?.webContents.insertCSS(
       ".dk-switch { border-top: 1px solid var(--rule-strong, rgba(0,0,0,.18)); }").catch(() => undefined)

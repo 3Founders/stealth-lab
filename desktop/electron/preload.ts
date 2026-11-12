@@ -22,7 +22,14 @@ contextBridge.exposeInMainWorld("kellDesktop", {
   },
   // The app draws its own window (no Windows frame), so it also draws minimize / maximize / close (the page's top bar).
   window: { minimize: () => ipcRenderer.send("kell:win", "minimize"), toggleMaximize: () => ipcRenderer.send("kell:win", "maximize"),
-            close: () => ipcRenderer.send("kell:win", "close") },
+            close: () => ipcRenderer.send("kell:win", "close"),
+            // Windows' maximize button becomes "restore" while the window is maximized: ask once, then follow the events.
+            isMaximized: (): Promise<boolean> => ipcRenderer.invoke("kell:win-state"),
+            onState: (cb: (max: boolean) => void) => {
+              const h = (_e: unknown, max: boolean) => cb(Boolean(max))
+              ipcRenderer.on("kell:win-state", h)
+              return () => { ipcRenderer.removeListener("kell:win-state", h) }
+            } },
   onMenu: (cb: (what: string) => void) => {
     const h = (_e: unknown, what: string) => cb(String(what))
     ipcRenderer.on("kell:menu", h)
