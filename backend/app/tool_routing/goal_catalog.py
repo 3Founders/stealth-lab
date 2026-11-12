@@ -117,10 +117,27 @@ class Catalog:
 _CATALOG: Optional[Catalog] = None
 _LOCK = asyncio.Lock()
 _WAYS_TASK: Optional[asyncio.Task] = None
+_REFRESH_TASK: Optional[asyncio.Task] = None
 
 
 def cached() -> Optional[Catalog]:
     return _CATALOG
+
+
+def _schedule_refresh(pool: Any) -> None:
+    """Refresh behind a request that found the catalog past its TTL: the caller never waits."""
+    global _REFRESH_TASK
+    if _REFRESH_TASK is not None and not _REFRESH_TASK.done():
+        return
+
+    async def refresh() -> None:
+        try:
+            await load(pool, force=True)
+        except Exception:  # noqa: BLE001 -- the stale catalog is still usable
+            return
+
+    _REFRESH_TASK = asyncio.create_task(refresh())
+    _REFRESH_TASK.add_done_callback(lambda t: None if t.cancelled() else t.exception())
 
 
 def _schedule_ways(pool: Any, catalog: Catalog) -> None:
@@ -140,18 +157,19 @@ def _schedule_ways(pool: Any, catalog: Catalog) -> None:
 
 
 async def load(pool: Any, *, force: bool = False) -> Catalog:
-    """The current catalog, refreshed at most once per TTL (or immediately with force).
+    """The current catalog. Past the TTL it is served stale while a refresh runs behind it.
 
-    The Goals and aliases are loaded first; the ways are filled by a background task, so a
-    goal-only request never waits for them.
+    A cold process loads synchronously (the startup warm-up does this before traffic); a
+    warm process never waits for a refresh, so the request path stays at the matching cost.
     """
     global _CATALOG
     now = time.monotonic()
-    if not force and _CATALOG is not None and now - _CATALOG.at < TTL_S:
+    if _CATALOG is not None and not force:
+        if now - _CATALOG.at >= TTL_S:
+            _schedule_refresh(pool)
         return _CATALOG
     async with _LOCK:
-        now = time.monotonic()
-        if not force and _CATALOG is not None and now - _CATALOG.at < TTL_S:
+        if _CATALOG is not None and not force:
             return _CATALOG
         try:
             fresh = await _build(pool)
