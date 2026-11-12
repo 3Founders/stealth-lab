@@ -639,7 +639,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
-        "report_discovery", "submit_way", "submit", "report_model_run", "report_result", "report_audit", "report_check_evidence",
+        "report_discovery", "submit_way", "submit", "submit_goal", "run_way", "report_model_run", "report_result", "report_audit", "report_check_evidence",
         "report_tools", "room_post", "memory_write",
         "delegate_inbox", "delegate_result", "delegate_call")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
@@ -664,7 +664,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 
 V1_TOOLS: frozenset[str] = frozenset({
-    "find_ways", "report_discovery", "submit_way", "submit", "recommend_models", "report_model_run", "report_result",
+    "find_ways", "report_discovery", "submit_way", "submit", "submit_goal", "run_way", "recommend_models", "report_model_run", "report_result",
     "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool", "delegate_inbox",
     "delegate_result", "delegate_call", "room_list", "room_read", "room_post", "room_members", "canvas_list", "canvas_read", "canvas_write",
     "memory_read", "memory_search", "memory_write"})
@@ -728,6 +728,11 @@ _V1_ANNOTATIONS: dict[str, dict] = {
     # publishes to a shared library other people's agents read
     "submit_way": {"title": "Submit a way", "read_only_hint": False, "destructive_hint": False,
                    "idempotent_hint": False, "open_world_hint": True},
+    "submit_goal": {"title": "Submit a goal and its steps", "read_only_hint": False, "destructive_hint": False,
+                    "idempotent_hint": False, "open_world_hint": True},
+    # fetches websites and calls a model; pauses for the person at a human step
+    "run_way": {"title": "Run a submitted way", "read_only_hint": False, "destructive_hint": False,
+                "idempotent_hint": False, "open_world_hint": True},
 }
 
 
@@ -1496,6 +1501,14 @@ _room_agent_routes.register(
 from app.mcp_server import room_doc_routes as _room_doc_routes  # noqa: E402 -- shared documents in a room (db/174_room_docs.sql)
 
 _room_doc_routes.register(
+    server,
+    _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"),
+)
+
+from app.mcp_server import submission_routes as _submission_routes  # noqa: E402 -- goal submission (docs/goal_submission.md)
+
+_submission_routes.register(
     server,
     _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
     lambda: _LIFESPAN_STATE.get("pool"),
@@ -5338,6 +5351,75 @@ async def submit_way(
         "next": "Live now for other agents as an unverified way; it becomes verified only through "
                 "evidenced reuse. Track it at GET /v1/economy/procedure-submissions/{submission_id}.",
     }, default=str)
+
+
+async def _submission_call(ctx: Context, call: Any) -> str:
+    """Run one app.submissions.api call for the signed-in person; its refusal text is what they read."""
+    from app.submissions import api as _sub_api
+
+    try:
+        owner = _kell_owner()
+    except PermissionError:
+        return "REFUSED: sign in to kell to submit or run a goal"
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        return json.dumps(await call(pool, owner), default=str)
+    except _sub_api.ERRORS as exc:
+        return f"REFUSED: {str(exc).strip(chr(39) + chr(34))}"
+
+
+@server.tool()
+@_activity.traced
+async def submit_goal(ctx: Context, goal: str = "", steps: list[dict] | None = None, description: str = "",
+                      preview: bool = False, submission_id: str = "", fix_step: int = 0,
+                      step: dict | None = None) -> str:
+    """
+    Submit a goal and the Way to achieve it, step by step (docs/goal_submission.md). Each step is one of:
+      {"kind": "human", "description": "Search 'xyz' on abc.com and copy the top 5 links"}   -- a person does it
+      {"kind": "automated", "prompt": "...", "locator": "https://... | path/to/file | script.py | tool-name"}
+        -- kell does it: a prompt, a locator (a website, file, script or tool), or both
+    The mode (Fully Human, Human+AI, Fully AI) is worked out from the steps; preview=true says which, storing nothing.
+    Every step is also stored as its own goal with its own Way. An AI reviewer approves or rejects each step; approved
+    Ways go into kell's rankings marked "AI approved", a rejected step comes back with its reason (and by email).
+
+    submission_id alone: that submission's state, step by step. submission_id + fix_step=<n> + step={...}: replace a
+    rejected step and review it again (approved steps stay). No arguments: your submissions.
+    """
+    from app.submissions import api as _sub_api
+
+    if submission_id and fix_step:
+        return await _submission_call(ctx, lambda p, o: _sub_api.fix_step(p, o, submission_id, fix_step, step or {}))
+    if submission_id:
+        return await _submission_call(ctx, lambda p, o: _sub_api.get(p, o, submission_id))
+    if not goal and not steps:
+        return await _submission_call(ctx, lambda p, o: _sub_api.mine(p, o))
+    payload = {"goal": goal, "description": description, "steps": steps or []}
+    if preview:
+        try:
+            return json.dumps(_sub_api.preview(payload))
+        except _sub_api.ERRORS as exc:
+            return f"REFUSED: {exc}"
+    return await _submission_call(ctx, lambda p, o: _sub_api.submit(p, o, payload))
+
+
+@server.tool()
+@_activity.traced
+async def run_way(ctx: Context, submission_id: str = "", input: str = "", run_id: str = "", done: bool = False,
+                  note: str = "") -> str:
+    """
+    Run an approved Way from submit_goal. run_way(submission_id, input) starts it: automated steps run, and at a step a
+    person must do the run pauses (status "waiting_human", "waiting_on" says what to do). When the person has done it,
+    run_way(run_id, done=true, note="what they did or found") continues. run_way(run_id) alone: the run's state.
+    """
+    from app.submissions import api as _sub_api
+
+    if run_id and done:
+        return await _submission_call(ctx, lambda p, o: _sub_api.finish_step(p, o, run_id, note))
+    if run_id:
+        return await _submission_call(ctx, lambda p, o: _sub_api.get_run(p, o, run_id))
+    if not submission_id:
+        return "REFUSED: pass submission_id to start a run, or run_id to continue one"
+    return await _submission_call(ctx, lambda p, o: _sub_api.start_run(p, o, submission_id, input))
 
 
 # ---------------------------------------------------------------------------

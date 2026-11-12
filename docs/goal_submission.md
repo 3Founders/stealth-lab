@@ -91,6 +91,42 @@ returns `waiting_on {order, title, description}`. `runs.finish_human_step(run_id
 input and earlier outputs; a website locator is fetched as untrusted data. **A tool or script locator is not run from a
 submitted Way yet** — the run fails at that step and says so (open item GS-7).
 
+## Surfaces (all call `app/submissions/api.py`)
+
+**HTTP** (MCP server, `app/mcp_server/submission_routes.py`; signed-in callers, each sees only their own):
+
+| call | body | answer |
+|---|---|---|
+| `POST /v1/goals/submissions/preview` | `{goal, description, steps}` | `{mode, mode_label, message, steps}`; stores nothing |
+| `POST /v1/goals/submissions` | `{goal, description, steps}` | the submission, reviewed (waits up to 90 s; then still `reviewing`) |
+| `GET /v1/goals/submissions` | | `{submissions: [...]}` |
+| `GET /v1/goals/submissions/{id}` | | `{id, goal_name, mode, mode_label, status, parent_procedure_id, steps: [{order, kind, title, description, prompt, locator, status, reason, reviewer, revision}]}` |
+| `POST /v1/goals/submissions/{id}/steps/{n}` | one step | fixes step n, reviewed again |
+| `POST /v1/goals/submissions/{id}/runs` | `{input}` | a run: `{id, status, next_step, waiting_on, outputs, error}` |
+| `GET /v1/goals/runs/{run_id}` | | the run |
+| `POST /v1/goals/runs/{run_id}/done` | `{note}` | the person did the waiting step; the run continues |
+
+Errors: 400 with the sentence to show the person, 404 when it is not the caller's, 401 when not signed in.
+
+**MCP** (in the v1 surface): `submit_goal(goal, steps, description, preview)`; `submit_goal(submission_id)` for the
+state; `submit_goal(submission_id, fix_step=n, step={...})` to fix a step; `run_way(submission_id, input)`,
+`run_way(run_id, done=true, note=...)`, `run_way(run_id)`.
+
+**CLI** (`backend/scripts/submissions.py`, for us): `preview`, `submit --owner`, `list [--status]`, `show`,
+`review <id> | --pending`, `approve <id> <step> --by`, `reject <id> <step> --by --reason`. Pass `--dsn` for a scratch
+database; without it the script reads `backend/.env`, which is production.
+
+Limits: the `submit_way` rate limits (10 an hour and 30 a day per person, 300 an hour overall) apply to submits and
+fixes, since each costs a reviewer call.
+
+Tests: `tests/test_goal_submission_offline.py` (no database) and `tests/test_goal_submission_e2e.py` (a database with
+db/204; the reviewer, email and run model faked).
+
+## Overlap with `submit_way`
+
+The older MCP tool `submit_way` (free-form steps, one automated screen, no per-step goals) is untouched. Whether to
+retire it in favour of `submit_goal` is the owner's decision.
+
 ## Status
 
 | id | piece | owner | state |
@@ -100,7 +136,7 @@ submitted Way yet** — the run fails at that step and says so (open item GS-7).
 | GS-3 | review: checks + AI reviewer, publish / reject, parent Way, person overrule | Anuj's agent | done (scratch) |
 | GS-4 | rejection email (Resend) | Anuj's agent | built; not sent for real yet |
 | GS-5 | runs that pause at human steps | Anuj's agent | done (scratch) |
-| GS-6 | surfaces: HTTP, MCP `submit_goal` + status/fix/run tools, CLI `scripts/submissions.py`, tests | Anuj's agent | in progress |
+| GS-6 | surfaces: HTTP, MCP `submit_goal` + `run_way`, CLI `scripts/submissions.py`, tests | Anuj's agent | done (scratch) |
 | GS-7 | run tool and script locators from a submitted Way (through the gate / after screening) | open | not started |
 | GS-8 | router label: show "AI approved" for `ai_approved` Ways in `goal_router.py` / route view | open | not started |
 | GS-9 | website / desktop UI | owner decides later | do not start |

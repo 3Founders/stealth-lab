@@ -101,7 +101,11 @@ async def check_step(pool: Any, step: dict, *, client: Optional[httpx.AsyncClien
     if shapes:
         problems.append("the step's text reads like instructions to the AI rather than a step "
                         f"({', '.join(shapes)}); describe the step itself")
-    _, secrets = redact_document_text(text + "\n" + json.dumps(step.get("locator") or {}))
+    from app.services.trace_redaction import PERSONAL_DATA_PATTERNS
+
+    personal = {label for label, _ in PERSONAL_DATA_PATTERNS}     # an address or an IP is not a credential
+    _, found = redact_document_text(text + "\n" + json.dumps(step.get("locator") or {}))
+    secrets = [label for label in found if label not in personal]
     if secrets:
         problems.append("the step contains what looks like a key, token or password; remove it (kell supplies "
                         "credentials by name, never in a step)")

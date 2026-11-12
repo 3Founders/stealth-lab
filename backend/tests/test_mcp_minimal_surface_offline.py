@@ -85,6 +85,8 @@ EXPECTED_V1_SURFACE: frozenset[str] = frozenset({
     "report_audit", "report_check_evidence",
     # the Delegator relay's agent side (migration 155): discoverable, scoped knowledge:write
     "delegate_inbox", "delegate_result", "delegate_call",
+    # goal submission (docs/goal_submission.md): submit a goal step by step; run the approved Way, pausing at human steps
+    "submit_goal", "run_way",
     # registered before this pin was last written (the drift this test exists to make explicit)
     "delegate", "report_tools",
     # rooms (P5, docs/rooms_design.md): a connector reads and posts in the person's rooms - a deliberate surface change,

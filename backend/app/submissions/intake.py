@@ -96,10 +96,12 @@ def classify_locator(raw: Any, where: str) -> Optional[dict]:
         return {"type": "script" if path.endswith(SCRIPT_EXT) else "url", "value": value}
     if path.endswith(SCRIPT_EXT):
         return {"type": "script", "value": value}
-    if "/" in value or "\\" in value or re.search(r"\.[a-z0-9]{1,8}$", path):
+    looks_like_path = ("\\" in value or value.startswith(("/", "./", "../", "~")) or re.match(r"^[a-z]:", path)
+                       or value.count("/") > 1 or re.search(r"\.[a-z0-9]{1,8}$", path.rsplit("/", 1)[-1]))
+    if not looks_like_path and re.fullmatch(r"[A-Za-z0-9_.:@-]+(/[A-Za-z0-9_.:@-]+)?", value):
+        return {"type": "tool", "value": value}              # a tool name, or "<server>/<tool>"
+    if "/" in value or looks_like_path:
         return {"type": "file", "value": value}
-    if re.fullmatch(r"[A-Za-z0-9_.:@-]+(/[A-Za-z0-9_.:@-]+)?", value):
-        return {"type": "tool", "value": value}
     raise SubmissionError(f"{where}: not a website, file, script or tool name; pass {{\"type\", \"value\"}}")
 
 
