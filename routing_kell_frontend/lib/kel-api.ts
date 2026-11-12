@@ -372,22 +372,30 @@ export interface RouteResult extends Row {
  * This is why /route does not show the "set NEXT_PUBLIC_KEL_API_URL" notice.
  */
 async function routeGet<T>(path: string, signal?: AbortSignal): Promise<ApiState<T>> {
-  if (API_URL) return apiGet<T>(path, signal);
-  try {
-    const token = await getAccessToken();
-    if (!token) return { kind: "unauthenticated" };
-    const res = await fetch(`${MCP_ORIGIN}${path}`, {
-      signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
-      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
-    });
-    if (res.status === 401) return { kind: "unauthenticated" };
-    if (res.status === 403) return { kind: "forbidden", message: "You don't have access to the router." };
-    if (!res.ok) return { kind: "error", message: `The router answered ${res.status}.`, status: res.status };
-    return { kind: "ok", data: (await res.json()) as T };
-  } catch (e) {
-    if ((e as Error).name === "AbortError") return { kind: "idle" };
-    return { kind: "error", message: "Could not reach the router." };
+  const onLocalhost = typeof window !== "undefined"
+    && ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+  const bases = API_URL
+    ? [API_URL]
+    : [...(onLocalhost ? ["http://localhost:8000"] : []), MCP_ORIGIN];
+  let last: ApiState<T> = { kind: "unconfigured" };
+  for (const base of bases) {
+    try {
+      const token = await getAccessToken();
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${base}${path}`, {
+        signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer", headers,
+      });
+      if (res.status === 401) { last = { kind: "unauthenticated" }; continue; }
+      if (res.status === 403) { last = { kind: "forbidden", message: "You don't have access to the router." }; continue; }
+      if (!res.ok) { last = { kind: "error", message: `The router answered ${res.status}.`, status: res.status }; continue; }
+      return { kind: "ok", data: (await res.json()) as T };
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return { kind: "idle" };
+      last = { kind: "error", message: "Could not reach the router." };
+    }
   }
+  return last;
 }
 
 /** Goal -> Way -> Tool for one task. Read-only; the same answer the desktop Route page shows. */
