@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Optional
+
+log = logging.getLogger(__name__)
 
 # A Goal's candidate pool: the same cap the live ranker uses.
 CANDIDATES_PER_GOAL = 40
@@ -140,3 +143,89 @@ async def refresh(pool: Any, *, goal: Optional[str] = None, trust_refresh: bool 
 
     counts = await asyncio.gather(*(one(str(g["id"])) for g in goals))
     return sum(counts)
+
+
+async def mark_dirty(pool: Any, goal_ids: list[str], reason: str = "manual") -> int:
+    """Queue Goals whose ranking is stale; the drain recomputes them (db/204)."""
+    ids = [str(g) for g in goal_ids if g]
+    if not ids:
+        return 0
+    await pool.executemany(
+        """
+        INSERT INTO goal_ranking_dirty (goal_id, marked_at, reason)
+        VALUES ($1::uuid, now(), $2)
+        ON CONFLICT (goal_id) DO UPDATE SET marked_at = now(), reason = EXCLUDED.reason
+        """,
+        [(gid, reason) for gid in ids],
+    )
+    return len(ids)
+
+
+async def drain(pool: Any, *, limit: int = 8, min_age_s: float = 5.0,
+                trust_refresh: bool = True) -> int:
+    """Recompute up to `limit` Goals marked stale by the db/204 triggers. -> Goals refreshed.
+
+    `min_age_s` coalesces a burst of writes (a remap, a test batch) into one refresh. The
+    trust view is refreshed once per batch, so the new outcomes are visible to every Goal.
+    A failed refresh re-queues the Goal and stops this pass; the next one retries.
+    """
+    from app.tool_routing import trust
+
+    age = max(0.0, float(min_age_s))
+    # Peek before doing any work: an empty queue must not pay for the trust refresh, and a
+    # card/procedure change does not need it (only new outcomes do).
+    pending = await pool.fetch(
+        """
+        SELECT reason FROM goal_ranking_dirty
+        WHERE marked_at <= now() - make_interval(secs => $1::float8)
+        LIMIT 50
+        """,
+        age,
+    )
+    if not pending:
+        return 0
+    if trust_refresh and any(
+        (r["reason"] or "").startswith(("task_runs", "tool_observations")) or r["reason"] == "retry"
+        for r in pending
+    ):
+        try:
+            await trust.refresh(pool)
+        except Exception:  # noqa: BLE001 -- no view yet: rank with what is there
+            pass
+
+    # A remap or a test batch touches many Goals; one all-Goals refresh is far cheaper than
+    # the per-Goal queries repeated for each. Small queues still go one at a time.
+    if len(pending) >= 8:
+        try:
+            await refresh(pool, goal=None, trust_refresh=False, concurrency=6)
+            await pool.execute("DELETE FROM goal_ranking_dirty")
+            return len(pending)
+        except Exception:  # noqa: BLE001 -- fall through to the per-Goal path
+            log.exception("all-Goals ranking refresh failed; draining one by one")
+
+    done = 0
+    for _ in range(max(1, int(limit))):
+        row = await pool.fetchrow(
+            """
+            DELETE FROM goal_ranking_dirty
+            WHERE goal_id = (
+                SELECT goal_id FROM goal_ranking_dirty
+                WHERE marked_at <= now() - make_interval(secs => $1::float8)
+                ORDER BY marked_at
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING goal_id::text AS goal_id
+            """,
+            age,
+        )
+        if row is None:
+            break
+        try:
+            await refresh(pool, goal=row["goal_id"], trust_refresh=False)
+            done += 1
+        except Exception:  # noqa: BLE001 -- keep the Goal for the next pass
+            log.exception("goal ranking refresh failed for %s", row["goal_id"])
+            await mark_dirty(pool, [row["goal_id"]], "retry")
+            break
+    return done

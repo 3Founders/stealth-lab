@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +34,20 @@ logging.basicConfig(
     level=logging.INFO,
     format='{"ts":"%(asctime)s","level":"%(levelname)s","component":"%(name)s","message":"%(message)s"}',
 )
+
+
+async def _goal_rankings_loop(pool: Any) -> None:
+    """Refresh the Goals the db/204 triggers marked stale; a burst is one refresh."""
+    from app.tool_routing import ranking
+
+    while True:
+        try:
+            await ranking.drain(pool, limit=8, min_age_s=5.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 -- one bad pass is not the loop's end
+            logging.getLogger(__name__).warning("goal ranking drain failed", exc_info=True)
+        await asyncio.sleep(15.0)
 
 
 @asynccontextmanager
@@ -79,6 +94,9 @@ async def lifespan(app: FastAPI):
         app.state.goal_catalog_warm = _warm
     except Exception:  # noqa: BLE001 -- a warm-up failure is not a startup failure
         logging.getLogger(__name__).warning("goal catalog warm-up skipped", exc_info=True)
+    # Per-Goal tool ranking (db/200): db/204 marks a Goal stale when its cards, ways or
+    # evidence change; this loop recomputes the marked Goals every 15 s.
+    app.state.goal_rankings_task = asyncio.create_task(_goal_rankings_loop(app.state.pool))
     from app.services import org_keys as _org_keys
     # companies' own provider keys -> the governed gateway (/v1/chat/completions)
     _org_keys.install(lambda: getattr(app.state, "pool", None))
@@ -96,6 +114,9 @@ async def lifespan(app: FastAPI):
     finally:
         if _drain_task is not None:
             _drain_task.cancel()
+        _rank_task = getattr(app.state, "goal_rankings_task", None)
+        if _rank_task is not None:
+            _rank_task.cancel()
         await ingestion_scheduler.stop(app)
         await close_pool()
 

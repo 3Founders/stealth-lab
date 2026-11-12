@@ -28,7 +28,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
-from typing import Any, Optional
+from typing import Any
 
 from scripts.compare.contracts import ARMS, GOALS, ComparisonRecord, RunRecord, Task
 from scripts.compare.corpus import load
@@ -212,6 +212,14 @@ async def main_async(args: argparse.Namespace) -> int:
             pass
         if save is not None and comparisons:
             await save(pool, comparisons)
+        # The runs marked their Goals stale (db/204); refresh them now so the next search
+        # sees the new evidence. The app's background loop does the same on a timer.
+        try:
+            from app.tool_routing import ranking as _ranking
+
+            await _ranking.drain(pool, limit=50, min_age_s=0)
+        except Exception:  # noqa: BLE001 -- the comparison result is already saved
+            pass
     finally:
         await pool.close()
 

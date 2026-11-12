@@ -41,6 +41,11 @@ async def run(args: argparse.Namespace) -> int:
     try:
         from app.tool_routing import ranking
 
+        if args.drain:
+            done = await ranking.drain(pool, limit=100, min_age_s=0)
+            print(f"drained: {done} goal(s)")
+            return 0
+
         written = await ranking.refresh(pool, goal=args.goal, trust_refresh=not args.no_trust_refresh,
                                         concurrency=args.concurrency)
         print(f"ranked rows: {written}")
@@ -55,6 +60,8 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=6, help="Goals ranked at once (default 6)")
     ap.add_argument("--no-trust-refresh", action="store_true",
                     help="use the current tool_trust view instead of refreshing it first")
+    ap.add_argument("--drain", action="store_true",
+                    help="process the db/204 dirty queue once (limit 100, no coalescing)")
     ap.add_argument("--dsn", default="")
     raise SystemExit(asyncio.run(run(ap.parse_args())))
 
