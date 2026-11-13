@@ -1019,6 +1019,22 @@ def test_create_goal_from_user_ignores_a_candidate_that_shares_one_generic_word(
     assert result["outcome"] == "created"
 
 
+def test_create_goal_from_user_does_not_wait_on_a_slow_near_match_search(monkeypatch):
+    """The near-match list is advisory; a shard outage must not stall the write."""
+    async def _slow(pool, **kw):
+        await asyncio.sleep(5)
+        return []
+
+    monkeypatch.setattr("app.services.goals.search_goals", _slow)
+    monkeypatch.setattr("app.services.goals.NEAR_MATCH_TIMEOUT_S", 0.05)
+    pool = _FakeGoalsPool()
+    result = _run(create_goal_from_user(
+        pool, canonical_name="reconcile schema drift", scope_type="global", owner_id="u1",
+        rationale="why this matters", objective="the expected outcome",
+    ))
+    assert result["outcome"] == "created"
+
+
 def test_looks_like_the_same_goal_uses_content_word_overlap():
     from app.services.goals import looks_like_the_same_goal
 

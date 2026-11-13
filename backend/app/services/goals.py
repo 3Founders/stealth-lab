@@ -50,6 +50,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import unicodedata
 from typing import Any, Optional
@@ -787,6 +788,9 @@ _SERVER_OWNED_GOAL_METADATA = frozenset({
 })
 
 _NEAR_WORD = re.compile(r"[a-z0-9]+")
+# The near-match search is advisory (find_or_create_goal's exact/alias tier is the authority).
+# A shard outage must not turn "add a Goal" into a request that waits on every shard timeout.
+NEAR_MATCH_TIMEOUT_S = float(os.environ.get("GOAL_NEAR_MATCH_TIMEOUT_S", "3"))
 _NEAR_STOP = frozenset({
     "the", "and", "for", "with", "that", "this", "from", "into", "what", "how", "are", "can",
     "use", "you", "your", "all", "one", "out", "get", "up", "or", "of", "to", "in", "on", "is",
@@ -878,10 +882,21 @@ async def create_goal_from_user(
         scope = (
             AccessScope.for_user(owner_id) if scope_type != "global" else AccessScope.unrestricted()
         )
-        candidates = await search_goals(
-            pool, query_text=canonical_name, query_embedding=query_embedding,
-            scope=scope, limit=near_match_limit,
-        )
+        # The near-match list is ADVISORY. The authoritative dedup is find_or_create_goal's own
+        # exact/alias tier (and the global goal_names index), so a slow search must never block
+        # the write: with corpus shards unreachable, the search fans out and waits on each
+        # shard's timeout, turning an add into a 30 s request. Bound it and carry on with no
+        # candidates when it does not answer in time.
+        try:
+            candidates = await asyncio.wait_for(
+                search_goals(
+                    pool, query_text=canonical_name, query_embedding=query_embedding,
+                    scope=scope, limit=near_match_limit,
+                ),
+                timeout=NEAR_MATCH_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            candidates = []
         # find_or_create_goal's own exact-name/alias tier would already
         # have matched an identical row -- only surface candidates that
         # are NOT that exact match, so a caller isn't shown "here's a
