@@ -1004,6 +1004,31 @@ def test_create_goal_from_user_surfaces_near_matches_without_writing(monkeypatch
     assert pool.rows == []  # nothing written
 
 
+def test_create_goal_from_user_ignores_a_candidate_that_shares_one_generic_word(monkeypatch):
+    """A single shared word ("check") is not a duplicate: the warning must not block the write.
+    find_or_create_goal's exact/alias/embedding tiers remain the authoritative dedup."""
+    async def _weak(pool, **kw):
+        return [_goal_row("existing-1", "Check CI pipelines, build status and deploys")]
+
+    monkeypatch.setattr("app.services.goals.search_goals", _weak)
+    pool = _FakeGoalsPool()
+    result = _run(create_goal_from_user(
+        pool, canonical_name="Temporary catalog check", scope_type="global", owner_id="u1",
+        rationale="why this matters", objective="the expected outcome",
+    ))
+    assert result["outcome"] == "created"
+
+
+def test_looks_like_the_same_goal_uses_content_word_overlap():
+    from app.services.goals import looks_like_the_same_goal
+
+    assert looks_like_the_same_goal("Check security", "Check security policies")
+    assert looks_like_the_same_goal("Reconcile schema drift", "Reconcile schema differences")
+    assert not looks_like_the_same_goal("Temporary catalog check",
+                                        "Check CI pipelines, build status and deploys")
+    assert not looks_like_the_same_goal("", "Check security")
+
+
 def test_create_goal_from_user_allow_create_anyway_bypasses_near_match_check(monkeypatch):
     async def _should_not_be_called(pool, **kw):
         raise AssertionError("search_goals must not run when allow_create_anyway=True")

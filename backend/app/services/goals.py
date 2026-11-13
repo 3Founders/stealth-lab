@@ -786,6 +786,34 @@ _SERVER_OWNED_GOAL_METADATA = frozenset({
     "parents", "children", "verification", "verification_state", "verified", "benchmarks",
 })
 
+_NEAR_WORD = re.compile(r"[a-z0-9]+")
+_NEAR_STOP = frozenset({
+    "the", "and", "for", "with", "that", "this", "from", "into", "what", "how", "are", "can",
+    "use", "you", "your", "all", "one", "out", "get", "up", "or", "of", "to", "in", "on", "is",
+    "it", "be", "do", "by", "as", "at", "we", "our", "their", "they", "them", "has", "have",
+})
+
+
+def _near_tokens(text: str) -> set[str]:
+    return {w for w in _NEAR_WORD.findall(str(text or "").lower())
+            if len(w) > 2 and w not in _NEAR_STOP}
+
+
+def looks_like_the_same_goal(a: str, b: str, *, threshold: float = 0.3) -> bool:
+    """Is `b` a plausible duplicate of `a`, by content-word overlap (Jaccard >= threshold)?
+
+    This gates only the advisory `near_matches` answer. The authoritative dedup is
+    find_or_create_goal's exact/alias/near-identical-embedding tiers, so a false negative here
+    cannot create a duplicate -- it only means the caller is not warned. The point is to stop
+    the warning firing on one generic word: "Temporary catalog check" and "Check CI pipelines"
+    share "check" and nothing else (Jaccard 0.11), while "Check security" and "Check security
+    policies" share most of their words (0.67).
+    """
+    ta, tb = _near_tokens(a), _near_tokens(b)
+    if not ta or not tb:
+        return False
+    return len(ta & tb) / len(ta | tb) >= threshold
+
 
 async def create_goal_from_user(
     pool: asyncpg.Pool,
@@ -860,7 +888,9 @@ async def create_goal_from_user(
         # near match" for the goal it's about to get anyway.
         normalized = normalize_goal_name(canonical_name)
         distinct_candidates = [
-            c for c in candidates if normalize_goal_name(c["canonical_name"]) != normalized
+            c for c in candidates
+            if normalize_goal_name(c["canonical_name"]) != normalized
+            and looks_like_the_same_goal(canonical_name, c["canonical_name"])
         ]
         if distinct_candidates:
             return {"outcome": "near_matches", "candidates": distinct_candidates}
