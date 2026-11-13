@@ -5,11 +5,13 @@
 .dk-page { padding: 0; }
 /* Three columns, each placed by name. Hiding one used to `display: none` its element, which took it out of the grid
    flow: the chat then auto-placed into the 0-width column and the window collapsed (found 2026-11-08). With explicit
-   grid-column the placement never depends on what is visible, and the column itself animates on the smooth spring. */
+   grid-column the placement never depends on what is visible, and the column itself eases on the sheet curve. */
 .dk-page .dg-shell {
   grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr) var(--dk-right, 340px);
   height: 100dvh; position: relative;
-  transition: grid-template-columns var(--dg-smooth-d, 300ms) var(--dg-smooth, cubic-bezier(.32, .72, 0, 1));
+  /* The sheet curve, not the 500 ms scroll spring: a docked column is a layout change, and a spring's long tail made
+     the reflow look rubbery next to iOS. The Apple ease is a quick start and a long soft landing (docs/ios_animation.md). */
+  transition: grid-template-columns .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1));
 }
 .dk-page .dg-side { grid-column: 1; }
 .dk-page .dg-main { grid-column: 2; }
@@ -20,38 +22,45 @@
 .dk-page .dg-shell[data-right="closed"] { grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr) 0; }
 .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: 0 minmax(0, 1fr) 0; }
 
-/* Open and closed share one transition list, so the left sidebar and the right panel move together. The closed
-   state fades and slides a few pixels toward its edge, then leaves the tab order at the end. Padding and the
-   divider go at once so the fade never reads as a squeeze. */
+/* Open and closed share one transition list, so the left sidebar and the right panel move together. On close the content
+   fades out first (0.16 s) while the column eases away on the sheet curve, so the reflow is barely visible; on open it
+   fades back in just after the column starts moving. Padding and the divider go at once so the fade never reads as a
+   squeeze. The old 500 ms spring made the close feel rubbery. */
 .dk-page .dg-shell[data-left="open"] .dg-side,
 .dk-page .dg-shell[data-right="open"] .dk-panel {
   opacity: 1; transform: none; visibility: visible; pointer-events: auto;
   transition:
-    opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
-    transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
-    box-shadow var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+    opacity .24s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) .06s,
+    transform .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
+    box-shadow .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
     visibility 0s;
 }
 .dk-page .dg-shell[data-left="closed"] .dg-side {
-  opacity: 0; transform: translateX(-16px); visibility: hidden; pointer-events: none;
+  opacity: 0; transform: translateX(-8px); visibility: hidden; pointer-events: none;
   padding-left: 0; padding-right: 0; border-right-width: 0; overflow: hidden; box-shadow: none;
   transition:
-    opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
-    transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
-    box-shadow var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
-    visibility 0s linear var(--dg-smooth-d, 300ms);
+    opacity .16s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
+    transform .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
+    box-shadow .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
+    visibility 0s linear .34s;
 }
 .dk-page .dg-shell[data-right="closed"] .dk-panel {
-  opacity: 0; transform: translateX(16px); visibility: hidden; pointer-events: none;
+  opacity: 0; transform: translateX(8px); visibility: hidden; pointer-events: none;
   padding-left: 0; padding-right: 0; border-left-width: 0; overflow: hidden; box-shadow: none;
   transition:
-    opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
-    transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
-    box-shadow var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
-    visibility 0s linear var(--dg-smooth-d, 300ms);
+    opacity .16s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
+    transform .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
+    box-shadow .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
+    visibility 0s linear .34s;
 }
 .dk-page .dg-shell[data-left="closed"] .dk-resize[data-side="left"],
 .dk-page .dg-shell[data-right="closed"] .dk-resize[data-side="right"] { opacity: 0; pointer-events: none; }
+/* While a column collapses, its content must not re-wrap on every frame (a diff or the file tree re-laid out 60 times
+   is what made the close feel rough). Keep each panel's content at the open width and let the shrinking column clip it:
+   the text stays put and the panel reads as a sheet sliding away (docs/ios_animation.md, rule 1). */
+.dk-page .dg-side > .dg-side-scroll { min-width: var(--dk-left, 260px); }
+.dk-page .dg-side > .dg-brand, .dk-page .dg-side > .dk-foot { min-width: var(--dk-left, 260px); }
+.dk-page .dk-panel > * { min-width: calc(var(--dk-right, 340px) - 24px); }
 .dk-page .dk-side-close { position: absolute; top: 10px; right: 10px; z-index: 6; }
 .dk-page .dg-brand { padding-right: 36px; }
 /* Only the middle of the project sidebar scrolls: the wordmark above it and the account row below it stay put, the way
@@ -281,7 +290,7 @@
 
 /* Drag handles on the inner edges of the two side columns (2026-11-06). */
 .dk-resize { position: absolute; top: 0; bottom: 0; width: 7px; z-index: 5; cursor: col-resize; touch-action: none;
-  transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), left var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), right var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
+  transition: opacity .2s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)), left .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)), right .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)); }
 .dk-resize[data-side="left"] { left: calc(var(--dk-left, 260px) - 4px); }
 .dk-resize[data-side="right"] { right: calc(var(--dk-right, 340px) - 4px); }
 .dk-page .dg-shell[data-left="closed"] .dk-resize[data-side="left"] { left: 0; }

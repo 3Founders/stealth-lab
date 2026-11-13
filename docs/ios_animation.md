@@ -150,7 +150,7 @@ Fallbacks, all in chat.css:
 
 | Surface | Effect | Motion |
 |---|---|---|
-| Sidebar collapse (left or right) | the column narrows to 0 and its contents fade; the divider and padding go at once | `grid-template-columns` transition on `--dg-smooth` (the spring's ~500 ms), `opacity` on the same curve, `visibility` flips at the end so the panel leaves the tab order |
+| Sidebar collapse (left or right) | the column narrows to 0 and its contents fade; the divider and padding go at once | `grid-template-columns` on the **sheet curve** (`.34s` Apple ease, not the 500 ms scroll spring — a spring's tail made the reflow look rubbery); the content fades out in `.16s` (in on `.24s` after a `.06s` delay), keeps its open width so the column **clips** it instead of re-wrapping a diff or the file tree every frame, and `visibility` flips at the end |
 | The buttons that bring a closed panel back (chat header) | pop in | `dg-pop` on `--dg-bouncy` (360 ms) |
 | File view (right panel, opens from the tree) | slides in like the website's canvas panel | `dg-canvas-in` (translateX 22px) on `--dg-smooth` |
 | File tree row / chevron | hover tint; the folder chevron turns 90° | `background-color` and `transform` on `--dg-micro` (160 ms) |
