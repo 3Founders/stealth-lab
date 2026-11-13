@@ -250,27 +250,29 @@ async def ai_review(sub: dict, steps: list[dict], *, client: Optional[httpx.Asyn
 
 async def _publish_step(pool: Any, step: dict, status: str) -> None:
     """A passed step: its Way active, public, ai_approved (or approved); a goal this submission made, public."""
-    await pool.execute(
+    owner = await pool.fetchval(
         """UPDATE procedures SET approval_status = $2, availability = 'active', visibility = 'public',
                   approved_by = $3, approved_at = now(), updated_at = now()
-           WHERE id = $1::uuid AND t_invalid IS NULL""",
+           WHERE id = $1::uuid AND t_invalid IS NULL RETURNING owner_id""",
         step["procedure_row_id"], status, step.get("reviewer") or "goal_submission")
     if step.get("created_goal"):
-        await _publish_goal(pool, step["goal_id"])
+        await _publish_goal(pool, step["goal_id"], owner)
     elif step.get("title"):
         await _add_alias(pool, step["goal_id"], step["title"])
 
 
-async def _publish_goal(pool: Any, goal_id: str) -> None:
-    """The goal goes public, and its search projection is refreshed (the server's background drain applies it), so
+async def _publish_goal(pool: Any, goal_id: str, owner_id: Optional[str]) -> None:
+    """The goal goes public (a goal someone else made under the same name goes public without their description:
+    only the name, which this submitter wrote too, is shown), and its search projection is refreshed (the server's background drain applies it), so
     find_ways and the goal matcher find it. Then it is placed in the goal hierarchy (matching.place_goal: JEV decides
     which goals it is a special case or an abstraction of), and put back in the reconcile sweep, now among public
     goals."""
     from app.services import search_projection
     from app.submissions.matching import place_goal
 
-    await pool.execute("UPDATE goals SET visibility = 'public', status = 'active', reconciled_at = NULL "
-                       "WHERE id = $1::uuid AND visibility <> 'public'", goal_id)
+    await pool.execute("UPDATE goals SET visibility = 'public', status = 'active', reconciled_at = NULL, "
+                       "description = CASE WHEN owner_id IS NOT DISTINCT FROM $2 THEN description END "
+                       "WHERE id = $1::uuid AND visibility <> 'public'", goal_id, owner_id)
     await pool.execute("UPDATE goal_search_index SET visibility = 'public', status = 'active' WHERE goal_id = $1::uuid",
                        goal_id)
     await search_projection.enqueue(pool, "goal", goal_id)
@@ -328,7 +330,7 @@ async def _write_parent(pool: Any, sub: dict, steps: list[dict]) -> Optional[str
     await pool.execute("UPDATE procedures SET approval_status = 'ai_approved', approved_by = 'goal_submission', "
                        "approved_at = now() WHERE id = $1::uuid", out["id"])
     if sub.get("created_goal"):
-        await _publish_goal(pool, sub["goal_id"])
+        await _publish_goal(pool, sub["goal_id"], sub["owner_id"])
     else:
         await _add_alias(pool, sub["goal_id"], sub["goal_name"])
     return str(out["id"])

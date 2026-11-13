@@ -53,6 +53,9 @@ fix just that step.
 - Each step → its own goal (an existing public goal judged the same, else a new goal **private** to the submitter) and a one-step
   Way written by the real writer `capture_procedure`. A human step's Way is bound to `{"kind": "runtime", "runtime":
   "human"}`, so the general plan executor fails loudly on it instead of letting a model stand in for the person.
+- Global goal names are unique, so a name already held by a goal nobody has had approved yet (the submitter's or
+  someone else's) is that goal: whichever Way is approved first makes it public, without the other person's
+  description. A fixed step that moves to another goal retires the private goal it left, when nothing else uses it.
 - While under review, every step Way is `approval_status='submitted'`, `availability='quarantined'`,
   `visibility='private'`. **Retrieval only reads active Ways, so nothing unapproved is ever retrieved.**
 - When every step has passed, the **parent Way** is written on the submission's goal: one step per child Way, pointing at

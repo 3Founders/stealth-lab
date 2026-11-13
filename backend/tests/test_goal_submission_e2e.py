@@ -360,3 +360,37 @@ async def test_a_script_on_the_submitters_computer_is_rejected(pool, fakes):
                                          "steps": [{"title": "Train the model", "locator": "C:/Users/me/train.py"}]})
     assert out["status"] == "needs_changes"
     assert "on your computer" in out["steps"][0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_a_fixed_step_retires_the_goal_it_left(pool, fakes):
+    import random
+    import string
+
+    tag = "".join(random.choice(string.ascii_lowercase) for _ in range(8))
+    owner = f"test-{uuid.uuid4().hex[:8]}"
+    out = await api.submit(pool, owner, {"goal": f"collect {tag} papers", "steps": [
+        {"title": f"Gather {tag} sources", "prompt": "VAGUE find stuff"}]})
+    left = out["steps"][0]["goal_id"]
+    assert out["steps"][0]["status"] == "rejected"
+    fixed = await api.fix_step(pool, owner, out["id"], 1, {"title": f"List {tag} preprints", "prompt": "List them"})
+    assert fixed["steps"][0]["goal_id"] != left and fixed["steps"][0]["status"] == "ai_approved"
+    assert await pool.fetchval("SELECT t_invalid IS NOT NULL FROM goals WHERE id = $1::uuid", left)
+
+
+@pytest.mark.asyncio
+async def test_the_same_name_pending_for_someone_else_is_published_without_their_description(pool, fakes):
+    import random
+    import string
+
+    tag = "".join(random.choice(string.ascii_lowercase) for _ in range(8))
+    first = await api.submit(pool, f"test-{uuid.uuid4().hex[:8]}", {
+        "goal": f"plan {tag} trip", "steps": [{"title": f"Pick {tag} dates", "prompt": "VAGUE PRIVATE NOTE"}]})
+    pending = first["steps"][0]["goal_id"]
+    assert first["steps"][0]["status"] == "rejected"           # its goal stays private
+    second = await api.submit(pool, f"test-{uuid.uuid4().hex[:8]}", {
+        "goal": f"organise {tag} trip", "steps": [{"title": f"Pick {tag} dates", "prompt": "Choose dates that fit"}]})
+    assert second["steps"][0]["goal_id"] == pending            # the same name is the same goal
+    row = await pool.fetchrow("SELECT visibility::text AS v, description FROM goals WHERE id = $1::uuid", pending)
+    assert row["v"] == "public" and "PRIVATE NOTE" not in (row["description"] or "")
+    assert await _retrievable(pool, second["steps"][0]["procedure_row_id"])

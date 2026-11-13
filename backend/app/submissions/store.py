@@ -61,8 +61,11 @@ def step_record(step: Step, submission_id: str) -> dict:
 
 
 async def resolve_goal(pool: Any, name: str, *, owner_id: str, description: str = "") -> tuple[dict, bool, dict]:
-    """-> (goal {id, canonical_name, home_shard_id}, created, match). The public goal matching.py judges to be the same
-    goal, else a new goal private to the submitter (published when its Way is approved)."""
+    """-> (goal {id, canonical_name, home_shard_id}, publish, match). The public goal matching.py judges to be the same
+    goal, else a new goal private to the submitter (published when its Way is approved). Global goal names are
+    unique, so the same name already held by a goal nobody has had approved yet (this person's or someone else's) is
+    that goal: `publish` is true for it too, and whichever Way is approved first makes it public (without the other
+    person's description, see review._publish_goal)."""
     from app.services.goals import GoalQualityRejected, find_or_create_goal
     from app.submissions.matching import match_goal
 
@@ -76,9 +79,11 @@ async def resolve_goal(pool: Any, name: str, *, owner_id: str, description: str 
             judge_mode="none", on_unavailable="create")
     except GoalQualityRejected as exc:
         raise SubmissionError(f"goal {name!r}: {exc}") from exc
-    shard = await pool.fetchval("SELECT home_shard_id FROM goals WHERE id = $1::uuid", made["id"])
-    return ({"id": str(made["id"]), "canonical_name": made.get("canonical_name") or name, "home_shard_id": shard},
-            bool(made.get("created")), _match_record(match))
+    row = await pool.fetchrow("SELECT home_shard_id, visibility::text AS visibility FROM goals WHERE id = $1::uuid",
+                              made["id"])
+    return ({"id": str(made["id"]), "canonical_name": made.get("canonical_name") or name,
+             "home_shard_id": row["home_shard_id"]},
+            bool(made.get("created")) or row["visibility"] != "public", _match_record(match))
 
 
 def _match_record(match: dict) -> dict:
@@ -139,7 +144,7 @@ async def replace_step(pool: Any, submission_id: str, owner_id: str, order: int,
     """The submitter fixes one step: its old Way is retired, a new one written, and the step goes back to review.
     Steps already approved are left alone."""
     row = await pool.fetchrow(
-        """SELECT s.id, s.status, s.procedure_row_id::text AS procedure_row_id, s.revision
+        """SELECT s.id, s.status, s.procedure_row_id::text AS procedure_row_id, s.revision, s.goal_id::text AS goal_id
            FROM goal_submission_steps s JOIN goal_submissions g ON g.id = s.submission_id
            WHERE s.submission_id = $1::uuid AND s.step_order = $2 AND g.owner_id = $3""", submission_id, order, owner_id)
     if row is None:
@@ -162,13 +167,29 @@ async def replace_step(pool: Any, submission_id: str, owner_id: str, order: int,
             row["id"], step.kind, step.title, step.description, step.prompt,
             step.locator, way["goal_id"], way["created_goal"],
             way["procedure_row_id"], way["goal_match"])
-        kinds =[r["kind"] for r in await conn.fetch(
+        if row["goal_id"] and row["goal_id"] != way["goal_id"]:
+            await _retire_unused_goal(conn, row["goal_id"], owner_id)
+        kinds = [r["kind"] for r in await conn.fetch(
             "SELECT kind FROM goal_submission_steps WHERE submission_id = $1::uuid", submission_id)]
         from app.submissions.intake import mode_of
 
         await conn.execute("UPDATE goal_submissions SET status = 'reviewing', mode = $2, updated_at = now() "
                            "WHERE id = $1::uuid", submission_id, mode_of(kinds))
     return {**step.as_dict(), **way, "status": "reviewing", "revision": row["revision"] + 1}
+
+
+async def _retire_unused_goal(conn: Any, goal_id: str, owner_id: str) -> None:
+    """A fixed step moved to another goal: the goal it left is retired when this person made it, it never went public,
+    and nothing else uses it (no live Way, no other submission or step)."""
+    await conn.execute(
+        """UPDATE goals g SET t_invalid = now() WHERE g.id = $1::uuid AND g.t_invalid IS NULL
+             AND g.visibility <> 'public' AND g.owner_id = $2 AND g.created_from = 'goal_submission'
+             AND NOT EXISTS (SELECT 1 FROM procedures p WHERE p.achieves_goal_id = g.id AND p.t_invalid IS NULL)
+             AND NOT EXISTS (SELECT 1 FROM goal_submission_steps s WHERE s.goal_id = g.id)
+             AND NOT EXISTS (SELECT 1 FROM goal_submissions s WHERE s.goal_id = g.id)""",
+        goal_id, owner_id)
+    await conn.execute("UPDATE goal_search_index SET status = 'merged' WHERE goal_id = $1::uuid AND EXISTS "
+                       "(SELECT 1 FROM goals WHERE id = $1::uuid AND t_invalid IS NOT NULL)", goal_id)
 
 
 async def get(pool: Any, submission_id: str, *, owner_id: Optional[str] = None) -> Optional[dict]:
