@@ -1738,6 +1738,53 @@ async def triage_route(request: Request) -> JSONResponse:
     return JSONResponse(verdict.as_dict())
 
 
+@server.custom_route("/goal/judge", methods=["POST"], include_in_schema=False)
+async def goal_judge_route(request: Request) -> JSONResponse:
+    """The desktop app's /goal evaluator, on kell's semantic chain: JEV first (one typed choice), then Gemini/Gemma.
+
+    Body `{"condition": "...", "transcript": "..."}`; reply `{"verdict": "met"|"not_yet"|"impossible", "confidence",
+    "reason", "provider", "model", "fallback"}`. The verdict is the judge's; the reason restates it because System One
+    (JEV) answers typed questions and never writes free text. 503 when no judge answered, so the app falls back to its
+    own cheap model. Each call is a paid judgment; the /goal loop bounds itself (one per turn, at most 20 turns).
+    """
+    denied = await _route_gate(request)
+    if denied is not None:
+        return denied
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    condition = body.get("condition") if isinstance(body, dict) else None
+    transcript = body.get("transcript") if isinstance(body, dict) else None
+    if not isinstance(condition, str) or not condition.strip():
+        return JSONResponse({"error": "send JSON with a non-empty string `condition`"}, status_code=400)
+    transcript = transcript if isinstance(transcript, str) else ""
+    from app.services import retrieval_service as _rs
+
+    try:
+        judge = _rs.default_judge()
+    except Exception:  # noqa: BLE001 -- no judge: the app's own model evaluates
+        judge = None
+    if judge is None:
+        return JSONResponse({"error": "no semantic judge is configured"}, status_code=503)
+    result = await judge.judge_goal(condition.strip()[:4000], transcript[-30_000:])
+    if not result.ok:
+        return JSONResponse({"error": result.reason or "the judge did not answer",
+                             "attempts": [a.__dict__ for a in result.attempts]}, status_code=503)
+    value = result.value if isinstance(result.value, dict) else {}
+    verdict = str(value.get("verdict") or "")
+    if verdict not in ("met", "not_yet", "impossible"):
+        return JSONResponse({"error": "the judge returned no verdict"}, status_code=503)
+    try:
+        confidence = max(0.0, min(1.0, float(value.get("confidence") or 0.0)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    name = "JEV" if result.provider == "jev" else str(result.provider or "judge")
+    reason = f"{name} ({confidence:.2f}): {verdict.replace('_', ' ')}"
+    return JSONResponse({"verdict": verdict, "confidence": confidence, "reason": reason,
+                         "provider": result.provider, "model": result.model, "fallback": result.fallback_used})
+
+
 # --- the tool gateway (app/tool_routing/gateway.py, docs/tool_gateway_design.md) -----------------------------------------
 
 def _gateway_owner() -> str | None:

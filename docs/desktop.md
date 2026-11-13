@@ -46,12 +46,16 @@ canvas are exactly the site's.
 
 ## /goal (0.1.17)
 
-`/goal <condition>` sets one completion condition for the session. After every turn `app/api/goal` asks the cheap model
-on the same kell gateway to judge the transcript: **met**, **not_yet**, or **impossible**. `not_yet` starts another turn
-with the evaluator's reason; met/impossible clears the goal. `/goal` shows status, `/goal pause`/`resume`/`clear` manage
-it, and a condition may say `stop after N turns` (default 20). It stops on three turns with no tool use, and a failed
-turn pauses it. This mirrors Claude Code's `/goal` (`code.claude.com/docs/en/goal`), with kell's own engine and cheap
-model instead of Claude Code's Stop hook. The goal is session-scoped and restored with the session.
+`/goal <condition>` sets one completion condition for the session. After every turn `app/api/goal` asks **kell's
+semantic judge** to judge the transcript: **met**, **not_yet**, or **impossible**. The judge is **JEV** (TypeSafe's
+System One, one typed choice question) with Gemini/Gemma as its fallbacks, through `POST /goal/judge` on the MCP server
+(`app/mcp_server/server.py`, `SemanticJudge.judge_goal`); the cheap gateway model is only the fallback when the server
+has no judge or cannot be reached, so `/goal` works before the backend is deployed. The verdict is the judge's; the
+reason restates it because System One answers typed questions and never writes free text. `not_yet` starts another turn
+with that reason; met/impossible clears the goal. `/goal` shows status, `/goal pause`/`resume`/`clear` manage it, and a
+condition may say `stop after N turns` (default 20). It stops on three turns with no tool use, and a failed turn pauses
+it. This mirrors Claude Code's `/goal` (`code.claude.com/docs/en/goal`), with kell's own engine and judge instead of
+Claude Code's Stop hook. The goal is session-scoped and restored with the session.
 
 ## /btw (0.1.18)
 

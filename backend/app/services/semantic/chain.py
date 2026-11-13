@@ -32,6 +32,7 @@ from app.services.semantic.errors import (
 from app.services.semantic.policy import METRICS, RetryPolicy, SemanticMetrics
 from app.services.semantic.providers import (
     CAP_APPLICABILITY,
+    CAP_GOAL,
     CAP_IDENTITY,
     CAP_RELATION,
     CAP_RETENTION,
@@ -168,6 +169,11 @@ class SemanticJudge:
         """What kind of request `query` is (prompts.TRIAGE_KINDS: whether a find_ways lookup is worth it) and whether
         it asks for a change now (prompts.WORK_KINDS); `context`: the conversation's earlier turns, or ""."""
         return await self._run("triage", CAP_TRIAGE, lambda p: p.triage(query, context))
+
+    async def judge_goal(self, condition: str, transcript: str) -> ChainResult:
+        """Whether the transcript demonstrates the completion condition (met / not_yet / impossible). JEV answers it as
+        one typed choice; the fallbacks return the same JSON contract (prompts.GOAL_VERDICTS)."""
+        return await self._run("goal", CAP_GOAL, lambda p: p.goal(condition, transcript))
 
     async def judge_identity_batch(self, kind: str, a: str, candidates: list) -> ChainResult:
         if not candidates:

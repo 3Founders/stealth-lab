@@ -11,6 +11,7 @@ import { NextResponse } from "next/server"
 import { gatewayOrigin, ladderOrder, personalEngineConfig, personalModelIds } from "@/lib/pooled"
 import { modelPlan } from "@/lib/kellplugin"
 import { webToken } from "@/lib/websession"
+import { judgeGoal } from "@/lib/tools"
 
 export const dynamic = "force-dynamic"
 
@@ -50,6 +51,21 @@ export async function POST(req: Request) {
   const condition = typeof body?.condition === "string" ? body.condition.trim().slice(0, 4_000) : ""
   const transcript = typeof body?.transcript === "string" ? body.transcript.slice(-30_000) : ""
   if (!condition) return NextResponse.json({ error: "a goal condition is required" }, { status: 400 })
+
+  // kell's semantic judge first: JEV answers the typed choice, Gemini/Gemma are its fallbacks. The reason is the
+  // judge's verdict restated (JEV does not write free text). If the server has no judge or cannot be reached, the
+  // cheap gateway model below still evaluates, so /goal never depends on a deploy.
+  try {
+    const judged = await judgeGoal(condition, transcript)
+    if (judged?.verdict === "met" || judged?.verdict === "not_yet" || judged?.verdict === "impossible") {
+      return NextResponse.json({
+        verdict: judged.verdict,
+        reason: judged.reason || `${judged.provider || "the judge"}: ${judged.verdict.replace("_", " ")}`,
+        provider: judged.provider || "jev",
+        confidence: judged.confidence,
+      })
+    }
+  } catch { /* no judge on this server (or no sign-in for it): fall through to the model */ }
 
   const token = await webToken()
   if (!token) return NextResponse.json({ error: "Sign in to run models on your kell plan." }, { status: 401 })
@@ -91,5 +107,5 @@ export async function POST(req: Request) {
   }
   const content = String(parsed?.choices?.[0]?.message?.content || "")
   if (!content) return NextResponse.json({ error: "The evaluator returned nothing." }, { status: 502 })
-  return NextResponse.json(parseVerdict(content))
+  return NextResponse.json({ ...parseVerdict(content), provider: model })
 }

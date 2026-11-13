@@ -95,6 +95,15 @@ export async function askTools(need: string): Promise<{ goal: string | null; too
 export const needsSignIn = (t: RouterTool): boolean =>
   /sign-?in|log ?in|api key|consent/i.test(String(t.available || "")) || !!(t.requires_auth || t.oauth || t.needs_key)
 
+/** The /goal verdict from kell's semantic judge (`POST /goal/judge`): JEV first, then Gemini/Gemma. A typed choice,
+ *  not a chat model -- the reason is the judge's verdict restated, since JEV does not write free text. */
+export type GoalVerdict = {
+  verdict: "met" | "not_yet" | "impossible"; confidence?: number; reason?: string; provider?: string; model?: string
+}
+export async function judgeGoal(condition: string, transcript: string): Promise<GoalVerdict> {
+  return post("/goal/judge", { condition: condition.slice(0, 4000), transcript: transcript.slice(-30_000) }, 30_000)
+}
+
 /** Whether one tool's sign-in or consent has actually finished, asked of kell without starting a new one: the gateway reads the
  *  sealed OAuth token or the recorded grant. A closed browser is not a sign-in, so the page asks this before carrying on. The
  *  coding lane's MCP token is what authenticates here (the website gate refuses it; /v1/tools/signin/status is the web twin). */
@@ -110,7 +119,7 @@ export async function toolSignInStatus(server: string, link = ""): Promise<boole
 /** Goal -> Way -> Tool for a task, from the MCP server the app is already signed in to. The same answer as the website's
  *  GET /v1/goals/route (app/tool_routing/route_api.py): the Goal, its ways with their approval tier, and the tools the
  *  request ranks inside it. Read-only -- nothing is called, no plan is written. */
-export async function routeGoals(need: string, k = 5): Promise<any> {
+export async function routeGoals(need: string, k = 5, timeoutMs = 60_000): Promise<any> {
   await freshSignIn()
   const { url, token } = config()
   const base = url && sibling(url, "/v1/goals/route")
@@ -121,7 +130,7 @@ export async function routeGoals(need: string, k = 5): Promise<any> {
     k: String(Math.min(Math.max(Number(k) || 5, 1), 20)),
   }).toString()
   const r = await fetch(target.toString(), {
-    method: "GET", signal: AbortSignal.timeout(60_000),
+    method: "GET", signal: AbortSignal.timeout(timeoutMs),
     headers: { accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
   })
   if (!r.ok) throw Object.assign(new Error(`kell's router answered ${r.status}`), { status: 502 })
