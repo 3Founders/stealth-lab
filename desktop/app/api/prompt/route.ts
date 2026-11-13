@@ -3,6 +3,7 @@
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { engineStatus, clientFor } from "@/lib/engine"
+import { contractOf, type Delegation } from "@/lib/delegate"
 import { pooledEngineConfig, ownKeyLane, walletRemaining, isNeedPlan } from "@/lib/pooled"
 import { TOOL_RULES } from "@/lib/tools"
 import { appendMessage, ensureSession, getAssistantMessages, getSession } from "@/lib/localdb"
@@ -122,16 +123,25 @@ export async function POST(req: Request) {
           }
         } catch { /* history is an addition */ }
         const text = String(body.text || "") + attached.text + prior
+        // The routed Way for this turn: when it is bound to a tool, that tool does the work and this turn may not redo
+        // it (lib/delegate.ts contractOf). It goes into the request and the session instruction, so the model reads it
+        // even when the plugin's advisory tool note was skipped. A turn with no plan is an ordinary coding turn.
+        const plan = body.plan && typeof body.plan === "object" ? (body.plan as Delegation) : null
+        const contract = contractOf(plan)
         // The routed model for this turn (lib/delegate.ts): the chat model the person is talking to is the one the
         // procedure needs. A missing or unreadable override falls back to the engine's own choice.
         const model = body.model && typeof body.model.id === "string" && typeof body.model.providerID === "string"
           ? { id: String(body.model.id), providerID: String(body.model.providerID) }
-          : undefined
+          : plan?.model && typeof plan.model.id === "string" && typeof plan.model.providerID === "string"
+            ? { id: plan.model.id, providerID: plan.model.providerID }
+            : undefined
+        const promptText = contract ? `${text}\n\n${contract}` : text
         try {
-          await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools", value: TOOL_RULES } as any)
+          await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools",
+            value: contract ? `${TOOL_RULES}\n\n${contract}` : TOOL_RULES } as any)
         } catch { /* the prompt still runs */ }
         try {
-          await client.session.prompt({ sessionID, text, ...(model ? { model } : {}), ...(attached.files.length ? { files: attached.files } : {}) } as any)
+          await client.session.prompt({ sessionID, text: promptText, ...(model ? { model } : {}), ...(attached.files.length ? { files: attached.files } : {}) } as any)
           await pump
         } finally {
           // One assistant row per turn, assembled from the stream. A failed turn keeps the user row and any text received.

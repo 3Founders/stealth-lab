@@ -119,6 +119,30 @@ export async function planDelegation(task: string, models: Models, timeoutMs = 3
   return planFromRoute(task, models, await routeTask(task, timeoutMs))
 }
 
+/**
+ * What the turn must do with the routed Way: the Way's tool does the work, and the agent must not do the same work
+ * another way. Empty when the router resolved no Way (then it is an ordinary coding turn).
+ *
+ * Why this is in the prompt and not only in the panel: the plugin's tool note is advisory, and a model that finds a
+ * convenient HTTP endpoint will scan 15 lockfiles itself while the panel says the OSV Way ran (2026-11-13). The turn
+ * gets the contract in the user message, so "do not run both" is part of the request it answers.
+ */
+export function contractOf(plan: Pick<Delegation, "goal" | "way" | "tool"> | null | undefined): string {
+  if (!plan?.way) return ""
+  const head = `kell delegation for this turn: Goal "${plan.goal?.name || "none"}" -> Way "${plan.way.name}" [${plan.way.approval}]`
+  if (!plan.tool) return `${head}. No tool is bound to this Way: do the work yourself in this folder.`
+  // `use_tool` names an outside server by its registry name (the Way's name for a tool_goals Way), not by URL.
+  const server = plan.tool.server && !/^https?:/i.test(plan.tool.server)
+    ? plan.tool.server
+    : (plan.way.name || plan.tool.server)
+  return [
+    `${head} -> tool "${plan.tool.name}"${plan.tool.server ? ` (${plan.tool.server})` : ""}.`,
+    `That tool does this task's work: call kell_discover_tools(server="${server}") for its arguments if you do not have them, then kell_use_tool(server="${server}", name="${plan.tool.name}", arguments={...}).`,
+    "Do not re-implement or pre-empt the tool's work with shell commands, scripts, direct HTTP calls or your own scan: never run both.",
+    "If the tool fails or cannot do the job, say in one line what it could not do, then stop and ask the person. Never claim a check you did not run.",
+  ].join("\n")
+}
+
 /** The scoped one-shot: the brief and the question, no tools, no files. */
 export async function askDelegated(plan: Delegation, question: string): Promise<{ answer: string; model: string | null }> {
   const { engineStatus, clientFor } = await import("./engine")

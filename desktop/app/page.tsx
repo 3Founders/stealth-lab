@@ -1074,7 +1074,7 @@ export default function Home() {
     setCards([]); setCardsNote(""); loadTools(sent || outgoing.map((f) => f.name).join(" "))
     const plan = await planP
     if (plan) { setDelegateAnswer(""); setDelegateErr("") }
-    const payload = { sessionID, directory, text: sent, model: plan?.model ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
+    const payload = { sessionID, directory, text: sent, model: plan?.model ?? undefined, plan: plan ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })
     if (!r.ok || !r.body) {
       const err = await r.text()

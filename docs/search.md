@@ -120,12 +120,19 @@ page.tsx  --POST /api/delegate {text, models}-->  lib/delegate.ts
                                                      |-- lib/mcp.ts: initialize + tools/call `find_ways`
                                                      |-- chooseModel: security or unverified Way -> strong rung
                                                      `-- brief: task + Goal + Way + one tool (no files, no history)
-page.tsx  --POST /api/prompt {..., model}-------->  app/api/prompt/route.ts -> session.prompt({model})
+page.tsx  --POST /api/prompt {..., model, plan}--->  app/api/prompt/route.ts -> session.prompt({model})
 right panel "Delegated"  <-- goal | way | tool | model | why | brief
 panel "Ask"  --POST /api/delegate/ask------------>  generate.text({prompt: brief + question, model})
 ```
 
 - The turn runs on the routed model, so the chat model is the delegated model.
+- **The Way's tool does the work, and the turn may not duplicate it.** When the plan has a Way bound to a tool,
+  `app/api/prompt` puts a contract into the request and the session instruction: call
+  `kell_discover_tools(server="<Way>")` then `kell_use_tool(server="<Way>", name="<tool>", ...)`; do not re-implement
+  it with shell, scripts or direct HTTP; if the tool cannot do the job, say so and stop. Without the contract the model
+  will find a convenient endpoint and do the scan itself while the panel says the Way ran (observed 2026-11-13: the OSV
+  Way was chosen and the turn scanned 15 lockfiles against OSV's batch API instead). The same rule is in
+  `lib/tools.ts` for subagents and `kell_delegate`: a handed-off sub-task is not redone in parallel.
 - **Status updates are a stream.** `POST /api/delegate` (with `Accept: text/event-stream`) reports `ladder` ->
   `routing` -> `goal` -> `model` -> `plan`; the panel and the chat show each line as it arrives. The scoped call
   reports `sent` -> `waiting` every 2 s -> `answer`. JSON is still available for scripts.
