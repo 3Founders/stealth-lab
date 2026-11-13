@@ -23,32 +23,47 @@ async def pool():
         if not await p.fetchval("SELECT to_regclass('goal_submissions') IS NOT NULL"):
             pytest.skip("db/204 is not applied")
         yield p
+        # the goals these tests made would be candidates for every other test's goal search
+        await p.execute("UPDATE goals SET t_invalid = now() WHERE created_from = 'goal_submission' "
+                        "AND owner_id LIKE 'test-%' AND t_invalid IS NULL")
+        await p.execute("UPDATE goal_search_index SET status = 'merged' WHERE goal_id IN (SELECT id FROM goals "
+                        "WHERE created_from = 'goal_submission' AND owner_id LIKE 'test-%')")
     finally:
         await p.close()
 
 
 @pytest.fixture
 def fakes(monkeypatch):
-    """The reviewer rejects any step whose prompt says VAGUE; the goal judge matches a candidate whose name shares the
-    submitted goal's first word when that word starts with "matchme"; the tool-argument writer picks the first tool;
-    the run model echoes; no email leaves; no embedder or reranker is called."""
+    """The reviewer rejects any step whose prompt says VAGUE; JEV (faked) answers by the submitted goal's first word:
+    "matchme..." is the same as a candidate starting with that word (0.9), "maybeme..." is the same only when asked
+    with the description (one vote of three: a possible duplicate), "narrowme..." narrower (0.8), anything else
+    distinct; the tool-argument writer picks the first tool; the run model
+    echoes; no email leaves; no embedder is called."""
     sent: list[dict] = []
     calls: list[str] = []
     monkeypatch.setenv("SUBMISSION_GOAL_VECTORS", "off")
-    monkeypatch.setenv("TOOL_RERANK_MODEL", "off")
+
+    class FakeJEV:
+        async def judge_identity(self, kind, text, candidate):
+            calls.append("match")
+            word = text.split()[0].rstrip(":")
+            prefix = next((p for p in ("matchme", "maybeme", "narrowme") if word.startswith(p)), None)
+            hit = prefix and candidate.split()[0].rstrip(":") == word.replace(prefix, "matchme", 1)
+            maybe = ("same", 0.6) if ":" in text else ("related", 0.6)
+            rel, conf = {"matchme": ("same", 0.9), "maybeme": maybe,
+                         "narrowme": ("specializes", 0.8)}.get(prefix, ("distinct", 0.9)) if hit else ("distinct", 0.9)
+            return type("R", (), {"ok": True, "value": {"relation": rel, "confidence": conf}, "provider": "jev",
+                                  "model": "fake", "reason": None})()
+
+    from app.submissions import matching
+
+    monkeypatch.setattr(matching, "_JUDGE", FakeJEV())
 
     async def fake_complete(messages, *, json_mode=False, max_tokens=1500, client=None):
         import json
         import re
 
         system, body = messages[0]["content"], messages[-1]["content"]
-        if system.startswith("You decide whether a goal"):
-            data = json.loads(re.search(r"\{.*\}", body, re.S).group(0))
-            calls.append("match")
-            word = data["submitted_goal"]["name"].split()[0]
-            hit = next((c["n"] for c in data["candidates"] if word.startswith("matchme")
-                        and c["name"].split()[0] == word), None)
-            return json.dumps({"match": hit, "reason": "fake"}), "fake-judge"
         if system.startswith("You call one tool"):
             calls.append("tool-args")
             tools = json.loads(re.search(r"\[.*\]", body, re.S).group(0))
@@ -228,10 +243,50 @@ async def test_a_goal_judged_the_same_is_reused_not_duplicated(pool, fakes):
     second = await api.submit(pool, owner, {"goal": f"matchme{tag} {tag[::-1]} quickly",
                                             "steps": [{"prompt": "Find the newest papers"}]})
     assert second["goal_id"] == first["goal_id"]
-    assert second["goal_match"]["decision"].startswith("judged_same")
+    assert second["goal_match"]["decision"] == "same:jev:fake"
+    # approved under another name: that name now finds the goal too
+    aliases = await pool.fetchval("SELECT aliases FROM goals WHERE id = $1::uuid", first["goal_id"])
+    assert f"matchme{tag} {tag[::-1]} quickly" in aliases
     other = await api.submit(pool, owner, {"goal": f"unrelated {tag} cooking", "steps": [{"prompt": "Plan a meal"}]})
-    assert other["goal_id"] != first["goal_id"] and other["goal_match"]["decision"].startswith(("judged_new",
+    assert other["goal_id"] != first["goal_id"] and other["goal_match"]["decision"].startswith(("new:",
                                                                                                 "no_candidates"))
+
+
+@pytest.mark.asyncio
+async def test_a_maybe_duplicate_is_kept_new_and_a_narrower_goal_is_linked(pool, fakes):
+    import random
+    import string
+
+    tag = "".join(random.choice(string.ascii_lowercase) for _ in range(8))
+    owner = f"test-{uuid.uuid4().hex[:8]}"
+    base = await api.submit(pool, owner, {"goal": f"matchme{tag} {tag[::-1]}", "steps": [{"prompt": "Find the papers"}]})
+    maybe = await api.submit(pool, owner, {"goal": f"maybeme{tag} {tag[::-1]}", "description": "the same, maybe", "steps": [{"prompt": "Find them"}]})
+    assert maybe["goal_id"] != base["goal_id"]
+    assert maybe["goal_match"]["decision"] == "possible_duplicate:jev:fake"
+    assert maybe["goal_match"]["possible_duplicate"]["id"] == base["goal_id"]
+    narrow = await api.submit(pool, owner, {"goal": f"narrowme{tag} {tag[::-1]}", "steps": [{"prompt": "Find one"}]})
+    assert narrow["goal_id"] != base["goal_id"] and narrow["goal_match"]["relations"][0]["relation"] == "specializes"
+    assert await pool.fetchval(          # approved: placement links it as a special case, the edge search walks
+        "SELECT count(*) FROM goal_relations WHERE specific_goal_id = $1::uuid AND abstract_goal_id = $2::uuid "
+        "AND relation_type = 'SPECIALIZES' AND status = 'accepted'", narrow["goal_id"], base["goal_id"]) == 1
+    assert await pool.fetchval(          # the possible duplicate is never linked
+        "SELECT count(*) FROM goal_relations WHERE $1::uuid IN (specific_goal_id, abstract_goal_id) "
+        "AND status = 'accepted'", maybe["goal_id"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_private_unapproved_goal_is_never_a_match(pool, fakes):
+    import random
+    import string
+
+    tag = "".join(random.choice(string.ascii_lowercase) for _ in range(8))
+    hidden = await api.submit(pool, f"test-{uuid.uuid4().hex[:8]}",
+                              {"goal": f"matchme{tag} {tag[::-1]}", "steps": [{"prompt": "VAGUE do it"}]})
+    assert hidden["status"] == "needs_changes"                   # its goal stays private
+    mine = await api.submit(pool, f"test-{uuid.uuid4().hex[:8]}",
+                            {"goal": f"matchme{tag} {tag[::-1]} again", "steps": [{"prompt": "Find the papers"}]})
+    assert mine["goal_id"] != hidden["goal_id"]
+    assert hidden["goal_name"] not in str(mine["goal_match"])
 
 
 @pytest.mark.asyncio

@@ -454,6 +454,7 @@ async def generate_goal_candidates(
     embedding: Optional[list[float]] = None, embedding_model: Optional[str] = None,
     fts_k: int = DEFAULT_FTS_K, vector_k: int = DEFAULT_VECTOR_K, top_n: int = DEFAULT_JUDGE_TOP_N,
     exclude_id: Optional[str] = None, created_within: Optional[tuple[Any, float]] = None,
+    visibility: Optional[str] = None, owner_id: Optional[str] = None,
 ) -> tuple[list[Candidate], int, int]:
     """FTS + ANN candidates over CANONICAL ``goals`` (never the projection: a
     goal committed a millisecond ago by a concurrent worker must be visible),
@@ -461,7 +462,9 @@ async def generate_goal_candidates(
 
     Uses migration 83's ``idx_goals_fts`` expression and migration 84's HNSW
     index on ``goals.embedding``. The vector leg only compares vectors from the
-    SAME embedding model (never mixes vector spaces)."""
+    SAME embedding model (never mixes vector spaces). ``visibility`` /
+    ``owner_id`` keep the candidates to goals of that visibility (and owner):
+    a public goal is never judged against someone's private one."""
     scope_sql, extra = _scope_clause(scope_type, 1)
     params: list[Any] = list(extra)
     if scope_type != "global":
@@ -474,6 +477,12 @@ async def generate_goal_candidates(
         params.extend([created_within[0], float(created_within[1])])
         base += (f" AND t_created BETWEEN ${len(params) - 1}::timestamptz - make_interval(mins => ${len(params)}) "
                  f"AND ${len(params) - 1}::timestamptz + make_interval(mins => ${len(params)})")
+    if visibility:
+        params.append(visibility)
+        base += f" AND visibility = ${len(params)}::visibility_level"
+    if owner_id:
+        params.append(owner_id)
+        base += f" AND owner_id = ${len(params)}"
 
     by_id: dict[str, Candidate] = {}
     fts_ids: list[str] = []
@@ -532,6 +541,12 @@ async def generate_goal_candidates(
         if exclude_id:
             rparams.append(exclude_id)
             rbase += f" AND goal_id <> ${len(rparams)}::uuid"
+        if visibility:
+            rparams.append(visibility)
+            rbase += f" AND visibility = ${len(rparams)}::visibility_level"
+        if owner_id:
+            rparams.append(owner_id)
+            rbase += f" AND owner_id = ${len(rparams)}"
         if q:
             n = len(rparams) + 1
             for rank, r in enumerate(await _goal_rows(
@@ -1255,7 +1270,7 @@ async def reconcile_goals(
                     spool = pool if sid == HOME_SHARD else await pools_for(pool).get(sid)
                     for r in await spool.fetch(
                             "SELECT id::text AS id, canonical_name, description, scope_type, scope_entity_id, t_created, "
-                            "embedding::text AS emb, embedding_model_id FROM goals "
+                            "embedding::text AS emb, embedding_model_id, visibility::text AS visibility, owner_id FROM goals "
                             "WHERE reconciled_at IS NULL AND status <> 'merged' AND t_invalid IS NULL ORDER BY id LIMIT $1", batch):
                         sources.append((r, spool))
                 except Exception:  # noqa: BLE001 -- unreachable shard: its goals stay unreconciled until it is back
@@ -1270,7 +1285,11 @@ async def reconcile_goals(
                 cands, n_fts, n_vec = await generate_goal_candidates(
                     pool, text, scope_type=g["scope_type"] or "global", scope_entity_id=g["scope_entity_id"], embedding=emb,
                     embedding_model=g["embedding_model_id"], exclude_id=g["id"],
-                    created_within=(g["t_created"], window_minutes) if window_minutes else None)
+                    created_within=(g["t_created"], window_minutes) if window_minutes else None,
+                    # Never merge across visibility or owners: a public goal into someone's private (unapproved)
+                    # one would vanish from search, and a private one into a public one would leak it.
+                    visibility=g["visibility"],
+                    owner_id=(g["owner_id"] or "-") if g["visibility"] != "public" else None)
                 unavailable = False
                 if cands:
                     res = await judge.judge_identity_batch(

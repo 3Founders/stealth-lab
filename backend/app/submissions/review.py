@@ -257,18 +257,34 @@ async def _publish_step(pool: Any, step: dict, status: str) -> None:
         step["procedure_row_id"], status, step.get("reviewer") or "goal_submission")
     if step.get("created_goal"):
         await _publish_goal(pool, step["goal_id"])
+    elif step.get("title"):
+        await _add_alias(pool, step["goal_id"], step["title"])
 
 
 async def _publish_goal(pool: Any, goal_id: str) -> None:
     """The goal goes public, and its search projection is refreshed (the server's background drain applies it), so
-    find_ways and the goal matcher find it."""
+    find_ways and the goal matcher find it. Then it is placed in the goal hierarchy (matching.place_goal: JEV decides
+    which goals it is a special case or an abstraction of), and put back in the reconcile sweep, now among public
+    goals."""
     from app.services import search_projection
+    from app.submissions.matching import place_goal
 
-    await pool.execute("UPDATE goals SET visibility = 'public', status = 'active' WHERE id = $1::uuid "
-                       "AND visibility <> 'public'", goal_id)
+    await pool.execute("UPDATE goals SET visibility = 'public', status = 'active', reconciled_at = NULL "
+                       "WHERE id = $1::uuid AND visibility <> 'public'", goal_id)
     await pool.execute("UPDATE goal_search_index SET visibility = 'public', status = 'active' WHERE goal_id = $1::uuid",
                        goal_id)
     await search_projection.enqueue(pool, "goal", goal_id)
+    placed = await place_goal(pool, goal_id)
+    log.info("goal %s placed: %s", goal_id, placed)
+
+
+async def _add_alias(pool: Any, goal_id: str, name: str) -> None:
+    """A step matched to an existing goal under another name: once approved, that name finds the goal too."""
+    await pool.execute(
+        "UPDATE goals SET aliases = array_append(aliases, $2) WHERE id = $1::uuid AND visibility = 'public' "
+        "AND normalize_goal_name(canonical_name) <> normalize_goal_name($2) "
+        "AND NOT EXISTS (SELECT 1 FROM unnest(aliases) a WHERE normalize_goal_name(a) = normalize_goal_name($2))",
+        goal_id, name)
 
 
 async def _record(pool: Any, step_id: int, status: str, reason: str, checks: dict, reviewer: str) -> None:
@@ -313,6 +329,8 @@ async def _write_parent(pool: Any, sub: dict, steps: list[dict]) -> Optional[str
                        "approved_at = now() WHERE id = $1::uuid", out["id"])
     if sub.get("created_goal"):
         await _publish_goal(pool, sub["goal_id"])
+    else:
+        await _add_alias(pool, sub["goal_id"], sub["goal_name"])
     return str(out["id"])
 
 

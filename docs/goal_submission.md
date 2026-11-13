@@ -64,19 +64,67 @@ fix just that step.
 
 ## Matching a goal to one kell already has (`app/submissions/matching.py`)
 
-Retrieve → rerank → judge, for the submission's goal and for every step's goal:
+Search finds the candidates, **JEV decides** (owner, 2026-11-13: "just ask JEV if it is duplicate or not"), for the
+submission's goal and for every step's goal:
 
 1. **exact**: the same normalized name among public goals → that goal, no model call.
-2. **retrieve**: hybrid search over public goals (`search_goals`: full text + the goal vectors, RRF-fused), the query
-   embedded by the embedder that wrote the goal vectors.
-3. **rerank**: DeepInfra's Qwen3-Reranker cross-encoder; the top 6 go on.
-4. **judge**: DeepSeek V4.1 Flash decides whether one candidate is the **same goal** (same outcome, so a Way for one is
-   a Way for the other) or none. Narrower, broader or vague candidates are not the same; when unsure it answers none
-   (a duplicate can be merged later; a wrong merge sends people to a Way that does something else).
+2. **candidates**: kell's goal identity search (`identity_resolution.generate_goal_candidates`: full text + the goal
+   vectors, RRF-fused) over **public goals only** (`visibility="public"`), top 6.
+3. **JEV**, three typed questions per candidate, in parallel: *is A the same goal as B, narrower, broader, related or
+   different?* — name + description vs name + description; name vs name; and the reverse (candidate vs submitted).
+4. **vote**: ≥ 2 of the 3 answers "same" at confidence ≥ 0.5 → **duplicate**, that goal is reused. Exactly one
+   "same" → **possible duplicate**: a new goal, the candidate recorded in `goal_match.possible_duplicate` so it can be
+   merged later. ≥ 2 answers "narrower"/"broader" → recorded in `goal_match.relations` (shown to the submitter; the
+   links themselves come from placement, below).
 
-Each stage that cannot run is skipped and recorded, never guessed; the decision, the candidates the judge saw and its
-reason are stored in `goal_match`. Measured on scratch: "Machine learning research" → "ML research" (same);
-"Summarise one paper's abstract" → new goal; "Summarise the papers I collected" → "Summarise the collected papers".
+Why a vote and not one answer: JEV's confidence for the same pair drifts between calls (one pair: 0.98, an hour
+later 0.54–0.71), and descriptions move it, while its relation label is steady — across every test it never called
+two different goals "same". Asking several pairs in one batched call also shifts the answers, so each question is its
+own call (~200 ms; a whole goal ≈ 1 s).
+
+Measured 2026-11-13 on 47 labelled pairs, run twice: **18/20 duplicates caught, 0/27 different goals merged**, the
+same both runs. Live on scratch with real embeddings: 8/9 right; the miss ("Find security vulnerabilities in npm
+dependencies" vs "Audit npm packages for known CVEs") JEV calls broader every time.
+
+- **JEV only.** If it cannot answer (down, not configured, no `identity` in `JEV_CAPABILITIES`), the goal is new and
+  the decision is `judge_unavailable`. A duplicate can be merged later; a wrong merge sends people to a Way that does
+  something else. Production has `JEV_CAPABILITIES=applicability,identity,claim_relation,triage` (checked 2026-11-13).
+- **Nothing before approval.** A match never touches the matched goal; the submitted name becomes its alias only when
+  the step (or the whole Way) is approved. A new goal's links are proposed at approval, and the goal re-enters the
+  reconcile sweep then, among public goals.
+- **No cross-visibility merges.** The reconcile sweep (`reconcile_goals`) now only compares a goal with goals of the
+  same visibility (and, for private ones, the same owner): before, a newer public goal could be merged *into* someone's
+  private one and vanish from search.
+
+Every decision, the candidates and JEV's reason are stored in `goal_match`.
+
+### Hierarchy: special cases and abstractions (`matching.place_goal`)
+
+Search walks only **accepted** `SPECIALIZES` edges (`docs/search.md` §2, §4), so dedup alone does not make search
+better; the hierarchy does. When a goal a submission **created** is approved (it goes public), it is placed at once:
+
+1. kell's existing placement (`ingestion_jobs.handle_goal_abstraction_placement`) gathers up to 20 goals: search hits
+   for it plus their accepted parents and children, so a new goal can land under a parent the words alone miss.
+2. Its judge is `matching.VotingJEV`: the same three-way JEV vote per candidate. "Narrower" from ≥ 2 answers → the new
+   goal is a special case of that goal; "broader" → it is an abstraction of it.
+3. Mean confidence ≥ 0.7 → an **accepted** edge (search walks it on the next query). Below that, placement asks its
+   second model; with no second answer the edge stays `proposed` (stored, not walked). Placement's own rules still
+   apply: no cycles, no edge between a public and a private goal, edges implied by another edge are pruned, and a goal
+   with no parent is queued for the abstraction audit.
+
+A goal matched as a duplicate is not placed (it already is). A step is a *part* of the submission's goal, not a
+special case of it: nothing links them automatically; a step goal gets an edge to any goal (that one included) only
+when JEV judges it a special case or an abstraction.
+
+Placement runs in the server process (production runs no ingestion worker, so a queued placement job would wait
+forever), after projecting the goal; it is best-effort with a 90 s cap, and a failure is logged, never blocks approval.
+
+Measured 2026-11-13: 35 labelled pairs, links from ≥ 2 of 3 agreeing answers at ≥ 0.7: **21/22 right, 0 wrong**;
+duplicates and merely related pairs never became links. Live on scratch: "Book a flight to Tokyo" → under "Book a
+flight"; "Edit an image" → above "Remove the background from a photo"; "Deploy a Next.js app to Vercel" → under
+"Deploy a web app"; "Transcribe a podcast episode" → under "Transcribe audio"; "Book a hotel" → no link. 1–16 s per
+goal (the first JEV call of a quiet spell is the slow one). Locally the second model (Vertex) refused (billing off on
+that Google project), so below-threshold edges stayed proposed.
 
 ## Review and approval
 
@@ -174,5 +222,7 @@ submitted through it, and their moderation routes (`/v1/economy/procedure-submis
 | GS-7 | tool and script steps run by themselves (gateway; Modal sandbox) | Anuj's agent | done (scripts need Modal keys on the server) |
 | GS-8 | router label: show "AI approved" for `ai_approved` Ways in `goal_router.py` / route view | — | done |
 | GS-9 | website / desktop UI on the HTTP API | owner decides the interface | do not start yet |
-| GS-10 | goal matching: retrieve → rerank → judge | Anuj's agent | done |
+| GS-10 | goal matching: retrieve → rerank → judge | Anuj's agent | replaced by GS-12 |
 | GS-11 | retire `submit_way` | Anuj's agent | done |
+| GS-12 | goal matching by JEV vote (replaces rerank + DeepSeek judge); no cross-visibility goal merges | Anuj's agent | done, not deployed |
+| GS-13 | hierarchy: an approved new goal is placed by JEV vote (special case / abstraction → accepted SPECIALIZES edges) | Anuj's agent | done, not deployed |

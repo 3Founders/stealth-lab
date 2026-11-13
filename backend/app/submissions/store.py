@@ -83,8 +83,11 @@ async def resolve_goal(pool: Any, name: str, *, owner_id: str, description: str 
 
 def _match_record(match: dict) -> dict:
     goal = match.get("goal") or {}
-    return {"decision": match["decision"], "goal": goal.get("canonical_name"), "reason": match.get("reason", ""),
-            "candidates": match.get("candidates", [])[:6], "stages": match.get("stages", [])}
+    out = {"decision": match["decision"], "goal": goal.get("canonical_name"), "reason": match.get("reason", ""),
+           "candidates": match.get("candidates", [])[:8], "relations": match.get("relations", [])}
+    if match.get("possible_duplicate"):
+        out["possible_duplicate"] = match["possible_duplicate"]
+    return out
 
 
 async def write_step_way(pool: Any, submission_id: str, step: Step, *, owner_id: str) -> dict:
