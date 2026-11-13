@@ -252,6 +252,15 @@
 .dk-delegate-ask input:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
 .dk-delegate-a { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); padding: 8px 10px; font-size: 12.5px; }
 .dk-delegate-a > :first-child { margin-top: 0; } .dk-delegate-a > :last-child { margin-bottom: 0; }
+/* What the delegated worker is doing, in its own words: the route's status stream (ladder -> routing -> goal -> model)
+   and the scoped call's heartbeat. A pulsing dot is the only motion; it is opacity, per docs/ios_animation.md. */
+.dk-delegate-status { display: flex; align-items: center; gap: 6px; margin: 2px 6px 4px; font-size: 12px; color: var(--grey); }
+.dk-delegate-status .dg-pulse { flex: none; }
+/* The same updates in the chat column, so closing the right panel does not hide what the worker is doing. */
+.dk-delegate-live { display: flex; align-items: center; gap: 6px; margin: 0 4px 6px; font-size: 12px; color: var(--grey);
+  animation: dk-delegate-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
+.dk-delegate-live .dg-pulse { flex: none; }
+@media (prefers-reduced-motion: reduce) { .dk-delegate-live { animation: none !important; } }
 
 /* The chip in the chat: the model this turn runs on; it opens the panel. Same press recipe as the other icon buttons.
    Its left edge lines up with the composer's (18 px), not the window edge. */

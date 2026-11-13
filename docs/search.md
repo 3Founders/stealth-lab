@@ -126,6 +126,9 @@ panel "Ask"  --POST /api/delegate/ask------------>  generate.text({prompt: brief
 ```
 
 - The turn runs on the routed model, so the chat model is the delegated model.
+- **Status updates are a stream.** `POST /api/delegate` (with `Accept: text/event-stream`) reports `ladder` ->
+  `routing` -> `goal` -> `model` -> `plan`; the panel and the chat show each line as it arrives. The scoped call
+  reports `sent` -> `waiting` every 2 s -> `answer`. JSON is still available for scripts.
 - The message waits at most **2.2 s** for the plan; a late plan still fills the panel. The route caches plans for
   **5 minutes** (`POST /api/delegate`), so a repeat is instant (measured 0.12 s cached vs 2.5-23 s cold).
 - The scoped side call sees only the brief: no project path, no files, no shell, no chat history.

@@ -599,6 +599,7 @@ export default function Home() {
   const [delegateAnswer, setDelegateAnswer] = useState("")
   const [delegateErr, setDelegateErr] = useState("")
   const [delegateNote, setDelegateNote] = useState("")
+  const [delegateStatus, setDelegateStatus] = useState("")
   const [delegateBusy, setDelegateBusy] = useState(false)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [consoleNote, setConsoleNote] = useState("")
@@ -1004,23 +1005,49 @@ export default function Home() {
     return () => document.removeEventListener("keydown", key)
   }, [btw])
 
-  // Route the task and pick the model for this turn. The router resolves a Goal and a Way on kell's server, which can take
-  // a few seconds cold, so a message waits at most 2.2 s for it: the turn then runs on the engine's own model, and the plan
-  // still lands in the panel when it arrives (the route caches it, so a repeat is instant).
+  // Route the task and pick the model for this turn. The route streams its progress, so the panel shows "asking the
+  // router", then the Goal/Way, then the model, instead of going silent. A message waits at most 2.2 s for the plan; a
+  // late plan still fills the panel (the route caches it, so a repeat is instant).
   const planFor = async (text: string): Promise<Delegation | null> => {
     const seq = ++planSeq.current
-    const p = fetch("/api/delegate", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, models: settings?.models || {}, timeoutMs: 20_000 }),
-    }).then((r) => r.json()).then((j) => {
-      // A plan that lands after a newer prompt was sent only fills the panel if it is still the newest.
-      if (seq === planSeq.current) {
-        if (j && !j.error) { planRef.current = j as Delegation; setDelegation(j as Delegation); setDelegateNote("") }
-        else if (j?.error) setDelegateNote(String(j.error))
-      }
-      return j && !j.error ? (j as Delegation) : null
-    }).catch(() => null)
-    return await Promise.race([p, new Promise<null>((ok) => setTimeout(() => ok(null), 2200))])
+    let settle: (p: Delegation | null) => void = () => undefined
+    const planP = new Promise<Delegation | null>((ok) => { settle = ok })
+    void (async () => {
+      try {
+        const r = await fetch("/api/delegate", {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "text/event-stream" },
+          body: JSON.stringify({ text, models: settings?.models || {}, timeoutMs: 20_000 }),
+        })
+        if (!r.ok || !r.body) { settle(null); return }
+        const reader = r.body.getReader()
+        const dec = new TextDecoder()
+        let buf = "", plan: Delegation | null = null
+        for (;;) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buf += dec.decode(value, { stream: true })
+          const parts = buf.split("\n\n")
+          buf = parts.pop() || ""
+          for (const part of parts) {
+            if (!part.startsWith("data: ")) continue
+            let ev: any
+            try { ev = JSON.parse(part.slice(6)) } catch { continue }
+            if (ev.type === "status" && seq === planSeq.current) setDelegateStatus(String(ev.text || ""))
+            else if (ev.type === "plan" && ev.plan) {
+              plan = ev.plan as Delegation
+              if (seq === planSeq.current) { planRef.current = plan; setDelegation(plan); setDelegateNote("") }
+              settle(plan)
+            } else if (ev.type === "error" && seq === planSeq.current) {
+              setDelegateNote(String(ev.error || "the router did not answer"))
+            }
+          }
+        }
+        settle(plan)
+      } catch { settle(null) }
+      finally { if (seq === planSeq.current) setDelegateStatus("") }
+    })()
+    return await Promise.race([planP, new Promise<null>((ok) => setTimeout(() => ok(null), 2200))])
   }
 
   const send = async (again?: string, filesOverride?: Attachment[], asGoal = false) => {
@@ -1137,22 +1164,44 @@ export default function Home() {
   }
 
   // Ask the delegated model directly, with the scoped brief only (app/api/delegate/ask): no files, no shell, no history.
+  // The answer streams with status updates ("sent the brief", "working… 4s"), so the panel never goes silent.
   const askDelegate = async () => {
     const plan = delegation || planRef.current
     const question = delegateAsk.trim()
     if (!plan || !question || delegateBusy) return
-    setDelegateBusy(true); setDelegateErr("")
+    setDelegateBusy(true); setDelegateErr(""); setDelegateAnswer("")
     try {
       const r = await fetch("/api/delegate/ask", {
-        method: "POST", headers: { "content-type": "application/json" },
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "text/event-stream" },
         body: JSON.stringify({ plan, question }),
       })
-      const j = await r.json()
-      if (!r.ok || j.error) throw new Error(j.error || `the delegated model answered ${r.status}`)
-      setDelegateAnswer(String(j.answer || ""))
+      if (!r.ok || !r.body) {
+        const j = await r.json().catch(() => ({}))
+        throw new Error(j?.error || `the delegated model answered ${r.status}`)
+      }
+      const reader = r.body.getReader()
+      const dec = new TextDecoder()
+      let buf = "", answer = ""
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split("\n\n")
+        buf = parts.pop() || ""
+        for (const part of parts) {
+          if (!part.startsWith("data: ")) continue
+          let ev: any
+          try { ev = JSON.parse(part.slice(6)) } catch { continue }
+          if (ev.type === "status") setDelegateStatus(String(ev.text || ""))
+          else if (ev.type === "answer") { answer = String(ev.answer || ""); setDelegateAnswer(answer) }
+          else if (ev.type === "error") throw new Error(String(ev.error || "the delegated model failed"))
+        }
+      }
+      if (!answer) throw new Error("the delegated model returned no answer")
       setDelegateAsk("")
     } catch (e: any) { setDelegateErr(String(e?.message || e)) }
-    finally { setDelegateBusy(false) }
+    finally { setDelegateBusy(false); setDelegateStatus("") }
   }
 
   // /goal: one condition per session. The command sets, checks, pauses, resumes or clears it; after every turn the
@@ -2223,6 +2272,13 @@ export default function Home() {
               ))}
             </div>
           )}
+          {delegateStatus && (
+            // The delegated worker reporting in, in the chat: visible even when the right panel is closed.
+            <div className="dk-delegate-live" role="status" aria-live="polite">
+              <span className="dg-pulse" aria-hidden="true" />
+              {delegateStatus}
+            </div>
+          )}
           {delegation?.model && (
             // The routed model for this turn, in the chat: clicking brings the delegation panel back in the right sidebar.
             <button type="button" className="dk-delegate-chip" onClick={() => showSidebar("right")}
@@ -2365,6 +2421,12 @@ export default function Home() {
                 </span>
               )}
             </summary>
+            {(delegateStatus || (busy && delegation?.model)) && (
+              <p className="dk-delegate-status" role="status" aria-live="polite">
+                <span className="dg-pulse" aria-hidden="true" />
+                {delegateStatus || `Working with ${delegation?.model?.id}…`}
+              </p>
+            )}
             {!delegation && <p className="dk-note">Send a task: kell routes it to a Goal and a Way, then runs the turn on the model that procedure needs.</p>}
             {!delegation && delegateNote && <p className="dk-err">{delegateNote}</p>}
             {delegation && (

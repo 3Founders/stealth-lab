@@ -79,20 +79,32 @@ function toolOf(way: any): { name: string; server: string } | null {
   return null
 }
 
-/** Route the task, pick the unit, and write the brief. Throws only when kell's server cannot be reached. */
-export async function planDelegation(task: string, models: Models, timeoutMs = 3500): Promise<Delegation> {
+/** What the router resolved, before a model is picked. Split out so the route can report it as a status update. */
+export type Routed = { goal: Delegation["goal"]; way: Delegation["way"]; tool: Delegation["tool"] }
+
+/** Route the task with `find_ways` and read the Goal, the chosen Way and its bound tool. */
+export async function routeTask(task: string, timeoutMs = 20_000): Promise<Routed> {
   const text = task.trim().slice(0, 4000)
   const found = await callMcpTool("find_ways", { query: text }, timeoutMs)
   const goal = found?.goal && typeof found.goal === "object" ? found.goal : null
   const way = Array.isArray(found?.procedures) ? found.procedures[0] : null
-  const tool = toolOf(way)
   const approval = String(way?.verification_state || way?.approval_status || "candidate")
-  const picked = chooseModel(text, models, way ? { approval } : null)
-  const plan: Delegation = {
-    task: text,
+  return {
     goal: goal ? { id: String(goal.goal_id || ""), name: String(goal.name || goal.canonical_name || "") } : null,
     way: way ? { id: String(way.procedure_id || way.version_id || ""), name: String(way.name || ""), approval } : null,
-    tool,
+    tool: toolOf(way),
+  }
+}
+
+/** Turn a routed answer into the plan: the model rung, the reason, and the least-privilege brief. */
+export function planFromRoute(task: string, models: Models, routed: Routed): Delegation {
+  const text = task.trim().slice(0, 4000)
+  const picked = chooseModel(text, models, routed.way ? { approval: routed.way.approval } : null)
+  const plan: Delegation = {
+    task: text,
+    goal: routed.goal,
+    way: routed.way,
+    tool: routed.tool,
     model: picked.model,
     rung: picked.rung,
     why: picked.why,
@@ -100,6 +112,11 @@ export async function planDelegation(task: string, models: Models, timeoutMs = 3
   }
   plan.brief = briefOf(text, plan)
   return plan
+}
+
+/** Route the task, pick the unit, and write the brief. Throws only when kell's server cannot be reached. */
+export async function planDelegation(task: string, models: Models, timeoutMs = 3500): Promise<Delegation> {
+  return planFromRoute(task, models, await routeTask(task, timeoutMs))
 }
 
 /** The scoped one-shot: the brief and the question, no tools, no files. */
