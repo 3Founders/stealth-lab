@@ -155,6 +155,13 @@ panel "Ask"  --POST /api/delegate/ask------------>  generate.text({prompt: brief
 ## 8. How to check it
 
 ```powershell
+# The whole loop in one script: add a Goal, prove the catalog ranks it, stream the delegation plan,
+# and optionally ask the delegated model (needs the desktop server and its engine):
+cd backend
+python scripts/test_delegation.py --goal "Send a Slack message" --rationale "the team lives in Slack" `
+  --objective "the message is posted" --task "find vulnerabilities in my dependencies" `
+  --ask "what did you check?" --url http://127.0.0.1:3400
+
 # The judged path, with the MCP sign-in the desktop already has (no token printed):
 #   initialize -> notifications/initialized -> tools/call find_ways
 # desktop/lib/mcp.ts is the reusable implementation of those three steps.
