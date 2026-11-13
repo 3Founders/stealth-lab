@@ -13,12 +13,21 @@ const CACHE_TTL_MS = 5 * 60_000
 const CACHE_MAX = 64
 const cache = new Map<string, { at: number; plan: unknown }>()
 
+/** The app's model ladder: what the page sent, else this server's own Settings answer (the gateway list can arrive late). */
+async function ladder(req: Request, given: any): Promise<Record<string, string | null>> {
+  if (given?.strong || given?.cheap) return given
+  try {
+    const r = await fetch(new URL("/api/settings", req.url), { signal: AbortSignal.timeout(8000) })
+    return ((await r.json())?.models) || given || {}
+  } catch { return given || {} }
+}
+
 export async function POST(req: Request) {
   let body: any = {}
   try { body = await req.json() } catch { /* empty */ }
   const text = String(body?.text || "").slice(0, 4000)
   if (!text.trim()) return NextResponse.json({ error: "nothing to route" }, { status: 400 })
-  const models = body?.models || {}
+  const models = await ladder(req, body?.models)
   const key = `${text}\u0000${JSON.stringify(models)}`
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return NextResponse.json(hit.plan)
