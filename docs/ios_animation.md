@@ -146,11 +146,11 @@ Fallbacks, all in chat.css:
 
 ## 10. The desktop app's own surfaces (2026-11-08)
 
-`desktop/app/desktop.css` carries what the website chat does not have: the two collapsible sidebars, the sidebar's file tree, the file view, the changes panel, the model steps, the tool cards and the activity list. Every motion there uses the same four tools as the chat — the `--dg-*` spring variables (set inline on `.dg-page` by `springVars()`), transform and opacity only, the `--dg-smooth` / `--dg-micro` / `--dg-bouncy` curves from `lib/chat/spring.ts`, and a reduced-motion switch.
+`desktop/app/desktop.css` carries what the website chat does not have: the two collapsible sidebars, the sidebar's file tree, the file view, the changes panel, the model steps, the tool cards and the activity list. Most motion there uses the same tools as the chat — the `--dg-*` spring variables (set inline on `.dg-page` by `springVars()`), transform and opacity, the `--dg-smooth` / `--dg-micro` / `--dg-bouncy` curves from `lib/chat/spring.ts`, and a reduced-motion switch. The sidebar collapse is the exception: it is a layout change, so it runs on its own `--dk-sheet` curve (see the first row).
 
 | Surface | Effect | Motion |
 |---|---|---|
-| Sidebar collapse (left or right) | the column narrows to 0 and its contents fade; the divider and padding go at once | `grid-template-columns` on the **sheet curve** (`.34s` Apple ease, not the 500 ms scroll spring — a spring's tail made the reflow look rubbery); the content fades out in `.16s` (in on `.24s` after a `.06s` delay), keeps its open width so the column **clips** it instead of re-wrapping a diff or the file tree every frame, and `visibility` flips at the end |
+| Sidebar collapse (left or right) | the whole panel slides out through its window edge while the chat grows into the space | `grid-template-columns` plus a `transform: translateX(±100%)` on the panel, both on one `.24s` symmetric ease-in-out (`--dk-sheet`); the panel keeps its open width, padding and divider, so nothing is clipped at a moving edge and no row jumps. `visibility` flips only after the slide (and at once on the way in). Not the Apple ease: it puts 78% of a 260 px move in the first quarter of the time, which read as a snap on a dock. The chat still reflows (that is the one layout cost), and it is spread over the whole move rather than front-loaded. |
 | The buttons that bring a closed panel back (chat header) | pop in | `dg-pop` on `--dg-bouncy` (360 ms) |
 | File view (right panel, opens from the tree) | slides in like the website's canvas panel | `dg-canvas-in` (translateX 22px) on `--dg-smooth` |
 | File tree row / chevron | hover tint; the folder chevron turns 90° | `background-color` and `transform` on `--dg-micro` (160 ms) |
@@ -162,11 +162,11 @@ Fallbacks, all in chat.css:
 | Help menu | drops in from the button | `dg-drop` on `--dg-micro`, `transform-origin: top right` |
 | Account card | pops in | `dg-pop` on `--dg-bouncy`, `transform-origin: bottom left` |
 | Import chats (top bar and sidebar) | the picker rises in over a blurred scrim; the source tabs use the Code / Rooms segmented recipe | scrim `dg-fade`, panel `dg-glass-in` on `--dg-smooth`; tabs, buttons and list rows on `--dg-micro`; the import block carries its own reduced-motion rule |
-| Sidebar drag handles | hairline appears on hover | `background-color` .15 s (the only non-spring timing left, and it is a 1 px line) |
+| Sidebar drag handles | hairline appears on hover | `background-color` .15 s (the only timing left that is neither a spring nor the sidebar's `--dk-sheet`, and it is a 1 px line) |
 
 Two bugs found while writing this (both fixed 2026-11-08):
 
-- **The collapse used `display: none`.** A `display: none` grid item leaves the flow, so the chat auto-placed into the now-empty 0-width first column and the whole window collapsed. Each column is now placed explicitly (`grid-column`), and collapsing narrows the column instead of removing the element. This is the same reason the website's own room list uses `visibility`/width rather than `display` in `.dg-shell[data-panel="closed"]`.
+- **The collapse used `display: none`.** A `display: none` grid item leaves the flow, so the chat auto-placed into the now-empty 0-width first column and the whole window collapsed. The chat's column is now placed explicitly (`grid-column`), and collapsing narrows the track instead of removing anything. This is the same reason the website's own room list uses `visibility`/width rather than `display` in `.dg-shell[data-panel="closed"]`.
 - **`animation-fill-mode: both` overrode the age fade.** The activity row's entrance keyframe ends at `opacity: 1`, and with `both` that final value kept winning over `opacity: calc(1 - var(--age) * .22)`, so older calls never dimmed. `backwards` keeps the entrance and hands the property back afterwards.
 
 Reduced motion: one block at the end of `desktop.css` removes every `dk-*` animation and transition, the `grid-template-columns` collapse, and the `::details-content` transition. `chat.css`'s own blanket rule covers the chat's selectors; it does not reach `dk-*`, which is why the desktop needs its own.

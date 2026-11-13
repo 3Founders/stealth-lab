@@ -1,7 +1,9 @@
-// POST { question, transcript }: one side question about the chat already on screen, answered in one response with no
-// tools. This is Claude Code's /btw (code.claude.com/docs/en/commands): the question sees the conversation, cannot read
-// files or run anything, and is never added to the session. The engine's one-shot generate is the right primitive here:
-// it is a plain model call, so it creates no session, writes no message and leaves the running turn alone.
+// POST { question, transcript, history? }: one side conversation about the chat already on screen, answered in one
+// response with no tools. This is Claude Code's /btw (code.claude.com/docs/en/commands): the question sees the
+// conversation, cannot read files or run anything, and is never added to the session. `history` carries the earlier
+// turns of this same side thread, so a follow-up ("and the second one?") has something to point at. The engine's
+// one-shot generate is the right primitive here: it is a plain model call, so it creates no session, writes no message
+// and leaves the running turn alone.
 import { engineStatus, clientFor } from "@/lib/engine"
 
 export const dynamic = "force-dynamic"
@@ -9,14 +11,17 @@ export const dynamic = "force-dynamic"
 // The newest turns are what a side question is usually about, so keep the tail of the conversation.
 const MAX_TRANSCRIPT = 24_000
 const MAX_QUESTION = 4_000
+const MAX_SIDE_TURNS = 8
+const MAX_SIDE_ANSWER = 6_000
 
 /** What the model is told about this call. Same constraints Claude Code gives /btw, in kell's voice. */
-const INSTRUCTIONS = `This is a side question from the user about the conversation below. Answer it directly, in one response.
+const INSTRUCTIONS = `This is a side conversation from the user about the chat below. Answer the newest question directly, in one response.
 
-- You are a separate, lightweight agent spawned to answer this one question. The main agent is not interrupted.
-- You can see the conversation below and nothing else. There are no files, no shell and no search.
+- You are a separate, lightweight agent spawned for this side conversation. The main agent is not interrupted.
+- You can see the chat below and the earlier side questions and answers, and nothing else. There are no files, no shell and no search.
 - You have NO tools. Never say "let me check", "let me read" or promise to take any action.
-- This is a one-off: there will be no follow-up turns. Answer from what is already here.
+- The user may ask follow-ups; use the earlier side turns to keep the thread coherent. You still cannot take any action.
+- This side conversation is never added to the chat itself. Answer from what is already here.
 - Be brief and concrete. If the conversation does not contain the answer, say so plainly.`
 
 export async function POST(req: Request) {
@@ -27,7 +32,16 @@ export async function POST(req: Request) {
   const question = String(body?.question || "").trim().slice(0, MAX_QUESTION)
   if (!question) return Response.json({ error: "Ask a question: /btw <question>" }, { status: 400 })
   const transcript = String(body?.transcript || "").trim().slice(-MAX_TRANSCRIPT)
-  const prompt = `${INSTRUCTIONS}\n\nConversation so far:\n${transcript || "(nothing has been said yet)"}\n\nSide question: ${question}`
+  const history: Array<{ q: string; a: string }> = Array.isArray(body?.history)
+    ? body.history.slice(-MAX_SIDE_TURNS).map((h: any) => ({
+        q: String(h?.q || "").trim().slice(0, MAX_QUESTION),
+        a: String(h?.a || "").trim().slice(0, MAX_SIDE_ANSWER),
+      })).filter((h: { q: string; a: string }) => h.q && h.a)
+    : []
+  const side = history.map((h, i) => `Side Q${i + 1}: ${h.q}\nSide A${i + 1}: ${h.a}`).join("\n\n")
+  const prompt = `${INSTRUCTIONS}\n\nChat so far:\n${transcript || "(nothing has been said yet)"}`
+    + (side ? `\n\nEarlier side questions and answers in this same side conversation:\n${side}` : "")
+    + `\n\n${history.length ? "Follow-up" : "Side question"}: ${question}`
   try {
     const client = await clientFor(e)
     const out = await client.experimental.generate.text({ prompt })

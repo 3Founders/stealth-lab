@@ -2,65 +2,59 @@
    sign-in card and the settings rows. Same tokens and the same patterns as routing_kell_frontend/app/chat/chat.css
    (copied here as chat.css) -- no new palette. */
 
-.dk-page { padding: 0; }
-/* Three columns, each placed by name. Hiding one used to `display: none` its element, which took it out of the grid
-   flow: the chat then auto-placed into the 0-width column and the window collapsed (found 2026-11-08). With explicit
-   grid-column the placement never depends on what is visible, and the column itself eases on the sheet curve. */
+.dk-page {
+  padding: 0;
+  /* The one timing for a sidebar collapse: the track, the panel's slide and the drag handle all use it, so the
+     panel's inner edge and the chat's outer edge travel together (docs/ios_animation.md §10). Not the sheet
+     ease-out (the Apple curve puts 78% of a 260 px move in the first quarter of the time, which reads as a snap
+     on a docked column) and not Material's standard curve either (61% at 40%): a symmetric ease-in-out spreads
+     the distance evenly, so the chat's reflow is spread with it. */
+  --dk-sheet: cubic-bezier(.4, 0, .6, 1);
+  --dk-sheet-d: .24s;
+}
+/* Three columns: the chat owns the middle one and the two side tracks ease between their open width and 0, so the chat
+   grows into the space it is given. The side panels are taken out of the grid and pinned to their window edge at their
+   open width; closing translates the whole panel out through that edge. A shrinking track used to wipe the panel's
+   content at a moving divider (half-cut words, a strip of empty background), and zeroing its padding and divider at the
+   first frame made every row jump 12 px. Now the panel is a sheet: same width, same padding, same divider, gone off the
+   side of the window, and only the chat reflows. `position: absolute` (not fixed) keeps the shell as the containing
+   block, so the top bar above it is never covered. */
 .dk-page .dg-shell {
   grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr) var(--dk-right, 340px);
   height: 100dvh; position: relative;
-  /* The sheet curve, not the 500 ms scroll spring: a docked column is a layout change, and a spring's long tail made
-     the reflow look rubbery next to iOS. The Apple ease is a quick start and a long soft landing (docs/ios_animation.md). */
-  transition: grid-template-columns .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1));
+  transition: grid-template-columns var(--dk-sheet-d) var(--dk-sheet);
 }
-.dk-page .dg-side { grid-column: 1; }
 .dk-page .dg-main { grid-column: 2; }
-.dk-page .dk-panel { grid-column: 3; }
-/* A grid item's min-width is auto: without this the 0-width column still grows to the content's smallest width. */
-.dk-page .dg-side, .dk-page .dk-panel { min-width: 0; }
+.dk-page .dg-side {
+  position: absolute; top: 0; bottom: 0; left: 0; width: var(--dk-left, 260px);
+  transform: none;
+  transition: transform var(--dk-sheet-d) var(--dk-sheet), visibility 0s;
+}
+.dk-page .dk-panel {
+  position: absolute; top: 0; bottom: 0; right: 0; width: var(--dk-right, 340px);
+  transform: none;
+  transition: transform var(--dk-sheet-d) var(--dk-sheet), visibility 0s;
+}
 .dk-page .dg-shell[data-left="closed"] { grid-template-columns: 0 minmax(0, 1fr) var(--dk-right, 340px); }
 .dk-page .dg-shell[data-right="closed"] { grid-template-columns: var(--dk-left, 260px) minmax(0, 1fr) 0; }
 .dk-page .dg-shell[data-left="closed"][data-right="closed"] { grid-template-columns: 0 minmax(0, 1fr) 0; }
-
-/* Open and closed share one transition list, so the left sidebar and the right panel move together. On close the content
-   fades out first (0.16 s) while the column eases away on the sheet curve, so the reflow is barely visible; on open it
-   fades back in just after the column starts moving. Padding and the divider go at once so the fade never reads as a
-   squeeze. The old 500 ms spring made the close feel rubbery. */
-.dk-page .dg-shell[data-left="open"] .dg-side,
-.dk-page .dg-shell[data-right="open"] .dk-panel {
-  opacity: 1; transform: none; visibility: visible; pointer-events: auto;
-  transition:
-    opacity .24s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) .06s,
-    transform .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
-    box-shadow .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
-    visibility 0s;
-}
+/* The slide is exactly one panel width, so it is a composited transform. `visibility` flips only once the panel has
+   left (closing) and at once on the way in, so the panel is never seen clipped or ghosted mid-way. */
 .dk-page .dg-shell[data-left="closed"] .dg-side {
-  opacity: 0; transform: translateX(-8px); visibility: hidden; pointer-events: none;
-  padding-left: 0; padding-right: 0; border-right-width: 0; overflow: hidden; box-shadow: none;
-  transition:
-    opacity .16s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
-    transform .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
-    box-shadow .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
-    visibility 0s linear .34s;
+  transform: translateX(-100%);
+  visibility: hidden; pointer-events: none;
+  transition: transform var(--dk-sheet-d) var(--dk-sheet), visibility 0s linear var(--dk-sheet-d);
 }
 .dk-page .dg-shell[data-right="closed"] .dk-panel {
-  opacity: 0; transform: translateX(8px); visibility: hidden; pointer-events: none;
-  padding-left: 0; padding-right: 0; border-left-width: 0; overflow: hidden; box-shadow: none;
-  transition:
-    opacity .16s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
-    transform .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
-    box-shadow .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)),
-    visibility 0s linear .34s;
+  transform: translateX(100%);
+  visibility: hidden; pointer-events: none;
+  transition: transform var(--dk-sheet-d) var(--dk-sheet), visibility 0s linear var(--dk-sheet-d);
 }
 .dk-page .dg-shell[data-left="closed"] .dk-resize[data-side="left"],
 .dk-page .dg-shell[data-right="closed"] .dk-resize[data-side="right"] { opacity: 0; pointer-events: none; }
-/* While a column collapses, its content must not re-wrap on every frame (a diff or the file tree re-laid out 60 times
-   is what made the close feel rough). Keep each panel's content at the open width and let the shrinking column clip it:
-   the text stays put and the panel reads as a sheet sliding away (docs/ios_animation.md, rule 1). */
-.dk-page .dg-side > .dg-side-scroll { min-width: var(--dk-left, 260px); }
-.dk-page .dg-side > .dg-brand, .dk-page .dg-side > .dk-foot { min-width: var(--dk-left, 260px); }
-.dk-page .dk-panel > * { min-width: calc(var(--dk-right, 340px) - 24px); }
+/* The drawer scrims exist only below 1100px. Out of their media query they must not become in-flow grid items:
+   the side panels are absolute now, so an empty div would auto-place into a side track. */
+.dk-scrim-right { display: none; }
 .dk-page .dk-side-close { position: absolute; top: 10px; right: 10px; z-index: 6; }
 .dk-page .dg-brand { padding-right: 36px; }
 /* Only the middle of the project sidebar scrolls: the wordmark above it and the account row below it stay put, the way
@@ -102,22 +96,23 @@
     display: flex; padding: 14px 12px; border-left: 1px solid var(--rule); overflow-y: auto;
     background: var(--paper); box-shadow: -18px 0 48px rgba(0, 0, 0, .18);
     transform: translateX(100%); opacity: 1; visibility: hidden; pointer-events: none;
-    transition: transform var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth), visibility 0s linear var(--dg-smooth-d);
+    transition: transform var(--dk-sheet-d) var(--dk-sheet), box-shadow var(--dk-sheet-d) var(--dk-sheet), visibility 0s linear var(--dk-sheet-d);
   }
   /* The drawer is resizable too: its divider follows the panel's real left edge. */
   .dk-page .dk-resize[data-side="right"] { right: calc(min(92vw, var(--dk-right, 380px)) - 4px); }
   .dk-page .dg-shell[data-right="open"] .dk-panel {
     transform: none; opacity: 1; visibility: visible; pointer-events: auto;
-    transition: transform var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth), visibility 0s;
+    transition: transform var(--dk-sheet-d) var(--dk-sheet), box-shadow var(--dk-sheet-d) var(--dk-sheet), visibility 0s;
   }
   .dk-page .dg-shell[data-right="closed"] .dk-panel {
     transform: translateX(100%); opacity: 1; visibility: hidden; pointer-events: none;
     padding: 14px 12px; border-left-width: 1px; overflow-y: auto; box-shadow: -18px 0 48px rgba(0, 0, 0, .18);
+    transition: transform var(--dk-sheet-d) var(--dk-sheet), box-shadow var(--dk-sheet-d) var(--dk-sheet), visibility 0s linear var(--dk-sheet-d);
   }
   .dk-page .dk-show-right { display: inline-flex; }
   .dk-scrim-right {
     display: block; position: fixed; inset: 0; z-index: 55; background: rgba(0, 0, 0, .35);
-    opacity: 0; pointer-events: none; transition: opacity var(--dg-smooth-d) var(--dg-smooth);
+    opacity: 0; pointer-events: none; transition: opacity var(--dk-sheet-d) var(--dk-sheet);
   }
   .dk-page .dg-shell[data-right="open"] .dk-scrim-right { opacity: 1; pointer-events: auto; }
 }
@@ -137,20 +132,21 @@
     padding: 14px 12px calc(14px + env(safe-area-inset-bottom));
     border-right: 1px solid var(--rule); box-shadow: 12px 0 40px rgba(0, 0, 0, .25);
     transform: translateX(-100%); opacity: 1; visibility: hidden; pointer-events: none;
-    transition: transform var(--dg-smooth-d) var(--dg-smooth), visibility 0s linear var(--dg-smooth-d);
+    transition: transform var(--dk-sheet-d) var(--dk-sheet), visibility 0s linear var(--dk-sheet-d);
   }
   .dk-page .dg-shell[data-left="open"] .dg-side {
     transform: none; opacity: 1; visibility: visible; pointer-events: auto;
-    transition: transform var(--dg-smooth-d) var(--dg-smooth), visibility 0s;
+    transition: transform var(--dk-sheet-d) var(--dk-sheet), visibility 0s;
   }
   .dk-page .dg-shell[data-left="closed"] .dg-side {
     transform: translateX(-100%); opacity: 1; visibility: hidden; pointer-events: none;
     padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); border-right-width: 1px; box-shadow: 12px 0 40px rgba(0, 0, 0, .25);
+    transition: transform var(--dk-sheet-d) var(--dk-sheet), visibility 0s linear var(--dk-sheet-d);
   }
   .dk-page .dk-resize { display: none; }
   .dk-page .dg-scrim {
     display: block; position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, .4);
-    opacity: 0; pointer-events: none; transition: opacity var(--dg-smooth-d) var(--dg-smooth);
+    opacity: 0; pointer-events: none; transition: opacity var(--dk-sheet-d) var(--dk-sheet);
   }
   .dk-page .dg-shell[data-menu="open"] .dg-scrim { opacity: 1; pointer-events: auto; }
   .dk-page .dg-head { padding: 6px 12px; gap: 8px; }
@@ -257,8 +253,9 @@
 .dk-delegate-a { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); padding: 8px 10px; font-size: 12.5px; }
 .dk-delegate-a > :first-child { margin-top: 0; } .dk-delegate-a > :last-child { margin-bottom: 0; }
 
-/* The chip in the chat: the model this turn runs on; it opens the panel. Same press recipe as the other icon buttons. */
-.dk-delegate-chip { display: flex; align-items: center; gap: 6px; align-self: flex-start; margin: 0 4px 6px; padding: 4px 10px;
+/* The chip in the chat: the model this turn runs on; it opens the panel. Same press recipe as the other icon buttons.
+   Its left edge lines up with the composer's (18 px), not the window edge. */
+.dk-delegate-chip { display: flex; align-items: center; gap: 6px; align-self: flex-start; margin: 0 18px 6px; padding: 4px 10px;
   border: 1px solid var(--rule); border-radius: 999px; background: var(--glass, var(--surface)); color: var(--grey);
   font: inherit; font-size: 11.5px; cursor: pointer; max-width: 100%; overflow: hidden;
   transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
@@ -324,7 +321,7 @@
 
 /* Drag handles on the inner edges of the two side columns (2026-11-06). */
 .dk-resize { position: absolute; top: 0; bottom: 0; width: 7px; z-index: 5; cursor: col-resize; touch-action: none;
-  transition: opacity .2s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)), left .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)), right .34s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)); }
+  transition: opacity .2s var(--dk-sheet, cubic-bezier(.4, 0, .6, 1)), left var(--dk-sheet-d, .24s) var(--dk-sheet, cubic-bezier(.4, 0, .6, 1)), right var(--dk-sheet-d, .24s) var(--dk-sheet, cubic-bezier(.4, 0, .6, 1)); }
 .dk-resize[data-side="left"] { left: calc(var(--dk-left, 260px) - 4px); }
 .dk-resize[data-side="right"] { right: calc(var(--dk-right, 340px) - 4px); }
 .dk-page .dg-shell[data-left="closed"] .dk-resize[data-side="left"] { left: 0; }
@@ -438,7 +435,7 @@
 .dk-sessions .dk-recent .when { flex: none; color: var(--grey); font-size: 11.5px; }
 
 /* What kell is doing while it works (2026-11-07): newest calls stacked, each sliding in; the running one spins, done ones fade by age. */
-.dk-activity { list-style: none; margin: 0; padding: 2px 18px 0 22px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.dk-activity { list-style: none; margin: 0; padding: 2px 18px 0 26px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
 .dk-activity li { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--grey);
   /* `backwards`, not `both`: with `both` the finished keyframe's opacity: 1 overrode the age fade below, so older calls
      never dimmed (2026-11-08). */
@@ -635,7 +632,7 @@
    turn, so it must not cover the composer's controls: it stops at 55% of the message area and scrolls inside itself. */
 .dk-btw {
   position: absolute; left: 18px; right: 18px; bottom: 12px; z-index: 9;
-  max-height: min(55%, 420px); display: flex; flex-direction: column; gap: 8px;
+  max-height: min(60%, 460px); display: flex; flex-direction: column; gap: 8px;
   padding: 12px 14px; border: 1px solid var(--rule-strong); border-radius: 14px;
   background: var(--dg-glass-strong, var(--surface)); color: var(--ink);
   -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2);
@@ -643,15 +640,38 @@
   animation: dg-glass-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; transform-origin: bottom center;
 }
 .dk-btw:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
-.dk-btw-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dk-btw-head { display: flex; align-items: center; gap: 8px; min-width: 0; flex: none; }
 .dk-btw-tag { flex: none; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey);
   border: 1px solid var(--rule-strong); border-radius: 5px; padding: 1px 6px 0; }
 .dk-btw-q { min-width: 0; flex: 1; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-btw-a { min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; font-size: 14px; line-height: 1.55; }
+.dk-btw-a { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; font-size: 14px; line-height: 1.55; }
 .dk-btw-a .dg-md p { font-weight: 300; }
+.dk-btw-turn { min-width: 0; }
+.dk-btw-turn-q { font-size: 12.5px; font-weight: 500; color: var(--ink); margin-bottom: 2px; }
+.dk-btw-turn-q::before { content: "Q "; color: var(--grey); font-weight: 400; }
+.dk-btw-turn-a { font-size: 14px; line-height: 1.55; }
+.dk-btw-turn-a > :first-child { margin-top: 0; }
+.dk-btw-turn-a > :last-child { margin-bottom: 0; }
+.dk-btw-empty { margin: 0; color: var(--grey); font-size: 13px; line-height: 1.45; }
 .dk-btw-think { display: inline-flex; align-items: center; gap: 8px; color: var(--grey); font-size: 13px; }
 .dk-btw-err { margin: 0; color: #b3261e; font-size: 13px; }
-.dk-btw-foot { margin: 0; color: var(--grey); font-size: 11px; }
+.dk-btw-foot { margin: 0; color: var(--grey); font-size: 11px; flex: none; }
+/* The follow-up line: the same field recipe as the delegated-model ask, sized for the sheet. */
+.dk-btw-ask { flex: none; display: flex; gap: 6px; }
+.dk-btw-ask input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--rule);
+  border-radius: 9px; background: var(--surface); color: var(--ink); }
+.dk-btw-ask input:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-btw-ask input:disabled { opacity: .6; }
+/* The stored side conversations for this chat. The row opens one; the bin forgets it. */
+.dk-btw-history { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.dk-btw-history ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.dk-btw-history li { display: flex; align-items: center; gap: 2px; border-radius: 9px; }
+.dk-btw-history li:hover { background: var(--soft); }
+.dk-btw-hist-row { all: unset; box-sizing: border-box; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 8px; border-radius: 9px; cursor: pointer; }
+.dk-btw-hist-q { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-btw-hist-meta { font-size: 11px; color: var(--grey); }
 @media (max-width: 760px) { .dk-btw { left: 12px; right: 12px; bottom: 8px; padding: 10px 12px; } }
 
 /* One reduced-motion switch for everything this file adds: the rule in chat.css covers the chat's own selectors, not
@@ -662,7 +682,7 @@
   .dk-page .dk-head-toggle, .dk-palette-backdrop, .dk-palette, .dk-btw { animation: none !important; }
   .dk-page .dk-icon, .dk-page .dk-winbtn, .dk-page .dk-tree-row, .dk-page .dk-tree-row .chev,
   .dk-page .dk-sess-toggle svg, .dk-page .dk-fold > summary h2::before, .dk-page .dk-sess-more > summary::before,
-  .dk-page .dk-resize::after, .dk-page .dk-act-mark, .dk-page .dk-activity li, .dk-page .dk-help-menu a,
+  .dk-page .dk-resize, .dk-page .dk-resize::after, .dk-page .dk-act-mark, .dk-page .dk-activity li, .dk-page .dk-help-menu a,
   .dk-palette-row, .dk-stop, .dk-queue-tools button, .dk-empty-prompt { transition: none !important; }
   .dk-page .dg-shell, .dk-page .dg-side, .dk-page .dk-panel { transition: none !important; }
   .dk-page .dk-fold::details-content, .dk-page .dk-file::details-content, .dk-page .dk-sess-more::details-content { transition: none !important; }

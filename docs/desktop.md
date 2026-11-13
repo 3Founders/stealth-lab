@@ -59,13 +59,17 @@ Claude Code's Stop hook. The goal is session-scoped and restored with the sessio
 
 ## /btw (0.1.18)
 
-`/btw <question>` asks a side question about the chat on screen and shows the answer in a dismissible overlay (Esc, or
-the ×), never in the conversation. It mirrors Claude Code's `/btw` (`code.claude.com/docs/en/commands`): the question
-sees everything already said in the session, has **no tools** (it cannot read files, run commands or search), gets one
-response, and is not added to the history or sent with the next prompt. `app/api/btw` sends the recent transcript plus
-the question through the engine's one-shot `experimental.generate.text`, so it creates no session and leaves a running
-turn alone — `send()` intercepts `/btw` before the busy check, which is what makes it work mid-turn. Bare `/btw` brings
-back the most recent side answer. It costs one small model call on the same lane as the session.
+`/btw <question>` opens a side conversation about the chat on screen in a dismissible sheet (Esc, or the ×), never in the
+conversation. It mirrors Claude Code's `/btw` (`code.claude.com/docs/en/commands`): the question sees everything already
+said in the session, has **no tools** (it cannot read files, run commands or search), and is not added to the history or
+sent with the next prompt. The sheet takes **follow-ups**: each one is sent with the earlier side turns (`history` in
+`app/api/btw`), so "and the second one?" has something to point at, and the thread stays coherent without touching the
+main turn. Finished threads are stored per chat in the app's own store (`app/api/btw/history`, the `btw.history` meta row)
+and the clock in the sheet lists them: open one to continue it, or delete it with the bin. Bare `/btw` opens the newest
+stored thread for this chat (or an empty sheet). `app/api/btw` sends the recent transcript plus the side history through
+the engine's one-shot `experimental.generate.text`, so it creates no session and leaves a running turn alone — `send()`
+intercepts `/btw` before the busy check, which is what makes it work mid-turn. Each answered turn costs one small model
+call on the same lane as the session.
 
 ## Slash menu (0.1.18)
 

@@ -169,9 +169,12 @@ type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission" | "go
               state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string
               files?: Attachment[] }
 type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string; state?: "running" | "done" | "failed"; hint?: string }
-/** /btw: a side question and its answer. Deliberately NOT a Line: an overlay never enters the conversation, so it
- *  cannot reach the next turn or the session history (Claude Code's /btw works the same way). */
-type SideAnswer = { q: string; a: string; state: "asking" | "done" | "error" }
+/** One question and its answer in a /btw side thread. Deliberately NOT a Line: a side thread never enters the
+ *  conversation, so it cannot reach the next turn or the session history (Claude Code's /btw works the same way). */
+type BtwTurn = { q: string; a: string; state: "asking" | "done" | "error"; at: number }
+/** A side conversation: follow-ups append turns to the same thread; finished threads are stored per chat
+ *  (app/api/btw/history) so they can be reopened or deleted. */
+type BtwThread = { id: string; sessionID: string | null; at: number; updated: number; turns: BtwTurn[] }
 /** What the message box understands as a slash command (the website chat's SLASH_COMMANDS, reduced to this app's own).
  *  send() is the dispatcher: /goal and /btw are both handled there, before anything reaches the engine. */
 const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
@@ -493,10 +496,36 @@ export default function Home() {
     } catch { /* storage blocked */ }
   }, [goal])
   const [big, setBig] = useState(false)                  // the message box: bigger / smaller, like the website chat
-  // /btw: the side answer on screen (an overlay, never a Line), and the last one, so bare /btw can bring it back.
-  const [btw, setBtw] = useState<SideAnswer | null>(null)
-  const btwLast = useRef<SideAnswer | null>(null)
+  // /btw: the side conversation on screen (an overlay, never a Line). Follow-ups append to the same thread, and a
+  // finished thread is stored per chat (app/api/btw/history) so it can be reopened or deleted.
+  const [btw, setBtw] = useState<BtwThread | null>(null)
+  const [btwHistory, setBtwHistory] = useState<BtwThread[]>([])
+  const [btwHistOpen, setBtwHistOpen] = useState(false)
+  const [btwFollowUp, setBtwFollowUp] = useState("")
   const btwSeq = useRef(0)                               // two side questions: only the newest answer may land
+  const btwBodyRef = useRef<HTMLDivElement | null>(null)
+  const btwInputRef = useRef<HTMLInputElement | null>(null)
+  // The stored side conversations are in the app's own store, not the session; the sheet filters them to this chat.
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      try {
+        const r = await fetch("/api/btw/history")
+        const j = await r.json()
+        if (live && Array.isArray(j?.threads)) {
+          // Stored turns are always answered; give them the state the sheet renders with.
+          setBtwHistory((j.threads as any[]).map((t) => ({
+            id: String(t.id), sessionID: t.sessionID == null ? null : String(t.sessionID),
+            at: Number(t.at) || 0, updated: Number(t.updated) || 0,
+            turns: (Array.isArray(t.turns) ? t.turns : []).map((x: any) => ({
+              q: String(x?.q || ""), a: String(x?.a || ""), at: Number(x?.at) || 0, state: "done" as const,
+            })),
+          })))
+        }
+      } catch { /* history is optional: the side question itself still works */ }
+    })()
+    return () => { live = false }
+  }, [])
   // The slash menu: which row is highlighted, and the draft it was dismissed for (typing again reopens it).
   const [cmdIdx, setCmdIdx] = useState(0)
   const [cmdDismissedFor, setCmdDismissedFor] = useState<string | null>(null)
@@ -852,56 +881,124 @@ export default function Home() {
     </div>
   ) : null
 
-  // /btw <question>: a side question about this chat, answered from the conversation already on screen with no tools, in
-  // one response, in an overlay. send() intercepts it BEFORE the busy check, so it works while a turn is running, and it
-  // never becomes a Line: nothing here enters the session, the history or the next prompt (Claude Code's /btw).
+  // /btw <question>: a side conversation about this chat, answered from the conversation already on screen with no tools,
+  // in an overlay. send() intercepts it BEFORE the busy check, so it works while a turn is running, and it never becomes a
+  // Line: nothing here enters the session, the history or the next prompt (Claude Code's /btw). Follow-ups stay in the
+  // same thread and see the earlier side turns.
   const transcriptForBtw = () => linesRef.current
     .filter((l) => (l.who === "user" || l.who === "assistant") && l.text.trim())
     .slice(-24)
     .map((l) => `${l.who === "user" ? "User" : "kell"}: ${l.text.trim()}`)
     .join("\n\n")
 
-  const askBtw = async (q: string) => {
+  const saveBtwThread = async (thread: BtwThread) => {
+    const stored: BtwThread = { ...thread, turns: thread.turns.filter((t) => t.state === "done") }
+    if (!stored.turns.length) return
+    setBtwHistory((h) => [stored, ...h.filter((t) => t.id !== stored.id)])
+    try {
+      await fetch("/api/btw/history", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ thread: stored }),
+      })
+    } catch { /* kept in memory for this run */ }
+  }
+
+  /** Ask, or follow up in the open thread. `fresh` starts a new thread even when one is open. */
+  const askBtw = async (raw: string, fresh = false) => {
+    const q = raw.trim()
+    if (!q) return
     const seq = ++btwSeq.current
-    setBtw({ q, a: "", state: "asking" })
+    const now = Date.now()
+    const base = fresh ? null : btw
+    // A superseded question that never answered is dropped, not left spinning in the thread.
+    const kept = base ? base.turns.filter((t) => t.state !== "asking") : []
+    const next: BtwThread = base
+      ? { ...base, updated: now, turns: [...kept, { q, a: "", state: "asking", at: now }] }
+      : { id: crypto.randomUUID(), sessionID: sessionID || null, at: now, updated: now,
+          turns: [{ q, a: "", state: "asking", at: now }] }
+    setBtw(next)
+    setBtwHistOpen(false)
     try {
       const r = await fetch("/api/btw", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question: q, transcript: transcriptForBtw() }),
+        body: JSON.stringify({
+          question: q,
+          transcript: transcriptForBtw(),
+          // The earlier side turns, so a follow-up like "and the second one?" has something to point at.
+          history: next.turns.slice(0, -1).filter((t) => t.state === "done").map(({ q: pq, a }) => ({ q: pq, a })),
+        }),
       })
       const j = await r.json().catch(() => null)
       if (seq !== btwSeq.current) return                    // a newer side question replaced this one
-      if (!r.ok || !j?.answer) {
-        setBtw({ q, a: String(j?.error || `The side question failed (${r.status}).`), state: "error" })
-        return
-      }
-      const done: SideAnswer = { q, a: String(j.answer), state: "done" }
-      btwLast.current = done
+      const answer = r.ok && j?.answer ? String(j.answer) : ""
+      const turn: BtwTurn = answer
+        ? { q, a: answer, state: "done", at: now }
+        : { q, a: String(j?.error || `The side question failed (${r.status}).`), state: "error", at: now }
+      const done: BtwThread = { ...next, updated: Date.now(), turns: [...next.turns.slice(0, -1), turn] }
       setBtw(done)
+      if (turn.state === "done") void saveBtwThread(done)
     } catch (e: any) {
-      if (seq === btwSeq.current) setBtw({ q, a: String(e?.message || e), state: "error" })
+      if (seq !== btwSeq.current) return
+      const turn: BtwTurn = { q, a: String(e?.message || e), state: "error", at: now }
+      setBtw({ ...next, updated: Date.now(), turns: [...next.turns.slice(0, -1), turn] })
     }
   }
 
-  const closeBtw = () => { setBtw(null); textRef.current?.focus() }
+  const closeBtw = () => { btwSeq.current++; setBtw(null); setBtwHistOpen(false); textRef.current?.focus() }
+
+  const openBtwThread = (t: BtwThread) => {
+    btwSeq.current++                                      // an answer still in flight belongs to the thread being left
+    setBtw(t)
+    setBtwHistOpen(false)
+    setBtwFollowUp("")
+  }
+
+  const newBtwThread = () => {
+    btwSeq.current++
+    const now = Date.now()
+    setBtw({ id: crypto.randomUUID(), sessionID: sessionID || null, at: now, updated: now, turns: [] })
+    setBtwHistOpen(false)
+    setBtwFollowUp("")
+  }
+
+  const deleteBtwThread = async (id: string) => {
+    setBtwHistory((h) => h.filter((t) => t.id !== id))
+    if (btw?.id === id) setBtw(null)
+    try { await fetch(`/api/btw/history?id=${encodeURIComponent(id)}`, { method: "DELETE" }) } catch { /* gone from this run anyway */ }
+  }
 
   const handleBtwCommand = (raw: string) => {
     const q = raw.replace(/^\/btw\b/i, "").trim()
     if (q) { void askBtw(q); return }
-    // Bare /btw brings back the most recent side answer; with none yet, it says how to ask.
-    setBtw(btwLast.current ?? {
-      q: "", state: "done",
-      a: "Ask a side question about this chat: `/btw <question>`.\n\nIt sees everything already said here, cannot use tools, and is not added to the conversation.",
-    })
+    // Bare /btw opens the newest side thread for this chat, or an empty sheet ready for a question.
+    const recent = btwHistory
+      .filter((t) => (t.sessionID || null) === (sessionID || null))
+      .sort((a, b) => b.updated - a.updated)[0]
+    if (recent) openBtwThread(recent)
+    else newBtwThread()
   }
 
-  // Escape closes the side answer from anywhere; Enter or Space close it when the answer itself has focus.
+  // The sheet's input takes focus when it opens (and when the history list closes), so a follow-up can be typed at once.
+  useEffect(() => {
+    if (!btw || btwHistOpen) return
+    requestAnimationFrame(() => btwInputRef.current?.focus())
+  }, [btw?.id, btwHistOpen])
+  // Newest turn (or the answer as it lands) stays in view inside the sheet.
+  useEffect(() => {
+    const el = btwBodyRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [btw])
+
+  // Escape closes the side sheet from anywhere; Enter or Space close it only when the sheet itself has focus, never from
+  // the follow-up input or one of its buttons.
   useEffect(() => {
     if (!btw) return
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") { e.preventDefault(); closeBtw(); return }
       const el = e.target as HTMLElement | null
-      if ((e.key === "Enter" || e.key === " ") && el?.closest?.(".dk-btw")) { e.preventDefault(); closeBtw() }
+      if ((e.key === "Enter" || e.key === " ") && el?.closest?.(".dk-btw") && !el.closest("input, textarea, button, select, a")) {
+        e.preventDefault(); closeBtw()
+      }
     }
     document.addEventListener("keydown", key)
     return () => document.removeEventListener("keydown", key)
@@ -1534,6 +1631,19 @@ export default function Home() {
 
   const importSourceInfo = IMPORT_SOURCES.find((s) => s.id === importSource) || IMPORT_SOURCES[0]
 
+  // The side sheet's derived view: this chat's stored threads, newest first, and whether its newest turn is still out.
+  const btwThreads = btwHistory
+    .filter((t) => (t.sessionID || null) === (sessionID || null))
+    .sort((a, b) => b.updated - a.updated)
+  const btwAsking = !!btw?.turns.some((t) => t.state === "asking")
+  // A stored thread's time: the clock for today, a short date for anything older.
+  const btwWhen = (ts: number) => {
+    const d = new Date(ts)
+    return new Date().toDateString() === d.toDateString()
+      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : d.toLocaleDateString([], { month: "short", day: "numeric" })
+  }
+
   return (
     <section className="dg-page dk-page" style={springVars() as React.CSSProperties}>
       <ThemeWatcher />
@@ -1979,23 +2089,85 @@ export default function Home() {
               </button>
             )}
             {btw && (
-              // /btw's answer, over the conversation and not in it. Escape, Enter/Space when it has focus, or the ×
-              // dismiss it. It runs beside the turn, so opening it never stops or queues anything.
+              // /btw's side conversation, over the conversation and not in it. Follow-ups stay in this sheet; the clock
+              // opens the threads stored for this chat, each with its own delete. Escape, Enter/Space when the sheet
+              // itself has focus, or the × dismiss it. It runs beside the turn, so opening it never stops anything.
               <section className="dk-btw" role="dialog" aria-label="Side question" tabIndex={-1}>
                 <div className="dk-btw-head">
                   <span className="dk-btw-tag" aria-hidden="true">/btw</span>
-                  <span className="dk-btw-q" title={btw.q}>{btw.q || "Side question"}</span>
-                  <button type="button" className="dk-icon dk-icon-sm" aria-label="Close the side answer" title="Close (Esc)" onClick={closeBtw}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
-                  </button>
+                  <span className="dk-btw-q" title={btw.turns[0]?.q || ""}>{btw.turns[0]?.q || "Side question"}</span>
+                  <span className="dk-iconrow">
+                    <button type="button" className="dk-icon dk-icon-sm" aria-label="Previous side questions"
+                      title="Previous side questions" aria-pressed={btwHistOpen} onClick={() => setBtwHistOpen((v) => !v)}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                    </button>
+                    <button type="button" className="dk-icon dk-icon-sm" aria-label="New side question"
+                      title="New side question" onClick={newBtwThread}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                    </button>
+                    <button type="button" className="dk-icon dk-icon-sm" aria-label="Close the side answer" title="Close (Esc)" onClick={closeBtw}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                    </button>
+                  </span>
                 </div>
-                <div className="dk-btw-a" aria-live="polite">
-                  {btw.state === "asking"
-                    ? <span className="dk-btw-think"><span className="dg-pulse" aria-hidden="true" /> Reading this chat…</span>
-                    : btw.state === "error"
-                      ? <p className="dk-btw-err">{btw.a}</p>
-                      : <Markdown text={btw.a} />}
-                </div>
+
+                {btwHistOpen ? (
+                  <div className="dk-btw-history" aria-label="Previous side questions">
+                    {btwThreads.length === 0 ? (
+                      <p className="dk-btw-empty">No side questions in this chat yet.</p>
+                    ) : (
+                      <ul>
+                        {btwThreads.map((t) => (
+                          <li key={t.id}>
+                            <button type="button" className="dk-btw-hist-row" onClick={() => openBtwThread(t)}>
+                              <span className="dk-btw-hist-q">{t.turns[0]?.q || "Side question"}</span>
+                              <span className="dk-btw-hist-meta">
+                                {t.turns.length} {t.turns.length === 1 ? "question" : "questions"}
+                                {" · "}
+                                {btwWhen(t.updated)}
+                              </span>
+                            </button>
+                            <button type="button" className="dk-icon dk-icon-sm" aria-label="Delete this side question" title="Delete"
+                              onClick={() => void deleteBtwThread(t.id)}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14" /></svg>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : (
+                  <div className="dk-btw-a" ref={btwBodyRef} aria-live="polite">
+                    {btw.turns.length === 0 && (
+                      <p className="dk-btw-empty">Ask a side question about this chat. Follow-ups stay in this sheet; none of it is added to the conversation.</p>
+                    )}
+                    {btw.turns.map((turn, i) => (
+                      <div className="dk-btw-turn" key={`${turn.at}-${i}`}>
+                        {/* The header already carries the first question; follow-ups need their own line. */}
+                        {i > 0 && <div className="dk-btw-turn-q">{turn.q}</div>}
+                        <div className="dk-btw-turn-a">
+                          {turn.state === "asking"
+                            ? <span className="dk-btw-think"><span className="dg-pulse" aria-hidden="true" /> Reading this chat…</span>
+                            : turn.state === "error"
+                              ? <p className="dk-btw-err">{turn.a}</p>
+                              : <Markdown text={turn.a} />}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!btwHistOpen && (
+                  <form className="dk-btw-ask" onSubmit={(e) => { e.preventDefault(); const q = btwFollowUp; setBtwFollowUp(""); void askBtw(q) }}>
+                    <input ref={btwInputRef} value={btwFollowUp} onChange={(e) => setBtwFollowUp(e.target.value)}
+                      placeholder={btw.turns.length ? "Ask a follow-up…" : "Ask a side question…"}
+                      aria-label="Ask a side question" autoComplete="off" disabled={btwAsking} />
+                    <button type="submit" className="btn-line dg-mini" disabled={!btwFollowUp.trim() || btwAsking}>
+                      {btwAsking ? "Asking…" : "Ask"}
+                    </button>
+                  </form>
+                )}
+
                 <p className="dk-btw-foot">Answered from this chat only · no tools · not added to the conversation · Esc closes</p>
               </section>
             )}
