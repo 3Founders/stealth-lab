@@ -14,6 +14,7 @@ import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
 import { applyFont, readFont, saveFont } from "@/lib/font"
 import type { ToolApproval } from "@/lib/tools"
+import type { Delegation } from "@/lib/delegate"
 
 // The Electron preload's bridge (electron/preload.ts). Absent in a plain browser (`next dev`): sign-in links then open a tab
 // and the rooms are a link to the website's chat.
@@ -560,6 +561,16 @@ export default function Home() {
   }
   const [cards, setCards] = useState<ToolCard[]>([])
   const [cardsNote, setCardsNote] = useState("")
+  // The delegation for the current turn: kell's Goal/Way/Tool, the model that runs the turn, and the scoped side call.
+  // `planRef` keeps the last plan even when the router answered after the prompt had already gone out.
+  const [delegation, setDelegation] = useState<Delegation | null>(null)
+  const planRef = useRef<Delegation | null>(null)
+  const planSeq = useRef(0)
+  const [delegateAsk, setDelegateAsk] = useState("")
+  const [delegateAnswer, setDelegateAnswer] = useState("")
+  const [delegateErr, setDelegateErr] = useState("")
+  const [delegateNote, setDelegateNote] = useState("")
+  const [delegateBusy, setDelegateBusy] = useState(false)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [consoleNote, setConsoleNote] = useState("")
   const [signinNote, setSigninNote] = useState("")
@@ -896,6 +907,25 @@ export default function Home() {
     return () => document.removeEventListener("keydown", key)
   }, [btw])
 
+  // Route the task and pick the model for this turn. The router resolves a Goal and a Way on kell's server, which can take
+  // a few seconds cold, so a message waits at most 2.2 s for it: the turn then runs on the engine's own model, and the plan
+  // still lands in the panel when it arrives (the route caches it, so a repeat is instant).
+  const planFor = async (text: string): Promise<Delegation | null> => {
+    const seq = ++planSeq.current
+    const p = fetch("/api/delegate", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, models: settings?.models || {}, timeoutMs: 20_000 }),
+    }).then((r) => r.json()).then((j) => {
+      // A plan that lands after a newer prompt was sent only fills the panel if it is still the newest.
+      if (seq === planSeq.current) {
+        if (j && !j.error) { planRef.current = j as Delegation; setDelegation(j as Delegation); setDelegateNote("") }
+        else if (j?.error) setDelegateNote(String(j.error))
+      }
+      return j && !j.error ? (j as Delegation) : null
+    }).catch(() => null)
+    return await Promise.race([p, new Promise<null>((ok) => setTimeout(() => ok(null), 2200))])
+  }
+
   const send = async (again?: string, filesOverride?: Attachment[], asGoal = false) => {
     const body = again ?? text
     const outgoing = again === undefined ? attachments : (filesOverride ?? [])
@@ -908,6 +938,8 @@ export default function Home() {
       return
     }
     const sent = body
+    // The router starts now and the message waits at most 2.2 s for it: the turn runs on the model the procedure needs.
+    const planP = planFor(sent)
     if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
     else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
@@ -916,7 +948,9 @@ export default function Home() {
     setStopNote("")
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
     setCards([]); setCardsNote(""); loadTools(sent || outgoing.map((f) => f.name).join(" "))
-    const payload = { sessionID, directory, text: sent, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
+    const plan = await planP
+    if (plan) { setDelegateAnswer(""); setDelegateErr("") }
+    const payload = { sessionID, directory, text: sent, model: plan?.model ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })
     if (!r.ok || !r.body) {
       const err = await r.text()
@@ -1003,6 +1037,25 @@ export default function Home() {
     for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (!busyRef.current) loadChanges(sid) }, ms)
     loadSessions()
     setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
+  }
+
+  // Ask the delegated model directly, with the scoped brief only (app/api/delegate/ask): no files, no shell, no history.
+  const askDelegate = async () => {
+    const plan = delegation || planRef.current
+    const question = delegateAsk.trim()
+    if (!plan || !question || delegateBusy) return
+    setDelegateBusy(true); setDelegateErr("")
+    try {
+      const r = await fetch("/api/delegate/ask", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ plan, question }),
+      })
+      const j = await r.json()
+      if (!r.ok || j.error) throw new Error(j.error || `the delegated model answered ${r.status}`)
+      setDelegateAnswer(String(j.answer || ""))
+      setDelegateAsk("")
+    } catch (e: any) { setDelegateErr(String(e?.message || e)) }
+    finally { setDelegateBusy(false) }
   }
 
   // /goal: one condition per session. The command sets, checks, pauses, resumes or clears it; after every turn the
@@ -1998,6 +2051,15 @@ export default function Home() {
               ))}
             </div>
           )}
+          {delegation?.model && (
+            // The routed model for this turn, in the chat: clicking brings the delegation panel back in the right sidebar.
+            <button type="button" className="dk-delegate-chip" onClick={() => showSidebar("right")}
+              title={`${delegation.why}. Open the delegation panel.`}>
+              <span className="dk-delegate-dot" data-rung={delegation.rung || "cheap"} aria-hidden="true" />
+              Delegated to <b>{delegation.model.id}</b>
+              <span className="dk-delegate-chip-why">{delegation.goal ? delegation.goal.name : delegation.why}</span>
+            </button>
+          )}
           <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
             <span className="dg-composer-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the message box" onPointerDown={startComposerResize} />
             {attachments.length > 0 && attachmentChips(attachments, true)}
@@ -2118,6 +2180,61 @@ export default function Home() {
                   </>)}
             </section>
           )}
+          {/* The delegated model: what the router matched, which model runs the turn and why, and the scoped side call. */}
+          <details className="dk-fold dk-delegate" open>
+            <summary className="dk-panel-head">
+              <h2>Delegated{delegation?.model ? ` · ${delegation.model.id}` : ""}</h2>
+              {delegation?.model && (
+                <span className="dk-iconrow">
+                  <button type="button" className="dk-icon dk-icon-sm" aria-label="Ask the delegated model" title="Ask it directly"
+                    onClick={(e) => { e.preventDefault(); document.getElementById("dk-delegate-ask")?.focus() }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+                  </button>
+                </span>
+              )}
+            </summary>
+            {!delegation && <p className="dk-note">Send a task: kell routes it to a Goal and a Way, then runs the turn on the model that procedure needs.</p>}
+            {!delegation && delegateNote && <p className="dk-err">{delegateNote}</p>}
+            {delegation && (
+              <div className="dk-delegate-body">
+                <div className="dk-delegate-row">
+                  <span>Goal</span>
+                  <b title={delegation.goal?.name}>{delegation.goal?.name || "no Goal matched"}</b>
+                </div>
+                <div className="dk-delegate-row">
+                  <span>Way</span>
+                  <b title={delegation.way?.name}>{delegation.way?.name || "none bound yet"}</b>
+                  {delegation.way && <i>{delegation.way.approval}</i>}
+                </div>
+                <div className="dk-delegate-row">
+                  <span>Tool</span>
+                  <b title={delegation.tool?.server || delegation.tool?.name}>{delegation.tool?.name || "none bound"}</b>
+                  {delegation.tool?.server && <i>{delegation.tool.server.replace(/^https?:\/\//, "").split("/")[0]}</i>}
+                </div>
+                <div className="dk-delegate-row">
+                  <span>Model</span>
+                  <b>{delegation.model?.id || "the engine's default"}</b>
+                  {delegation.rung && <i data-rung={delegation.rung}>{delegation.rung}</i>}
+                </div>
+                <p className="dk-note">{delegation.why}</p>
+                <details className="dk-brief">
+                  <summary>What it may see</summary>
+                  <pre>{delegation.brief}</pre>
+                </details>
+                <form className="dk-delegate-ask" onSubmit={(e) => { e.preventDefault(); void askDelegate() }}>
+                  <input id="dk-delegate-ask" value={delegateAsk} onChange={(e) => setDelegateAsk(e.target.value)}
+                    placeholder={`Ask ${delegation.model?.id || "the delegated model"} directly…`} autoComplete="off"
+                    aria-label="Ask the delegated model" disabled={delegateBusy} />
+                  <button type="submit" className="btn-line dg-mini" disabled={delegateBusy || !delegateAsk.trim()}>
+                    {delegateBusy ? "Asking…" : "Ask"}
+                  </button>
+                </form>
+                <p className="dk-note">The brief and the question only: no files, no shell, no chat history.</p>
+                {delegateErr && <p className="dk-err">{delegateErr}</p>}
+                {delegateAnswer && <div className="dk-delegate-a" aria-live="polite"><Markdown text={delegateAnswer} /></div>}
+              </div>
+            )}
+          </details>
           <details className="dk-fold" open>
           <summary className="dk-panel-head">
             <h2>Changed by kell{files.length ? ` · ${files.length}` : ""}</h2>

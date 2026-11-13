@@ -236,6 +236,40 @@
 .dk-card .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .dk-card .meta { font-size: 11.5px; color: var(--grey); grid-column: 1; }
 
+/* The delegated model (docs/ios_animation.md 4.6, 10): the router's answer, the model that runs the turn, and the scoped
+   side call. Motion is the same kit as the rest of the panel -- an 8 px rise on --dg-smooth, transform and opacity only. */
+@keyframes dk-delegate-in { from { opacity: 0; transform: translateY(8px); } }
+.dk-delegate-body { display: flex; flex-direction: column; gap: 4px; margin: 2px 6px 0; animation: dk-delegate-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
+.dk-delegate-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; font-size: 12.5px; }
+.dk-delegate-row > span { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--grey); }
+.dk-delegate-row > b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-delegate-row > i { font-style: normal; font-size: 10.5px; color: var(--grey); }
+.dk-delegate-row > i[data-rung="strong"] { color: var(--ink); }
+.dk-delegate-row > i[data-rung="cheap"] { color: var(--cobalt); }
+.dk-brief { margin-top: 2px; }
+.dk-brief > summary { cursor: pointer; font-size: 11.5px; color: var(--grey); padding: 2px 0; }
+.dk-brief pre { margin: 4px 0 0; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface);
+  font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dk-delegate-ask { display: flex; gap: 6px; margin-top: 6px; }
+.dk-delegate-ask input { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; padding: 6px 9px; border: 1px solid var(--rule);
+  border-radius: 8px; background: var(--surface); color: var(--ink); }
+.dk-delegate-ask input:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-delegate-a { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); padding: 8px 10px; font-size: 12.5px; }
+.dk-delegate-a > :first-child { margin-top: 0; } .dk-delegate-a > :last-child { margin-bottom: 0; }
+
+/* The chip in the chat: the model this turn runs on; it opens the panel. Same press recipe as the other icon buttons. */
+.dk-delegate-chip { display: flex; align-items: center; gap: 6px; align-self: flex-start; margin: 0 4px 6px; padding: 4px 10px;
+  border: 1px solid var(--rule); border-radius: 999px; background: var(--glass, var(--surface)); color: var(--grey);
+  font: inherit; font-size: 11.5px; cursor: pointer; max-width: 100%; overflow: hidden;
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-delegate-chip:hover { background: var(--surface); transform: translateY(-1px); }
+.dk-delegate-chip:active { transform: none; }
+.dk-delegate-chip b { font-weight: 500; color: var(--ink); white-space: nowrap; }
+.dk-delegate-chip-why { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-delegate-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--cobalt); }
+.dk-delegate-dot[data-rung="strong"] { background: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .dk-delegate-body, .dk-delegate-chip { animation: none !important; transition: none !important; } }
+
 :root[data-theme="dark"] .dk-diff .add { color: #8fd3a8; } :root[data-theme="dark"] .dk-diff .del { color: #e6a0a0; }
 :root[data-theme="dark"] .dk-file .stat .add { color: #6ee7a0; } :root[data-theme="dark"] .dk-file .stat .del { color: #ff8a80; }
 :root[data-theme="dark"] .dk-diff .hunk { background: rgba(255, 255, 255, .04); }

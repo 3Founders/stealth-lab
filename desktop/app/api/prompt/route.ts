@@ -122,11 +122,16 @@ export async function POST(req: Request) {
           }
         } catch { /* history is an addition */ }
         const text = String(body.text || "") + attached.text + prior
+        // The routed model for this turn (lib/delegate.ts): the chat model the person is talking to is the one the
+        // procedure needs. A missing or unreadable override falls back to the engine's own choice.
+        const model = body.model && typeof body.model.id === "string" && typeof body.model.providerID === "string"
+          ? { id: String(body.model.id), providerID: String(body.model.providerID) }
+          : undefined
         try {
           await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools", value: TOOL_RULES } as any)
         } catch { /* the prompt still runs */ }
         try {
-          await client.session.prompt({ sessionID, text, ...(attached.files.length ? { files: attached.files } : {}) })
+          await client.session.prompt({ sessionID, text, ...(model ? { model } : {}), ...(attached.files.length ? { files: attached.files } : {}) } as any)
           await pump
         } finally {
           // One assistant row per turn, assembled from the stream. A failed turn keeps the user row and any text received.
