@@ -6,7 +6,7 @@ import pytest
 
 from app.services.shards import (
     HOME_SHARD, NoWritableShard, ShardInfo, ShardPools, ShardUnavailable,
-    choose_child_shard, choose_shard, hydrate_rows,
+    choose_child_shard, choose_shard, goal_placement_shards, hydrate_rows,
 )
 
 
@@ -47,6 +47,28 @@ def test_non_active_shards_never_receive_new_objects():
 def test_no_writable_shard_fails_closed():
     with pytest.raises(NoWritableShard):
         choose_shard("g", [_s("A", status="full")])
+
+
+def test_a_user_created_goal_is_pinned_to_the_home_shard():
+    """The router's catalog reads K000 only, so a new person-created Goal must live there."""
+    shards = [_s("K000", weight=0), _s("K001"), _s("K002")]
+    placement = goal_placement_shards(shards, created_from="user_created")
+    assert [s.shard_id for s in placement] == [HOME_SHARD]
+    # ...and it still lands on K000 even though K000 carries weight 0 (never chosen otherwise)
+    assert choose_shard("any-id", placement) == HOME_SHARD
+
+
+def test_corpus_goals_still_spread_over_public_shards():
+    shards = [_s("K000", weight=0), _s("K001"), _s("K002")]
+    placement = goal_placement_shards(shards, created_from="extraction")
+    assert {s.shard_id for s in placement} == {"K000", "K001", "K002"}
+    assert {choose_shard(f"g{i}", placement) for i in range(100)} == {"K001", "K002"}
+
+
+def test_a_private_goal_stays_on_the_home_shard_whatever_its_origin():
+    shards = [_s("K000", weight=0), _s("K001")]
+    placement = goal_placement_shards(shards, visibility="private", created_from="extraction")
+    assert [s.shard_id for s in placement] == [HOME_SHARD]
 
 
 def test_child_prefers_goal_shard_and_rolls_over_when_full():

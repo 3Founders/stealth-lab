@@ -634,7 +634,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "room_list", "room_read", "room_members", "canvas_list", "canvas_read", "memory_read", "memory_search")},
     **{n: _WRITE for n in (
         "canvas_write",
-        "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
+        "submit_procedure", "add_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
         "report_discovery", "submit", "submit_goal", "run_way", "report_model_run", "report_result", "report_audit", "report_check_evidence",
@@ -662,7 +662,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 
 V1_TOOLS: frozenset[str] = frozenset({
-    "find_ways", "report_discovery", "submit", "submit_goal", "run_way", "recommend_models", "report_model_run", "report_result",
+    "find_ways", "add_goal", "search_goals", "report_discovery", "submit", "submit_goal", "run_way", "recommend_models", "report_model_run", "report_result",
     "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool", "delegate_inbox",
     "delegate_result", "delegate_call", "room_list", "room_read", "room_post", "room_members", "canvas_list", "canvas_read", "canvas_write",
     "memory_read", "memory_search", "memory_write"})
@@ -673,6 +673,10 @@ V1_TOOLS: frozenset[str] = frozenset({
 # Connectors Directory requires title + readOnlyHint/destructiveHint).
 _V1_ANNOTATIONS: dict[str, dict] = {
     "find_ways": {"title": "Find proven ways", "read_only_hint": True, "open_world_hint": False},
+    "search_goals": {"title": "Find Goals", "read_only_hint": True, "open_world_hint": False},
+    # a write: stores a candidate Goal owned by the caller, in the same catalog the router reads
+    "add_goal": {"title": "Add a Goal", "read_only_hint": False, "destructive_hint": False,
+                 "idempotent_hint": False, "open_world_hint": False},
     "recommend_models": {"title": "Recommend models", "read_only_hint": True, "open_world_hint": False},
     "report_discovery": {"title": "Report a discovery", "read_only_hint": False, "destructive_hint": False,
                          "idempotent_hint": False, "open_world_hint": False},
@@ -5171,6 +5175,103 @@ async def _submission_call(ctx: Context, call: Any) -> str:
         return json.dumps(await call(pool, owner), default=str)
     except _sub_api.ERRORS as exc:
         return f"REFUSED: {str(exc).strip(chr(39) + chr(34))}"
+
+
+@server.tool()
+@_activity.traced
+async def add_goal(ctx: Context, canonical_name: str, rationale: str, objective: str = "",
+                   description: str = "", allow_create_anyway: bool = False) -> str:
+    """
+    Add a Goal: what is to be done, why, and what counts as done. The Goal is stored as a
+    candidate owned by the signed-in person and is retrievable at once by search_goals,
+    /v1/goals/rank and the router.
+
+    canonical_name: the goal as one sentence ("Send a Slack message to a channel").
+    rationale: why this Goal is worth accomplishing (required).
+    objective: what counts as accomplished (required if description is empty).
+    allow_create_anyway: set true only after reading a prior call's near_matches and
+    deciding this is a genuinely new Goal.
+
+    Returns {"outcome": "created" | "matched" | "near_matches", "goal" | "candidates": ...}.
+    """
+    from app.services.classification import DataClass
+    from app.services.embeddings import Embedder
+    from app.services.goals import GoalQualityRejected, create_goal_from_user
+    from app.services.provider_policy import ProviderPolicyDenied
+    from app.services.v0_gate import V0Violation
+    from app.tool_routing import goal_catalog
+
+    try:
+        owner = _kell_owner()
+    except PermissionError:
+        return "REFUSED: sign in to kell to add a Goal"
+    pool = ctx.request_context.lifespan_context["pool"]
+
+    async def _create(embedder):
+        return await create_goal_from_user(
+            pool, canonical_name=canonical_name, description=description or None,
+            rationale=rationale, objective=objective or None,
+            scope_type="global", owner_id=owner, embedder=embedder,
+            allow_create_anyway=allow_create_anyway,
+        )
+
+    try:
+        try:
+            made = await _create(Embedder(data_classification=DataClass.USER_PRIVATE, policy_pool=pool))
+        except ProviderPolicyDenied:
+            # A provider-policy denial must not fail the write: retry with exact-name/alias dedup only.
+            made = await _create(None)
+    except (V0Violation, GoalQualityRejected, ValueError) as exc:
+        return f"REFUSED: goal -- {exc}"
+    if made.get("outcome") == "created":
+        await goal_catalog.refresh_now(pool)
+    return json.dumps(made, default=str)
+
+
+@server.tool()
+@_activity.traced
+async def search_goals(ctx: Context, query: str, limit: int = 10) -> str:
+    """
+    Retrieve Goals by name, alias or words. Answers from the in-process catalog first (exact,
+    alias, then token overlap -- the same index /v1/goals/rank uses, so a Goal just added by
+    add_goal is found immediately); if nothing matches, it searches the goal store for the
+    caller.
+
+    Returns {"query": ..., "goals": [{id, canonical_name, description, status, score,
+    matched_by}]}.
+    """
+    from app.tool_routing import goal_catalog
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    text = " ".join(str(query or "").split())[:2000]
+    if not text:
+        return json.dumps({"query": "", "goals": []})
+    k = max(1, min(int(limit or 10), 50))
+    catalog = await goal_catalog.load(pool)
+    hits = catalog.match(text, limit=k)
+    if not hits:
+        try:
+            owner = _kell_owner()
+        except PermissionError:
+            owner = ""
+        if owner:
+            from app.services.auth_context import AccessScope
+            from app.services.goals import search_goals as _search_goals_db
+
+            rows = await _search_goals_db(
+                pool, query_text=text, scope=AccessScope.for_user(owner), limit=k,
+            )
+            hits = [
+                {
+                    "id": str(r.get("id") or ""),
+                    "canonical_name": r.get("canonical_name") or "",
+                    "description": r.get("description") or "",
+                    "status": r.get("status") or "",
+                    "matched_by": "store",
+                }
+                for r in rows
+            ]
+    return json.dumps({"query": text, "goals": hits}, default=str)
 
 
 @server.tool()

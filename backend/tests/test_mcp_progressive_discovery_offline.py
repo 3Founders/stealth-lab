@@ -69,9 +69,9 @@ def test_report_result_is_found_and_run_through_discovery():
 
 def test_all_lists_every_tool_without_the_discovery_pair(monkeypatch):
     monkeypatch.setattr(srv.settings, "mcp_tool_discovery", "all")
-    assert _listed() == ["call_model", "delegate", "delegate_inbox", "delegate_result", "find_ways", "recommend_models",
+    assert _listed() == ["add_goal", "call_model", "delegate", "delegate_inbox", "delegate_result", "find_ways", "recommend_models",
                          "report_audit", "report_check_evidence", "report_discovery", "report_model_run", "report_result", "report_tools",
-                         "submit", "submit_goal"]
+                         "search_goals", "submit", "submit_goal"]
 
 
 def test_hidden_tools_stay_registered_so_direct_callers_keep_working():

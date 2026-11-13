@@ -468,7 +468,7 @@ def test_every_registered_mcp_tool_is_classified(mcp):
     src = open(mcp.__file__, encoding="utf-8").read()
     # other decorators (e.g. @_activity.traced) may sit between @server.tool() and the def
     names = set(re.findall(r"@server\.tool\([^)]*\)\s*\n(?:@[\w.]+(?:\([^)]*\))?\s*\n)*async def (\w+)\(", src))
-    assert names == {"find_ways", "submit", "report_discovery", "recommend_models", "report_model_run",
+    assert names == {"find_ways", "add_goal", "search_goals", "submit", "report_discovery", "recommend_models", "report_model_run",
                      "report_result", "report_audit", "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool",
                      "delegate_inbox", "delegate_result", "delegate_call", "submit_goal", "run_way",
                      # rooms, canvas and memory: read through the signed-in person's own membership

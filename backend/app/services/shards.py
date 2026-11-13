@@ -58,6 +58,25 @@ def writable_shards(shards: Sequence["ShardInfo"], *, visibility: str = "public"
     return knowledge_members(shards)
 
 
+def goal_placement_shards(
+    shards: Sequence["ShardInfo"], *, visibility: str = "public", created_from: Optional[str] = None,
+) -> list["ShardInfo"]:
+    """Shards a new Goal row may be written to.
+
+    A Goal a person just added is pinned to the home shard K000. The router ranks from an
+    in-process catalog built from K000 (app/tool_routing/goal_catalog.py), so a user-created
+    Goal spread onto a public knowledge shard would be written successfully and then invisible
+    to /v1/goals/rank, /route and the MCP search. Public-corpus placement is for the taxonomy
+    and extraction corpus, not for one person's unreviewed candidate.
+    """
+    candidates = writable_shards(shards, visibility=visibility)
+    if created_from == "user_created":
+        # Same synthetic writable entry `writable_shards` uses for private data: the registry's
+        # K000 record may carry weight 0 (it is the control database, not a corpus shard).
+        return [ShardInfo(HOME_SHARD, "active", 100)]
+    return candidates
+
+
 async def multi_shard(pool: Any) -> bool:
     """True iff a shard other than the home shard is registered (cheap: cached registry)."""
     if not isinstance(pool, asyncpg.Pool):   # test doubles / non-database stand-ins are single-shard by definition

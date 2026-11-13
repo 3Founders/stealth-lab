@@ -456,9 +456,10 @@ async def find_or_create_goal(
         )
 
     goal_id = uuid7()
-    from app.services.shards import cached_shards, choose_shard, writable_shards
+    from app.services.shards import cached_shards, choose_shard, goal_placement_shards
 
-    home_shard = choose_shard(str(goal_id), writable_shards(await cached_shards(pool), visibility=visibility))
+    home_shard = choose_shard(str(goal_id), goal_placement_shards(
+        await cached_shards(pool), visibility=visibility, created_from=created_from))
     wpool = pool
     if home_shard != HOME_SHARD:
         # REMOTE canonical write. The control database arbitrates exact identity through the

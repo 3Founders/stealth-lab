@@ -183,6 +183,19 @@ async def load(pool: Any, *, force: bool = False) -> Catalog:
         return fresh
 
 
+async def refresh_now(pool: Any) -> bool:
+    """Rebuild at once, so a Goal just created is retrievable by /rank and /route.
+
+    Never raises: the Goal is already written; a failed rebuild only means it appears on the
+    next TTL pass. Returns whether the rebuild happened.
+    """
+    try:
+        await load(pool, force=True)
+        return True
+    except Exception:  # noqa: BLE001 -- the create must not fail because the cache did
+        return False
+
+
 async def _build(pool: Any) -> Catalog:
     rows = await pool.fetch(
         """

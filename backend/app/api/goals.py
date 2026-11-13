@@ -364,6 +364,12 @@ async def create_goal_route(
         raise HTTPException(422, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if result.get("outcome") == "created":
+        # The router ranks from an in-process catalog with a 60 s TTL. Rebuild now so the new
+        # Goal can be retrieved by /v1/goals/rank and /v1/goals/route on the very next call.
+        from app.tool_routing import goal_catalog
+
+        await goal_catalog.refresh_now(pool)
     return result
 
 

@@ -119,6 +119,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Ranking refresh | **automatic** | `db/205` triggers mark a Goal stale when its cards, ways or outcomes change; `ranking.drain()` refreshes the marked Goals every 15 s in the app (`app/main.py`), and `refresh_goal_rankings.py --drain` does it once for tests. A batch of 8+ Goals uses one all-Goals pass |
 | Route surface | **built** | `GET /v1/goals/route` (`app/api/goals.py` + `app/tool_routing/route_api.py`) and its MCP twin (`room_agent_routes.py`); `/route` on the website and in the desktop app. The tool tier now ranks a Goal's cards by the request (`goal_router._query_hits`: BM25 + vectors + reranker, 4 s bound, 2 min cache), and a no-Goal request falls back to the tool tier alone. `db/203` adds the HNSW index that makes the candidate scan ~2 s |
 | Goal ranking (fast tier) | **local, in process** | `app/tool_routing/goal_catalog.py`: the 30 Goals, their aliases and the top 5 ways per Goal, 60 s TTL, warmed at startup. `GET /v1/goals/rank` answers in ~3–6 ms warm (~0.9 s cold); `/route` adds ways, then tools |
+| Add and retrieve Goals | **built** | `POST /v1/goals` (HTTP), MCP `add_goal` + `search_goals`, `scripts/add_goal.py` (one, or JSONL). A new Goal is a `candidate` pinned to `K000`; the catalog is rebuilt at once, so `/rank` and `/route` find it on the next call |
 
 Known local constraint: goal semantic/FTS search warns that the search group's members are unconfigured. Exact
 `goal_names` lookup works and hydrates from the home shard; the K000 full-text fallback in `goal_router.py` keeps the
@@ -154,6 +155,40 @@ curl "http://127.0.0.1:8000/v1/goals/rank?q=send%20a%20slack%20message&k=5"
 The website page is `/route` (`routing_kell_frontend/app/route/page.tsx`); the desktop page is
 `/route` (`desktop/app/route/page.tsx`, opened from the magnifier in the top bar). The desktop
 route is served by the MCP server (`room_agent_routes.py`), so it uses the app's existing sign-in.
+
+### Add and retrieve a Goal
+
+The 30 Goals in the tool taxonomy are the seed; anyone can add another. A new Goal is stored as
+a `candidate` owned by the caller, and the in-process catalog is rebuilt at once, so the router
+finds it on the next call (not after the 60 s TTL). A user-created Goal is pinned to the home
+shard `K000` (`goal_placement_shards` in `app/services/shards.py`): the catalog reads `K000`, so
+a Goal spread onto a public corpus shard would be written and then invisible to `/rank`,
+`/route` and `search_goals`.
+
+```powershell
+# HTTP (signed in): one of created | matched | near_matches
+curl -X POST http://127.0.0.1:8000/v1/goals -H "content-type: application/json" `
+  -d '{"canonical_name":"Send a Slack message","rationale":"the team lives in Slack","objective":"the message is posted"}'
+
+# CLI: one Goal, or a JSONL file (dry run first)
+python scripts/add_goal.py --name "Send a Slack message" --rationale "the team lives in Slack" --objective "the message is posted"
+python scripts/add_goal.py --file goals.jsonl --dry-run
+python scripts/add_goal.py --file goals.jsonl
+
+# retrieve: the catalog (3-6 ms warm) or the store
+curl "http://127.0.0.1:8000/v1/goals/rank?q=slack%20message&k=5"
+curl "http://127.0.0.1:8000/v1/goals/search?q=slack&semantic=true"
+```
+
+MCP has the same pair: `add_goal` (a write, for the signed-in person) and `search_goals` (a
+read; the catalog first, then the goal store). A Goal with no Ways yet comes back from
+`/v1/goals/route` with empty `ways` and `tools`; attach Ways with `submit_goal` or by mapping
+tool cards to it.
+
+The near-match answer is advisory: `create_goal_from_user` warns only when the candidate shares
+real content words with the new name (Jaccard >= 0.3, `looks_like_the_same_goal`). One shared
+generic word ("check") does not block a write; the authoritative dedup stays
+`find_or_create_goal`'s exact/alias/embedding tiers.
 
 ## Ground rules for parallel agents
 
