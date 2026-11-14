@@ -1502,6 +1502,11 @@ span.dg-replyq { cursor: default; }
 .dg-signin-btn:hover .sq, .dg-signin-btn:focus-visible .sq { transform: translate(2px, -2px); }
 .dg-signin-done { font-size: .85em; color: var(--grey); flex: none; }
 .dg-signin-done::before { content: "✓ "; color: var(--ink); }
+.dg-signin-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; }
+.dg-signin-again { font: inherit; font-size: .72em; background: none; border: 0; padding: 0; color: var(--grey);
+  text-decoration: underline; cursor: pointer; }
+.dg-signin-again:hover { color: var(--ink); }
+.dg-signin-again:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
 .dg-signin-run { justify-self: start; font: inherit; font-size: .85em; background: none; border: 0; padding: 0; color: var(--ink); text-decoration: underline; cursor: pointer; }
 @media (max-width: 520px) {
   .dg-signin-card li { grid-template-columns: 40px minmax(0, 1fr) auto; }

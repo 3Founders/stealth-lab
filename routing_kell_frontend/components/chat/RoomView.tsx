@@ -360,7 +360,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       for (const t of tools) {
         const at = items.findIndex((x) => (x.server || x.link) === (t.server || t.link));
         if (at < 0) items.push(t);
-        else if (!items[at].done) items[at] = { ...items[at], link: t.link };   // tried again: the newer link
+        // Tried again: the newer link, and it still needs a sign-in. A tool that asks after its card said "Signed in" was
+        // not signed in after all, so the tick goes and the button comes back (2026-11-14: a card with no way to sign in).
+        else items[at] = { ...items[at], link: t.link, done: false };
       }
       lineStore.current = { ...lineStore.current, [r]: cur.map((l) => (l === card ? { ...card, signIns: items } : l)) };
       bump((n) => n + 1);
@@ -531,6 +533,23 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (signInOpened.current === link) void signedIn(link);
     }, 600);
   }, [note, signedIn]);
+  /** The card's action, always available: open the tool's link, or ask kell for a fresh one when the card has none (an
+   *  older server, or a link that was used up). A sign-in card with no button is a dead end (2026-11-14). */
+  const signInFor = useCallback(async (item: SignInItem) => {
+    if (item.link) { openToolSignIn(item.link); return; }
+    if (!item.server) { note("This tool gave no sign-in link. Ask kell to try again.", roomRef.current); return; }
+    try {
+      const fresh = await roomsAgent.toolSignIn(item.server);
+      if (fresh.signedIn) { retrySignIn(); return; }
+      if (!fresh.link) { note(`kell could not make a sign-in link for ${toolLabel(item.server)}. Try again in a moment.`, roomRef.current); return; }
+      const card = signInCard.current;
+      const cur = card ? lineStore.current[card.room] ?? [] : [];
+      lineStore.current = { ...lineStore.current, [card?.room ?? roomRef.current]: cur.map((l) => (l.kind === "notice" && l.id === card?.id && l.signIns
+        ? { ...l, signIns: l.signIns.map((x) => (x.server && x.server === item.server ? { ...x, link: fresh.link!, done: false } : x)) } : l)) };
+      bump((n) => n + 1);
+      openToolSignIn(fresh.link);
+    } catch { note("That sign-in link could not be made. Try again in a moment.", roomRef.current); }
+  }, [openToolSignIn, retrySignIn, note, roomsAgent]);
   // A link that expired (they last 10 minutes): the sign-in window says so and tells this page, which makes a new link and loads it in the SAME
   // window, so the person never has to ask again. If they were already signed in to that tool, the window closes and it is ticked.
   useEffect(() => {
@@ -855,7 +874,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     for (const s of seq) {
       if (s.kind !== "run") {
         const l = s.l;
-        out.push({ t: l.t, key: l.id, node: l.signIns
+        out.push({ t: l.t, key: l.id, node: l.signIns?.length
           ? (
             <MessageScroller.Item key={l.id} className="dg-signin-card" role="status">
               <div className="dg-signin-head">
@@ -890,8 +909,19 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                     </span>
                     {i === 0 && l.signIns!.length > 1 ? <span className="dg-signin-best">Best fit</span> : null}
                     {x.done
-                      ? <span className="dg-signin-done">Signed in</span>
-                      : <button type="button" className="dg-signin-btn" onClick={() => openToolSignIn(x.link)}><span>Sign in</span><span className="sq" aria-hidden="true">→</span></button>}
+                      ? (
+                        <span className="dg-signin-actions">
+                          <span className="dg-signin-done">Signed in</span>
+                          <button type="button" className="dg-signin-again" onClick={() => void signInFor(x)}>Sign in again</button>
+                        </span>
+                      )
+                      : (
+                        // Always a button: a card whose link is missing asks kell for a fresh one instead of leaving the
+                        // person with no way to sign in (2026-11-14).
+                        <button type="button" className="dg-signin-btn" onClick={() => void signInFor(x)}>
+                          <span>{x.link ? "Sign in" : "Get a link"}</span><span className="sq" aria-hidden="true">→</span>
+                        </button>
+                      )}
                   </li>
                 ))}
               </ol>
