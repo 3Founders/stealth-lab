@@ -213,7 +213,8 @@
 .dk-rung[data-r="strong"] { background: var(--ink); color: var(--paper); }
 
 .dk-files { display: flex; flex-direction: column; gap: 8px; margin: 4px 6px 0; }
-.dk-file { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.dk-file { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); overflow: hidden;
+  animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
 .dk-file summary { cursor: pointer; padding: 8px 10px; font-size: 12.5px; display: flex; gap: 8px; align-items: baseline; }
 .dk-file .path { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 11.5px; overflow-wrap: anywhere; }
 .dk-file .stat { margin-left: auto; font-size: 11.5px; white-space: nowrap; }
@@ -228,7 +229,8 @@
 
 .dk-cards { display: flex; flex-direction: column; gap: 6px; margin: 4px 6px 0; }
 .dk-card { border: 1px solid var(--rule); border-radius: 10px; padding: 8px 10px; background: var(--surface); display: grid;
-  grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; }
+  grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center;
+  animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
 .dk-card .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .dk-card .meta { font-size: 11.5px; color: var(--grey); grid-column: 1; }
 
@@ -275,6 +277,41 @@
 .dk-delegate-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--cobalt); }
 .dk-delegate-dot[data-rung="strong"] { background: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .dk-delegate-body, .dk-delegate-chip { animation: none !important; transition: none !important; } }
+
+/* The right panel's Agents list: the session itself and the model the router delegated this turn to. Selecting one
+   swaps the middle column (main chat vs that agent's own output). */
+.dk-agents { display: flex; flex-direction: column; gap: 3px; margin: 2px 6px 8px; }
+.dk-agent { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 9px;
+  border: 1px solid transparent; cursor: pointer; color: var(--ink); min-width: 0;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease);
+  animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
+.dk-agent:hover { background: var(--soft); }
+.dk-agent:active { transform: scale(.985); }
+.dk-agent[aria-selected="true"] { background: var(--surface); border-color: var(--rule-strong); }
+.dk-agent > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.dk-agent b { font-weight: 500; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-agent small { font-size: 10.5px; color: var(--grey); }
+.dk-agent-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cobalt); flex: none; }
+.dk-agent-dot[data-rung="strong"] { background: var(--ink); }
+.dk-agent-empty { cursor: default; opacity: .65; }
+.dk-agent-empty:hover { background: transparent; }
+
+/* The delegated agent's own view in the middle: the plan, its last turn, and every direct answer. */
+.dk-agent-content { justify-content: flex-start; }
+.dk-agent-view { display: flex; flex-direction: column; gap: 12px; padding: 2px 0 12px;
+  animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
+.dk-agent-view-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.dk-agent-view-head b { font-size: 14px; font-weight: 500; }
+.dk-agent-view-sub { color: var(--grey); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-agent-view-head .dg-mini { margin-left: auto; }
+.dk-agent-plan { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.dk-agent-turn, .dk-agent-qa { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); padding: 10px 12px; }
+.dk-agent-turn-label { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); margin-bottom: 4px; }
+.dk-agent-q { font-size: 12.5px; font-weight: 500; color: var(--ink); margin-bottom: 3px; }
+.dk-agent-a { font-size: 14px; line-height: 1.55; }
+.dk-agent-a > :first-child { margin-top: 0; } .dk-agent-a > :last-child { margin-bottom: 0; }
+.dk-agent-log { display: flex; flex-direction: column; gap: 8px; }
+.dk-agent-turn .dg-md p, .dk-agent-a .dg-md p { font-weight: 300; }
 
 :root[data-theme="dark"] .dk-diff .add { color: #8fd3a8; } :root[data-theme="dark"] .dk-diff .del { color: #e6a0a0; }
 :root[data-theme="dark"] .dk-file .stat .add { color: #6ee7a0; } :root[data-theme="dark"] .dk-file .stat .del { color: #ff8a80; }
@@ -432,12 +469,13 @@
 .dk-page .dk-fold::details-content,
 .dk-page .dk-file::details-content,
 .dk-page .dk-sess-more::details-content {
-  block-size: 0; overflow: hidden;
-  transition: block-size var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), content-visibility var(--dg-smooth-d, 300ms) allow-discrete;
+  block-size: 0; overflow: hidden; opacity: 0;
+  transition: block-size var(--dg-smooth-d, 300ms) var(--dg-smooth, ease), content-visibility var(--dg-smooth-d, 300ms) allow-discrete,
+              opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease);
 }
 .dk-page .dk-fold[open]::details-content,
 .dk-page .dk-file[open]::details-content,
-.dk-page .dk-sess-more[open]::details-content { block-size: auto; }
+.dk-page .dk-sess-more[open]::details-content { block-size: auto; opacity: 1; }
 /* Sessions: a title and when it was last used. */
 .dk-sessions .dk-recent { justify-content: space-between; }
 .dk-sessions .dk-recent .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -582,14 +620,49 @@
 .dk-import-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
 @media (prefers-reduced-motion: reduce) { .dk-import-backdrop, .dk-import { animation: none !important; } .dk-sess-import, .dk-import-open, .dk-import-src button, .dk-import-list label { transition: none; } }
 
-/* Stop, while a turn runs. */
-.dk-stop { all: unset; box-sizing: border-box; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; cursor: pointer;
+/* Stop, while a turn runs. The composer's own `button` recipe (44 px, ink, white text) is written for Send; the
+   extra `.dg-composer` here lets Stop keep its glass look and, above all, its dark icon. Without it the icon
+   inherited Send's `color: var(--paper)` and vanished on the near-white glass (found 2026-11-13). */
+.dg-composer .dk-stop { all: unset; box-sizing: border-box; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; cursor: pointer;
   border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink);
   transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), box-shadow var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
-.dk-stop:hover { border-color: #b3261e; color: #b3261e; }
-.dk-stop:active { transform: scale(.94); }
-.dk-stop:disabled { opacity: .45; cursor: default; }
-.dk-stop:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dg-composer .dk-stop:hover { border-color: #b3261e; color: #b3261e; }
+.dg-composer .dk-stop:active { transform: scale(.94); }
+.dg-composer .dk-stop:disabled { opacity: .45; cursor: default; }
+.dg-composer .dk-stop:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+
+/* An attachment chip is one object, not two composer buttons. The generic `.dg-composer button` recipe also painted
+   the file row and its × as two 44 px ink blocks, which is what put a break between the object and the close. */
+.dg-composer .dg-atts .dg-att-open,
+.dg-composer .dg-atts .dg-att-x {
+  all: unset; box-sizing: border-box; font: inherit; cursor: pointer; color: var(--ink);
+  height: auto; min-width: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none;
+}
+.dg-composer .dg-atts .dg-att-open { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; font-size: 12px; }
+.dg-composer .dg-atts .dg-att-open:hover { background: var(--soft); }
+.dg-composer .dg-atts .dg-att-x { display: grid; place-items: center; width: 22px; height: 22px; color: var(--grey); font-size: 14px; }
+.dg-composer .dg-atts .dg-att-x:hover { color: #b3261e; background: rgba(0, 0, 0, .05); }
+:root[data-theme="dark"] .dg-composer .dg-atts .dg-att-x:hover { background: rgba(255, 255, 255, .08); }
+
+/* A chip arrives with the chat's menu pop and leaves with a short scale/fade, so adding or removing an image is a
+   motion rather than a jump (docs/ios_animation.md §4.6). Transform and opacity only; the bouncy spring gives the
+   arrival its small overshoot, the micro spring keeps the exit out of the way. */
+.dk-page .dg-atts .dg-att { animation: dk-att-in var(--dg-bouncy-d, 360ms) var(--dg-bouncy, ease) backwards; }
+.dk-page .dg-atts .dg-att[data-leaving] { animation: dk-att-out var(--dg-micro-d, 160ms) var(--dg-micro, ease) forwards; pointer-events: none; }
+@keyframes dk-att-in { from { opacity: 0; transform: translateY(6px) scale(.86); } }
+@keyframes dk-att-out { to { opacity: 0; transform: scale(.86); } }
+/* The same pop for an image already in a sent message, so it appears with the reply instead of being there already. */
+.dk-page .dg-msg .dg-atts .dg-att { animation-delay: 40ms; }
+
+/* The paperclip on the dark composer: a soft white halo, so it reads as a control instead of disappearing. */
+:root[data-theme="dark"] .dk-page .dg-composer .dg-attach-file {
+  color: #f4f1e8;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .14), 0 0 14px rgba(255, 255, 255, .2);
+}
+:root[data-theme="dark"] .dk-page .dg-composer .dg-attach-file:not(:disabled):hover {
+  color: #171717;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .5), 0 0 18px rgba(255, 255, 255, .35);
+}
 
 /* The icon buttons and Stop use the same glass and lift as the website's buttons, so the app has one button
    language rather than a flat control row beside glassy CTAs. */
@@ -688,11 +761,12 @@
 @media (prefers-reduced-motion: reduce) {
   .dk-page .dk-step, .dk-page .dk-viewer, .dk-page .dk-account, .dk-page .dk-help-menu,
   .dk-page .dk-panel > *, .dk-page .dk-activity li, .dk-page .dk-activity li[data-state="running"] .dk-act-mark,
-  .dk-page .dk-head-toggle, .dk-palette-backdrop, .dk-palette, .dk-btw { animation: none !important; }
+  .dk-page .dk-head-toggle, .dk-palette-backdrop, .dk-palette, .dk-btw, .dk-page .dk-agent,
+  .dk-page .dk-file, .dk-page .dk-card, .dk-page .dk-agent-view, .dk-page .dg-atts .dg-att { animation: none !important; }
   .dk-page .dk-icon, .dk-page .dk-winbtn, .dk-page .dk-tree-row, .dk-page .dk-tree-row .chev,
   .dk-page .dk-sess-toggle svg, .dk-page .dk-fold > summary h2::before, .dk-page .dk-sess-more > summary::before,
   .dk-page .dk-resize, .dk-page .dk-resize::after, .dk-page .dk-act-mark, .dk-page .dk-activity li, .dk-page .dk-help-menu a,
-  .dk-palette-row, .dk-stop, .dk-queue-tools button, .dk-empty-prompt { transition: none !important; }
+  .dk-page .dk-agent, .dk-palette-row, .dk-stop, .dk-queue-tools button, .dk-empty-prompt { transition: none !important; }
   .dk-page .dg-shell, .dk-page .dg-side, .dk-page .dk-panel { transition: none !important; }
   .dk-page .dk-fold::details-content, .dk-page .dk-file::details-content, .dk-page .dk-sess-more::details-content { transition: none !important; }
 }

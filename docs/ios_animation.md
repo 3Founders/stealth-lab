@@ -56,7 +56,8 @@ A spring is a damped harmonic oscillator: `m x'' = -k (x - target) - b x'`, with
 Replaces `scroll-behavior: smooth` for the message viewport. Used in `RoomView.tsx` (`useSpringScroll(viewportRef, contentRef, room)`) and in the desktop `page.tsx` (`logRef`, `logContentRef`, `sessionID`).
 - `scrollToEnd` uses a `SpringValue` on `SPRINGS.smooth`; calling it again mid-flight keeps velocity; the target is a function (`scrollHeight - clientHeight`) so it follows content that grows while it runs.
 - `follow()` scrolls only if the reader was already at the bottom (`atEnd`, within 120 px).
-- The reader taking over: wheel, touch, keys cancel the spring at once. Scrolling up by more than 1 px sets `atEnd` false even inside the 120 px zone, so the next streamed token does not pull the view back down (added 2026-11-08).
+- The reader taking over: wheel, touch, keys and a pointer press (which includes a scrollbar drag) cancel the spring at once. Scrolling up by more than 1 px sets `atEnd` false even inside the 120 px zone, so the next streamed token does not pull the view back down (added 2026-11-08).
+- The "Latest" button has its own proximity state: it stays hidden whenever the view is within `NEAR_END` (120 px) of the bottom, even if an upward nudge has already stopped auto-follow, and stays hidden while a jump is in flight. A 2 px reflow at the end of a reply therefore cannot pop the button up, and a content resize re-tracks it through a `ResizeObserver` (2026-11-13).
 - The top and bottom ends are left to the browser (`overscroll-behavior: contain`). A custom wheel rubber-band used to be there and was removed because it fought trackpad momentum and made both ends jitter. `rubberBand` still exists in `spring.ts` and is tested, but this hook does not use it.
 - Reduced motion: instant.
 
@@ -154,7 +155,9 @@ Fallbacks, all in chat.css:
 | The buttons that bring a closed panel back (chat header) | pop in | `dg-pop` on `--dg-bouncy` (360 ms) |
 | File view (right panel, opens from the tree) | slides in like the website's canvas panel | `dg-canvas-in` (translateX 22px) on `--dg-smooth` |
 | File tree row / chevron | hover tint; the folder chevron turns 90° | `background-color` and `transform` on `--dg-micro` (160 ms) |
-| Folds (`Changed by kell`, `Other changes`, `Model steps`, `Tools`, a file's diff, more sessions) | the disclosure opens and closes instead of jumping | `block-size` on `::details-content` with `interpolate-size: allow-keywords`, `--dg-smooth`; `content-visibility` flips with `allow-discrete` |
+| Folds (`Changed by kell`, `Other changes`, `Model steps`, `Tools`, a file's diff, more sessions) | the disclosure opens and closes instead of jumping, and its content fades with it | `block-size` on `::details-content` with `interpolate-size: allow-keywords` plus `opacity`, both on `--dg-smooth`; `content-visibility` flips with `allow-discrete` |
+| Right panel agent list (`Main agent`, the delegated model) | rows rise in, hover tint, press scale; picking one swaps the middle column | `dg-rise` on `--dg-smooth`, background/border/`transform` on `--dg-micro`; the delegated view enters with `dg-rise` |
+| Attachment chips (composer and sent messages) | a chip pops in when a file is added and scales/fades out when removed; the pop also plays when an image arrives inside a message | `dk-att-in` on `--dg-bouncy` (360 ms, a 6 px rise and .86→1 scale); `dk-att-out` on `--dg-micro` (160 ms, .86 scale and fade); transform and opacity only, and the removed chip stays for its exit |
 | Activity rows (what kell is doing) | each new call rises in, older ones dim by age | `dk-act-in` (8 px rise) on `--dg-smooth` with `backwards` fill, so the finished keyframe does not override the age `opacity`; the fade itself is an `opacity` transition on `--dg-smooth` |
 | Activity mark | spinner while running, dot when done, red when failed | `dk-spin` .7 s linear while running; colours and `transform` on `--dg-micro` |
 | Model step chips | rise in | `dg-rise` on `--dg-smooth` |

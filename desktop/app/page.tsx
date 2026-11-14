@@ -597,10 +597,16 @@ export default function Home() {
   const planSeq = useRef(0)
   const [delegateAsk, setDelegateAsk] = useState("")
   const [delegateAnswer, setDelegateAnswer] = useState("")
+  // Every direct answer the delegated agent has given in this session, for the agent view in the middle.
+  const [delegateLog, setDelegateLog] = useState<Array<{ q: string; a: string; at: number }>>([])
+  // Which agent the middle column is showing: the session itself, or the model the router delegated this turn to.
+  const [agentView, setAgentView] = useState<"main" | "delegated">("main")
   const [delegateErr, setDelegateErr] = useState("")
   const [delegateNote, setDelegateNote] = useState("")
   const [delegateStatus, setDelegateStatus] = useState("")
   const [delegateBusy, setDelegateBusy] = useState(false)
+  // Opening or starting a chat always returns the middle column to the session itself.
+  useEffect(() => { setAgentView("main") }, [sessionID])
   const [settings, setSettings] = useState<Settings | null>(null)
   // The rooms can call this desktop's sessions (lib/remote.ts); on by default, switched in the Account popover.
   const [remoteOn, setRemoteOnState] = useState(true)
@@ -629,6 +635,7 @@ export default function Home() {
   const [queued, setQueued] = useState<QueuedPrompt[]>([])
   // Files staged in the composer. Paths stay paths: the API decides whether a path reference or an attachment is cheaper.
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [leavingAtts, setLeavingAtts] = useState<string[]>([])   // chips playing their exit before they leave the list
   const [dragFiles, setDragFiles] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // The command palette (Ctrl/Cmd-K): app actions and "go to file", with the last few choices first.
@@ -880,7 +887,16 @@ export default function Home() {
     if (desktop()?.pickFiles) { await addPaths(await desktop()!.pickFiles!()); return }
     fileInputRef.current?.click()
   }
-  const removeAttachment = (id: string) => setAttachments((a) => a.filter((x) => x.id !== id))
+  const removeAttachment = (id: string) => {
+    // Let the chip play its exit first (transform/opacity only, docs/ios_animation.md); reduced motion removes it now.
+    const reduced = typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    if (reduced) { setAttachments((a) => a.filter((x) => x.id !== id)); return }
+    setLeavingAtts((s) => (s.includes(id) ? s : [...s, id]))
+    window.setTimeout(() => {
+      setAttachments((a) => a.filter((x) => x.id !== id))
+      setLeavingAtts((s) => s.filter((x) => x !== id))
+    }, 190)
+  }
   const openAttachment = (a: Attachment) => {
     if (a.rel) { void openFile(a.rel); return }                 // a project file: the app's own viewer
     if (a.path && desktop()?.openPath) { void desktop()!.openPath!(a.path); return }   // outside the project: the OS app
@@ -889,7 +905,7 @@ export default function Home() {
   const attachmentChips = (files: Attachment[], removable = false) => files.length ? (
     <div className="dg-atts" aria-label="Attached files">
       {files.map((f) => (
-        <span key={f.id} className="dg-att" title={f.rel || f.path || f.name}>
+        <span key={f.id} className="dg-att" data-leaving={leavingAtts.includes(f.id) || undefined} title={f.rel || f.path || f.name}>
           <button type="button" className="dg-att-open" onClick={() => openAttachment(f)}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
             <span className="nm">{f.name}</span>
@@ -1074,6 +1090,7 @@ export default function Home() {
     const outgoing = again === undefined ? attachments : (filesOverride ?? [])
     if (!asGoal && /^\/goal\b/i.test(body.trim())) { goalCommand.current(body.trim()); return }
     if (!asGoal && /^\/btw\b/i.test(body.trim())) { handleBtwCommand(body.trim()); if (again === undefined) { setText(""); histPos.current = null } return }
+    setAgentView("main")                                    // a new prompt is for the session, not the agent view
     if ((!body.trim() && !outgoing.length) || !directory) return
     if (busyRef.current) {                                    // still working: keep it for when this turn ends
       setQueued((q) => [...q, { text: body, files: outgoing }])
@@ -1218,6 +1235,7 @@ export default function Home() {
         }
       }
       if (!answer) throw new Error("the delegated model returned no answer")
+      setDelegateLog((l) => [...l, { q: question, a: answer, at: Date.now() }])
       setDelegateAsk("")
     } catch (e: any) { setDelegateErr(String(e?.message || e)) }
     finally { setDelegateBusy(false); setDelegateStatus("") }
@@ -1707,6 +1725,8 @@ export default function Home() {
     .filter((t) => (t.sessionID || null) === (sessionID || null))
     .sort((a, b) => b.updated - a.updated)
   const btwAsking = !!btw?.turns.some((t) => t.state === "asking")
+  // The delegated agent's last turn output, shown in its own view in the middle.
+  const lastAssistant = [...lines].reverse().find((l) => l.who === "assistant" && l.text.trim())
   // A stored thread's time: the clock for today, a short date for anything older.
   const btwWhen = (ts: number) => {
     const d = new Date(ts)
@@ -2028,7 +2048,56 @@ export default function Home() {
             onDrop={(e) => { e.preventDefault(); setDragFiles(false); void addBrowserFiles(Array.from(e.dataTransfer.files)) }}>
             {dragFiles && <div className="dg-drop" aria-hidden="true"><span>Drop files to attach</span></div>}
             <div className="dg-viewport" ref={logRef} aria-label="Messages">
-              <div className="dg-content" ref={logContentRef}>
+              <div className={`dg-content${agentView === "delegated" ? " dk-agent-content" : ""}`} ref={logContentRef}>
+                {agentView === "delegated" ? (
+                  // The delegated agent's own view: what the router picked, the turn it ran, and every direct answer.
+                  <div className="dk-agent-view">
+                    <div className="dk-agent-view-head">
+                      <span className="dk-agent-dot" data-rung={delegation?.rung || "cheap"} aria-hidden="true" />
+                      <b>{delegation?.model?.id || "Delegated agent"}</b>
+                      {delegation?.why && <span className="dk-agent-view-sub">{delegation.why}</span>}
+                      <button type="button" className="btn-line dg-mini" onClick={() => setAgentView("main")}>Back to main</button>
+                    </div>
+                    {!delegation?.model ? (
+                      <p className="dk-note">No delegated agent yet. Send a task and the router picks the model that procedure needs.</p>
+                    ) : (
+                      <>
+                        <div className="dk-agent-plan">
+                          <div className="dk-delegate-row"><span>Goal</span><b title={delegation.goal?.name}>{delegation.goal?.name || "no Goal matched"}</b></div>
+                          <div className="dk-delegate-row"><span>Way</span><b title={delegation.way?.name}>{delegation.way?.name || "none bound yet"}</b>{delegation.way && <i>{delegation.way.approval}</i>}</div>
+                          <div className="dk-delegate-row"><span>Tool</span><b title={delegation.tool?.server || delegation.tool?.name}>{delegation.tool?.name || "none bound"}</b></div>
+                          <div className="dk-delegate-row"><span>Model</span><b>{delegation.model.id}</b>{delegation.rung && <i data-rung={delegation.rung}>{delegation.rung}</i>}</div>
+                        </div>
+                        {(delegateStatus || busy) && (
+                          <p className="dk-delegate-status" role="status" aria-live="polite">
+                            <span className="dg-pulse" aria-hidden="true" />
+                            {delegateStatus || `Working with ${delegation.model.id}…`}
+                          </p>
+                        )}
+                        {lastAssistant && (
+                          <div className="dk-agent-turn">
+                            <div className="dk-agent-turn-label">Its last turn</div>
+                            <Markdown text={lastAssistant.text} />
+                          </div>
+                        )}
+                        {delegateLog.length > 0 ? (
+                          <div className="dk-agent-log">
+                            {delegateLog.map((x, i) => (
+                              <div className="dk-agent-qa" key={`${x.at}-${i}`}>
+                                <div className="dk-agent-q">{x.q}</div>
+                                <div className="dk-agent-a"><Markdown text={x.a} /></div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="dk-note">Its direct answers appear here. Ask it from the Delegated panel on the right; the brief is all it sees.</p>
+                        )}
+                        <p className="dk-note">The turn it ran is also in the Main agent view.</p>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                <>
                 {lines.length === 0 && !busy && (
                   // The empty state is not a blank box (reqs §8): one line states the boundary, and three prompts that
                   // are known to work here fill the composer rather than a highlight reel.
@@ -2154,6 +2223,8 @@ export default function Home() {
                       <div className="dg-body" role="status" aria-label="kell is working"><Thinking /></div>
                     </div>
                   </div>
+                )}
+                </>
                 )}
               </div>
             </div>
@@ -2399,6 +2470,26 @@ export default function Home() {
         <aside className="dk-panel" aria-label="File, changes, steps and tools">
           {/* While the divider is dragged, a transparent shield keeps a file view or an embedded frame from swallowing the pointer. */}
           {resizing === "right" && <div className="dk-shield" aria-hidden="true" />}
+          {/* The agents in this session: the session itself and the model the router delegated to. Clicking one swaps the
+              middle column between the chat and that agent's own output. */}
+          <div className="dk-panel-head"><h2>Agents</h2></div>
+          <div className="dk-agents" role="tablist" aria-label="Agents">
+            <button type="button" role="tab" className="dk-agent" aria-selected={agentView === "main"} onClick={() => setAgentView("main")}>
+              <span className="dk-agent-dot" aria-hidden="true" />
+              <span><b>Main agent</b><small>this chat</small></span>
+            </button>
+            {delegation?.model ? (
+              <button type="button" role="tab" className="dk-agent" aria-selected={agentView === "delegated"} onClick={() => setAgentView("delegated")}>
+                <span className="dk-agent-dot" data-rung={delegation.rung || "cheap"} aria-hidden="true" />
+                <span><b>{delegation.model.id}</b><small>delegated{delegation.rung ? ` · ${delegation.rung}` : ""}</small></span>
+              </button>
+            ) : (
+              <div className="dk-agent dk-agent-empty">
+                <span className="dk-agent-dot" aria-hidden="true" />
+                <span><b>No delegated agent</b><small>send a task</small></span>
+              </div>
+            )}
+          </div>
           {/* The file view: the file picked in the sidebar's tree, read-only, with its size and a copy button. */}
           {filePath && (
             <section className="dk-viewer" aria-label={`File ${filePath}`}>
