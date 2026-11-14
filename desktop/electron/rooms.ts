@@ -129,6 +129,12 @@ export function reloadRooms() {
   if (view && !view.webContents.isDestroyed()) void view.webContents.loadURL(`${SITE}/chat`)
 }
 
+/** The rooms with one of the site's side panels open: "desktop" (Desktop sessions) or "submit" (Submit a Way). Nothing else. */
+export function openRoomsPanel(panel: string) {
+  if (panel !== "desktop" && panel !== "submit") return
+  if (view && !view.webContents.isDestroyed()) void view.webContents.loadURL(`${SITE}/chat?panel=${panel}`)
+}
+
 /** Email and password: the site's own sign-in page (with its CAPTCHA) inside the rooms view. Only Google refuses an embedded
  *  window; email works there, and it lands back on the rooms. No token is copied and no Supabase setting is needed. */
 export function openRoomsEmailSignIn() {

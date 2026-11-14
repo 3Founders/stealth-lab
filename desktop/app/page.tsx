@@ -38,7 +38,7 @@ type KellDesktop = {
   pickFiles?: () => Promise<string[]>; pathForFile?: (file: File) => string; openPath?: (path: string) => Promise<string>
   onFont?: (cb: (font: string) => void) => () => void; setFont?: (font: string) => void
   window?: { minimize: () => void; toggleMaximize: () => void; close: () => void; isMaximized?: () => Promise<boolean>; onState?: (cb: (max: boolean) => void) => () => void }
-  rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
+  rooms: { show: (rect: Rect | null) => void; reload: () => void; panel?: (p: "desktop" | "submit") => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
 /** A tool call's subject in a few words: the path, pattern, command or query it was given. */
 const hintOf = (input: any): string | undefined => {
@@ -1648,6 +1648,8 @@ export default function Home() {
     { id: "stop", title: "Stop kell", hint: "end the running turn; nothing is undone", run: () => void stop() },
     { id: "code", title: "Go to the coding agent", run: () => setPane("code") },
     { id: "rooms", title: "Go to the team rooms", run: () => setPane("rooms") },
+    { id: "submit-way", title: "Submit a Way", hint: "teach kell a goal and its steps; each step is reviewed", run: () => { setPane("rooms"); desktop()?.rooms.panel?.("submit") } },
+    { id: "desktop-sessions", title: "My desktop sessions", hint: "what the rooms can ask this desktop, and who may", run: () => { setPane("rooms"); desktop()?.rooms.panel?.("desktop") } },
     { id: "console", title: "Open the console", run: () => void openConsole() },
     { id: "goal", title: "Set a goal", hint: "/goal <condition> — kell keeps working until it holds", run: () => { setText("/goal "); textRef.current?.focus() } },
     { id: "btw", title: "Ask a side question", hint: "/btw <question> — answered from this chat, without adding to it", run: () => { setText("/btw "); textRef.current?.focus() } },

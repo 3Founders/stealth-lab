@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("kellDesktop", {
   rooms: {
     show: (rect: Rect | null) => ipcRenderer.send("kell:rooms-bounds", rect),
     reload: () => ipcRenderer.send("kell:rooms-reload"),
+    panel: (panel: "desktop" | "submit") => ipcRenderer.send("kell:rooms-panel", panel),
     theme: (t: "light" | "dark") => ipcRenderer.send("kell:rooms-theme", t),
     emailSignIn: () => ipcRenderer.send("kell:rooms-email"),
     signIn: (provider: "google" | "github"): Promise<boolean> => ipcRenderer.invoke("kell:rooms-signin", provider),

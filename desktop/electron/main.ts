@@ -10,7 +10,7 @@ import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
 import { popupAppMenu, setAppMenu, setFontChoice } from "./menu"
 import { BOOT } from "./memory"
-import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
+import { openRoomsEmailSignIn, openRoomsPanel, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import { createServer } from "node:http"
 import { randomBytes } from "node:crypto"
 import fs from "node:fs"
@@ -114,6 +114,7 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.on("kell:font-choice", (_e, font: string) => setFontChoice(font === "inter" || font === "poppins" ? font : "default"))
     ipcMain.on("kell:rooms-bounds", (_e, rect) => { if (win) setRoomsBounds(win, rect && typeof rect === "object" ? rect : null) })
     ipcMain.on("kell:rooms-reload", () => reloadRooms())
+    ipcMain.on("kell:rooms-panel", (_e, panel: unknown) => openRoomsPanel(String(panel)))
     ipcMain.on("kell:rooms-email", () => openRoomsEmailSignIn())
     ipcMain.on("kell:rooms-theme", (_e, t) => setRoomsTheme(t === "dark" ? "dark" : "light"))
     ipcMain.handle("kell:rooms-account", () => roomsAccount(win))

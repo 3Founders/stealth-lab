@@ -45,6 +45,7 @@ import PersonAvatar from "@/components/chat/PersonAvatar";
 import ProfileWidget from "@/components/chat/ProfileWidget";
 import { PanelCloseIcon, RemoveIcon, CanvasIcon, DesktopIcon } from "@/components/chat/icons";
 import { desktopApi } from "@/lib/chat/desktop-api";
+import { submissionsApi } from "@/lib/submissions-api";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import type { SectionId } from "@/components/chat/SettingsDialog";
 import { getToolPrefs, setToolPrefs } from "@/lib/chat/tool-prefs";
@@ -64,6 +65,7 @@ const SettingsDialog = dynamic(() => import("@/components/chat/SettingsDialog"),
 const AddAgentDialog = dynamic(() => import("@/components/chat/AddAgentDialog"), { ssr: false });
 const DocPanel = dynamic(() => import("@/components/chat/DocPanel"), { ssr: false });
 const DesktopPanel = dynamic(() => import("@/components/chat/DesktopPanel"), { ssr: false });
+const SubmitPanel = dynamic(() => import("@/components/chat/SubmitPanel"), { ssr: false });
 const CanvasPanel = dynamic(() => import("@/components/chat/CanvasPanel"), { ssr: false });
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
@@ -136,6 +138,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const mapi = useMemo(() => memoryApi({ token: getAccessToken }), []);
   const dapi = useMemo(() => docsApi({ token: getAccessToken }), []);
   const kapi = useMemo(() => desktopApi({ token: getAccessToken }), []);
+  const sapi = useMemo(() => submissionsApi({ token: getAccessToken }), []);
   const engineRef = useRef<SyncEngine | null>(null);
   const [sync, setSync] = useState<SyncState>({ status: "idle", pending: 0, lastSyncAt: null, error: null });
   const [info, setInfo] = useState<RoomsChange["info"]>({});
@@ -1033,8 +1036,16 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // panel with the canvas, so opening one closes the other. The dot is what waits on you (approvals, permissions).
   const [desktopOpen, setDesktopOpen] = useState(false);
   const [desktopPending, setDesktopPending] = useState(0);
-  useEffect(() => { if (canvasOpen) setDesktopOpen(false); }, [canvasOpen]);
-  useEffect(() => { if (desktopOpen) setCanvasOpen(false); }, [desktopOpen]);
+  // "Submit a Way" shares the same panel. ?panel=desktop or ?panel=submit opens one (the desktop app's Code pane links here that way).
+  const [submitOpen, setSubmitOpen] = useState(false);
+  useEffect(() => { if (canvasOpen) { setDesktopOpen(false); setSubmitOpen(false); } }, [canvasOpen]);
+  useEffect(() => { if (desktopOpen) { setCanvasOpen(false); setSubmitOpen(false); } }, [desktopOpen]);
+  useEffect(() => { if (submitOpen) { setCanvasOpen(false); setDesktopOpen(false); } }, [submitOpen]);
+  useEffect(() => {
+    const want = new URLSearchParams(window.location.search).get("panel");
+    if (want === "desktop") setDesktopOpen(true);
+    if (want === "submit") setSubmitOpen(true);
+  }, []);
   useEffect(() => {
     const check = () => void kapi.overview().then((o) => setDesktopPending(o.pending.length)).catch(() => undefined);
     check();
@@ -1549,6 +1560,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       {canvasOpen && (info[room]?.id && !tempRef.current.has(room)
         ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} socket={{ token: getAccessToken }} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t, sel) => { selectionRef.current = sel ?? ""; setDraft((d) => ({ text: t, n: d.n + 1 })); }} onQuick={(t) => void submit(t)} />
         : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />)}
+      {submitOpen && <SubmitPanel open={submitOpen} onClose={() => setSubmitOpen(false)} api={sapi} />}
       {desktopOpen && <DesktopPanel open={desktopOpen} onClose={() => setDesktopOpen(false)} api={kapi} onPending={setDesktopPending} />}
       {searchOpen && <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />}
       {manageOpen && (
@@ -1560,7 +1572,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       )}
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
-          <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
+          <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} onSubmitWay={() => setSubmitOpen(true)} onDesktop={() => setDesktopOpen(true)} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r),
               onRead: (id) => setNotes((p) => p.filter((n) => n.id !== id)),
               onClear: () => { closeAllOs(); setNotes([]); } }}

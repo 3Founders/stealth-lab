@@ -11,13 +11,15 @@ import type { SectionId } from "@/components/chat/SettingsDialog";
  * The menu button at the left of the room header. It keeps the side panel short: everything that is not a room or a person lives
  * here or in Settings. Opens on click or Enter, closes on Escape or a click outside, and arrow keys move through the items.
  */
-export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, onManageRooms, onTogglePanel, panelOpen, alerts, onSearch, onTemporary, onCanvas, canvasCount = 0 }: {
+export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, onManageRooms, onTogglePanel, panelOpen, alerts, onSearch, onTemporary, onCanvas, canvasCount = 0, onSubmitWay, onDesktop }: {
   /** Opens the search over your rooms (also Cmd+K or Ctrl+K). */
   onSearch?: () => void;
   /** Starts a temporary room: not saved, not synced. */
   onTemporary?: () => void;
   /** Opens the canvas beside the chat, and how many canvases this room has. */
   onCanvas?: () => void; canvasCount?: number;
+  /** Opens "Submit a Way" (components/submit/SubmitWay.tsx) and "Desktop sessions" (DesktopPanel.tsx) beside the chat. */
+  onSubmitWay?: () => void; onDesktop?: () => void;
   paused: boolean; onSettings: (s: SectionId) => void; onPause: () => void; onSignOut: () => void;
   onManageRooms: () => void; onTogglePanel: () => void; panelOpen: boolean;
   /** The alerts list and its settings. Given, the menu has an Alerts item (with the unread count) and the button carries a dot. */
@@ -65,6 +67,8 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
         <div className="dg-menu-pop" role="menu" aria-label="Chat menu" ref={slide('[role="menuitem"]', '[role="menuitem"]:focus')}>
           {onSearch && <button type="button" role="menuitem" onClick={run(onSearch)}>Search<kbd>Ctrl K</kbd></button>}
           {onCanvas && <button type="button" role="menuitem" onClick={run(onCanvas)}>Canvas{canvasCount > 0 && <span className="dg-unread" aria-label={`${canvasCount} in this room`}>{canvasCount}</span>}</button>}
+          {onDesktop && <button type="button" role="menuitem" onClick={run(onDesktop)}>My desktop sessions</button>}
+          {onSubmitWay && <button type="button" role="menuitem" onClick={run(onSubmitWay)}>Submit a Way</button>}
           {onTemporary && <button type="button" role="menuitem" onClick={run(onTemporary)}>New temporary room</button>}
           <button type="button" role="menuitem" onClick={run(onManageRooms)}>Manage rooms</button>
           <button type="button" role="menuitem" onClick={run(onTogglePanel)}>{panelOpen ? "Close room list" : "Show room list"}</button>

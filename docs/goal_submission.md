@@ -1,9 +1,10 @@
 # Goal submission: a person submits a goal and the Way to do it
 
-Owner's design (Anuj, 2026-11-12). **A frontend is coming** (website and desktop): this is a product feature, not
-only a kell tool. The backend below is complete; the frontend is built on its HTTP API (the table under Surfaces) —
-the MCP tools and the CLI are other doors to the same calls. The owner decides the interface; do not start the UI
-(GS-9) until they do.
+Owner's design (Anuj, 2026-11-12). This is a product feature, not only a kell tool. The frontend (GS-9, the owner
+asked for it 2026-11-14) is built on the HTTP API (the table under Surfaces): one component,
+`routing_kell_frontend/components/submit/SubmitWay.tsx`, used by the website's `/submit` page and by a "Submit a Way"
+panel in the rooms (the chat's menu). The desktop app's Rooms pane is the same site, and its Code pane has a
+"Submit a Way" command that opens that panel. The MCP tools and the CLI are other doors to the same calls.
 
 ## If you are an agent: start here
 
@@ -224,8 +225,8 @@ submitted through it, and their moderation routes (`/v1/economy/procedure-submis
 | GS-6 | surfaces: HTTP, MCP `submit_goal` + `run_way`, CLI `scripts/submissions.py`, tests | Anuj's agent | done (scratch) |
 | GS-7 | tool and script steps run by themselves (gateway; Modal sandbox) | Anuj's agent | done (scripts need Modal keys on the server) |
 | GS-8 | router label: show "AI approved" for `ai_approved` Ways in `goal_router.py` / route view | — | done |
-| GS-9 | website / desktop UI on the HTTP API | owner decides the interface | do not start yet |
+| GS-9 | website / desktop / chat UI on the HTTP API (`components/submit/SubmitWay.tsx`, `/submit`, rooms panel) | Anuj's agent | done, not deployed |
 | GS-10 | goal matching: retrieve → rerank → judge | Anuj's agent | replaced by GS-12 |
 | GS-11 | retire `submit_way` | Anuj's agent | done |
-| GS-12 | goal matching by JEV vote (replaces rerank + DeepSeek judge); no cross-visibility goal merges | Anuj's agent | done, not deployed |
-| GS-13 | hierarchy: an approved new goal is placed by JEV vote (special case / abstraction → accepted SPECIALIZES edges) | Anuj's agent | done, not deployed |
+| GS-12 | goal matching by JEV vote (replaces rerank + DeepSeek judge); no cross-visibility goal merges | Anuj's agent | done, deployed 2026-11-13 |
+| GS-13 | hierarchy: an approved new goal is placed by JEV vote (special case / abstraction → accepted SPECIALIZES edges) | Anuj's agent | done, deployed 2026-11-13 |
