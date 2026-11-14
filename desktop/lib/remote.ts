@@ -58,13 +58,71 @@ async function api(token: string, method: string, url: string, body?: unknown, t
   return j
 }
 
+type Reported = { id: string; title: string; project: string; updated: number; summary: string }
+
 /** The sessions this desktop reports: the app's own chats, newest first, with the folder's name and the latest answer's gist. */
-export function reportedSessions(limit = 60) {
+export function reportedSessions(limit = 60): Reported[] {
   return listSessions(limit).map((s) => {
     const last = getAssistantMessages(s.id, 1)[0]
+    if (s.directory) sessionDirs.set(s.id, s.directory)
     return { id: s.id, title: s.title || "", project: s.directory ? path.basename(s.directory) : "", updated: s.updated_at,
       summary: last ? (last.summary || summarize(last.text) || "").slice(0, 400) : "" }
   })
+}
+
+// Each reported session's folder, so an ask for it can start the engine there when it is not running.
+const sessionDirs = new Map<string, string>()
+
+// Which engine sessions are the app's own (the sidebar's rule, app/api/sessions isKellSession): tagged kell, or carrying the
+// kell-tools instruction every app prompt writes. Cached: a refresh only asks about sessions it has not seen.
+const kellSession = new Map<string, boolean>()
+async function isKell(client: any, s: any): Promise<boolean> {
+  if (s?.metadata?.kell === true) return true
+  const id = String(s?.id || "")
+  const known = kellSession.get(id)
+  if (known !== undefined) return known
+  let ok = false
+  try {
+    const entries = await client.experimental.session.instructions.entry.list({ sessionID: id })
+    ok = Array.isArray(entries) && entries.some((e: any) => e?.key === "kell-tools")
+  } catch { ok = false }
+  if (kellSession.size > 2000) kellSession.clear()
+  kellSession.set(id, ok)
+  return ok
+}
+
+/** The app's sessions the engine holds for the most recent projects. The app's own store has only the chats opened since it
+ *  was installed, so a session from before (in the engine's history) would otherwise never show in the rooms. */
+export async function engineSessions(projects = 5, perProject = 20): Promise<Reported[]> {
+  const e = engineStatus()
+  if (!e) return []
+  try {
+    const client: any = await clientFor(e)
+    const home = os.homedir().toLowerCase()
+    const dirs = ((await client.project.list()) as any[])
+      .map((p) => ({ dir: String(p.canonical || ""), active: Number(p.time?.active ?? p.time?.updated ?? 0) }))
+      .filter((p) => p.dir && p.dir !== "/" && p.dir.toLowerCase() !== home && fs.existsSync(p.dir))
+      .sort((a, b) => b.active - a.active).slice(0, projects)
+    const out: Reported[] = []
+    for (const { dir } of dirs) {
+      const rows = ((await client.session.list({ directory: dir, limit: perProject, order: "desc" })).data as any[]).filter((s) => !s.parentID)
+      for (const s of rows) {
+        if (!(await isKell(client, s))) continue
+        sessionDirs.set(String(s.id), dir)
+        out.push({ id: String(s.id), title: typeof s.title === "string" ? s.title : "", project: path.basename(dir),
+          updated: Number(s.time?.updated ?? s.time?.created ?? 0), summary: "" })
+      }
+    }
+    return out
+  } catch { return [] }
+}
+
+/** Both, by session id (the app's own row wins: it has the latest answer's gist), newest first. */
+export async function allSessions(limit = 60): Promise<Reported[]> {
+  const byId = new Map<string, Reported>()
+  for (const s of await engineSessions()) byId.set(s.id, s)
+  for (const s of reportedSessions(limit)) byId.set(s.id, s)
+  return [...byId.values()].sort((a, b) => b.updated - a.updated).slice(0, limit)
 }
 
 const state = globalThis as typeof globalThis & { __kellRemote?: { started: boolean; busy: boolean; last: string } }
@@ -77,7 +135,7 @@ export function startRemote() {
     if (!remoteOn()) return
     const token = await webToken()
     if (!token) return
-    try { await api(token, "POST", "/v1/desktop/heartbeat", { device_id: deviceId(), name: os.hostname(), sessions: reportedSessions() }) }
+    try { await api(token, "POST", "/v1/desktop/heartbeat", { device_id: deviceId(), name: os.hostname(), sessions: await allSessions() }) }
     catch (err: any) { remember(`heartbeat: ${err?.message || err}`) }
   }
   void beat()
@@ -118,7 +176,8 @@ export async function runAsk(token: string, ask: Ask, deps = { api, now: Date.no
   try {
     const local = getSession(ask.session_id)
     let e = engineStatus()
-    if (!e) e = await engineStart(local?.directory || os.homedir())
+    const dir = local?.directory || sessionDirs.get(ask.session_id) || null
+    if (!e) e = await engineStart(dir || os.homedir())
     const client: any = await clientFor(e)
     let sessionID = ask.session_id
     if (ask.level !== "owner") {
@@ -129,11 +188,11 @@ export async function runAsk(token: string, ask: Ask, deps = { api, now: Date.no
       const title = `From ${ask.asker_name || "a teammate"}: ${ask.text.replace(/\s+/g, " ").slice(0, 60)}`
       await client.session.update({ sessionID, title, metadata: { kell: true, remote: ask.id },
         ...(ask.level === "answer" ? { permissions: READ_ONLY_RULES } : {}) })
-      importSession({ id: sessionID, engineId: sessionID, source: "kell", title, directory: local?.directory ?? e.directory,
+      importSession({ id: sessionID, engineId: sessionID, source: "kell", title, directory: dir ?? e.directory,
         messages: getMessages(ask.session_id, 100_000).map((m) => ({ role: m.role as any, text: m.text, at: m.created_at })) })
     }
     await report({ status: "running", run_session: sessionID })
-    ensureSession({ id: sessionID, engineId: sessionID, source: "kell", directory: local?.directory ?? e.directory })
+    ensureSession({ id: sessionID, engineId: sessionID, source: "kell", directory: dir ?? e.directory })
     const who = ask.level === "owner" ? "" : ` (asked by ${ask.asker_name || "a teammate"} from a kell room)`
     appendMessage(sessionID, { role: "user", text: ask.text + who })
 
