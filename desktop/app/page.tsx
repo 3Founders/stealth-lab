@@ -53,6 +53,19 @@ const hintOf = (input: any): string | undefined => {
   return short.length > 60 ? short.slice(0, 57) + "…" : short
 }
 
+// The engine's own subagent tool (it hands a sub-task to a worker agent). It is the one tool whose work deserves a row of
+// its own in the agents panel, not just a chip in the chat (2026-11-14: it ran and the right sidebar never showed it).
+const SUBAGENT_TOOL = /^(subagent|task)$/i
+/** What the subagent was asked to do, in its own one line. */
+const subagentTitle = (input: any): string => {
+  const v = input?.description ?? input?.subagent_type ?? input?.agent ?? input?.title
+  const one = typeof v === "string" ? v.replace(/\s+/g, " ").trim() : ""
+  return one ? (one.length > 90 ? one.slice(0, 87) + "…" : one) : "Subagent"
+}
+/** A tool result's text (session.tool.success carries content parts, not one string). */
+const contentText = (c: any): string =>
+  Array.isArray(c) ? c.filter((x: any) => x && x.type === "text").map((x: any) => String(x.text || "")).join("\n\n").trim() : ""
+
 /** When a session was last used, short: the time today, else the day. */
 const when = (ms: number) => {
   const d = new Date(ms), now = new Date()
@@ -172,6 +185,9 @@ type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission" | "go
               state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string
               files?: Attachment[] }
 type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string; state?: "running" | "done" | "failed"; hint?: string }
+/** One subagent the engine ran for this turn. The right panel lists it beside the main and delegated agents; clicking it
+ *  shows the brief it was given and the answer it returned. */
+type SubagentRun = { id: string; title: string; state: "running" | "done" | "failed"; brief?: string; result?: string }
 /** One question and its answer in a /btw side thread. Deliberately NOT a Line: a side thread never enters the
  *  conversation, so it cannot reach the next turn or the session history (Claude Code's /btw works the same way). */
 type BtwTurn = { q: string; a: string; state: "asking" | "done" | "error"; at: number }
@@ -426,7 +442,7 @@ export default function Home() {
   const menuRef = useRef<(what: string) => void>(() => {})
   menuRef.current = (what) => {
     if (what === "open-folder" && !busy && !opening) void (async () => { const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); void openProject(d) } })()
-    if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }
+    if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); loadChanges(null) }
   }
   useEffect(() => desktop()?.onMenu?.((w) => menuRef.current(w)), [])
   // Follow the window's maximize state: our button, a double-click on the title bar, or Windows itself all keep the
@@ -453,6 +469,9 @@ export default function Home() {
   const [steps, setSteps] = useState<Step[]>([])
   const stepsRef = useRef(steps)
   stepsRef.current = steps
+  // The subagents this turn ran (the engine's own subagent/task tool). They are listed with the agents in the right
+  // panel, so a delegated worker is visible while it runs instead of only as a chip in the chat (2026-11-14).
+  const [subagents, setSubagents] = useState<SubagentRun[]>([])
   const [ledger, setLedger] = useState<LedgerRow[]>([])
   const [sessionID, setSessionID] = useState<string | null>(null)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
@@ -607,7 +626,7 @@ export default function Home() {
   // Every direct answer the delegated agent has given in this session, for the agent view in the middle.
   const [delegateLog, setDelegateLog] = useState<Array<{ q: string; a: string; at: number }>>([])
   // Which agent the middle column is showing: the session itself, or the model the router delegated this turn to.
-  const [agentView, setAgentView] = useState<"main" | "delegated">("main")
+  const [agentView, setAgentView] = useState<string>("main")   // "main" | "delegated" | `sub:<call id>`
   const [delegateErr, setDelegateErr] = useState("")
   const [delegateNote, setDelegateNote] = useState("")
   const [delegateStatus, setDelegateStatus] = useState("")
@@ -791,7 +810,7 @@ export default function Home() {
   // A past session: its conversation back on screen, and the next message continues it.
   const openSession = async (id: string) => {
     if (busy || id === sessionID) return
-    setQueued([]); setSteps([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
+    setQueued([]); setSteps([]); setSubagents([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
     setSessionID(id); setLines([])
     void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: id }) }).catch(() => undefined)
     try {
@@ -856,7 +875,7 @@ export default function Home() {
     setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
     if (j.up) remember(dir)
     if (j.up) {
-      setQueued([]); setLines([]); setSteps([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null)
+      setQueued([]); setLines([]); setSteps([]); setSubagents([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null)
       // The folder (and the chat to reopen, when the app is restoring the last one) is kept in the app's store.
       void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir, sessionID: session ?? null }) }).catch(() => undefined)
     }
@@ -1136,6 +1155,7 @@ export default function Home() {
     if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
     else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
+    setSubagents([])                                        // the agents panel is this turn's workers
     if (again === undefined) { setText(""); setAttachments([]); histPos.current = null }   // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
     setStopNote("")
@@ -1191,6 +1211,10 @@ export default function Home() {
           // The tool's name comes only here; the called / success / failed events carry the call's id (2026-11-07: every chip read "tool").
           const id = String(d.id || ""), label = String(d.name || "tool")
           setSteps((s) => s.some((x) => x.id === id) ? s : [...s, { kind: "tool", label, id, state: "running" }])
+          // A subagent shows in the agents panel from its first moment; `called` below fills in what it was asked to do.
+          if (SUBAGENT_TOOL.test(label) && id) {
+            setSubagents((a) => a.some((x) => x.id === id) ? a : [...a, { id, title: "Subagent", state: "running" }])
+          }
         }
         else if (t === "session.tool.called" || t === "session.tool.success" || t === "session.tool.failed") {
           const id = String(d.id || "")
@@ -1199,6 +1223,21 @@ export default function Home() {
           setSteps((s) => s.some((x) => x.id === id)
             ? s.map((x) => (x.id === id ? { ...x, state, hint: hint ?? x.hint, note: state === "failed" ? "failed" : x.note } : x))
             : [...s, { kind: "tool", label: String(d.name || "tool"), id, state, hint, note: state === "failed" ? "failed" : undefined }])
+          // The subagent's row: its one-line task while it runs, its answer (or failure) when it ends.
+          if (SUBAGENT_TOOL.test(String(d.name || "")) && id) {
+            if (t === "session.tool.called") {
+              const title = subagentTitle(d.input)
+              const brief = typeof d.input?.prompt === "string" ? d.input.prompt : undefined
+              setSubagents((a) => a.some((x) => x.id === id)
+                ? a.map((x) => (x.id === id ? { ...x, title, ...(brief ? { brief } : {}) } : x))
+                : [...a, { id, title, state: "running", ...(brief ? { brief } : {}) }])
+            } else {
+              const result = t === "session.tool.success" ? contentText(d.content) : ""
+              setSubagents((a) => a.map((x) => (x.id === id
+                ? { ...x, state: t === "session.tool.success" ? "done" : "failed", ...(result ? { result } : {}) }
+                : x)))
+            }
+          }
           const need = t === "session.tool.called" ? null : signInFrom(JSON.stringify(d))
           if (need) setLines((l) => l.some((x) => x.who === "signin" && x.text === need.link) ? l
             : [...l, { who: "signin", text: need.link, server: need.server, state: "ready", at: Date.now() }])
@@ -1734,7 +1773,7 @@ export default function Home() {
     run()
   }
   const commands = [
-    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
+    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
     { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); void openProject(d) } }) } },
     { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
     { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
@@ -1949,7 +1988,7 @@ export default function Home() {
                 }}>{opening ? "Opening…" : "Open folder"}</button>
             )}
             {sessionID && (
-              <button type="button" className="btn-line" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>New session</button>
+              <button type="button" className="btn-line" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); loadChanges(null) }}>New session</button>
             )}
           </div>
           {engine && !engine.up && (engine.error || sessionID) && !needsWebSignIn(engine.error) && <p className="dk-err" role="status">Engine problem{engine.error ? `: ${engine.error}` : ""}</p>}
@@ -2126,8 +2165,48 @@ export default function Home() {
             onDrop={(e) => { e.preventDefault(); setDragFiles(false); void addBrowserFiles(Array.from(e.dataTransfer.files)) }}>
             {dragFiles && <div className="dg-drop" aria-hidden="true"><span>Drop files to attach</span></div>}
             <div className="dg-viewport" ref={logRef} aria-label="Messages">
-              <div className={`dg-content${agentView === "delegated" ? " dk-agent-content" : ""}`} ref={logContentRef}>
-                {agentView === "delegated" ? (
+              <div className={`dg-content${agentView !== "main" ? " dk-agent-content" : ""}`} ref={logContentRef}>
+                {agentView.startsWith("sub:") ? (
+                  // A subagent's own view: the task it was given and the answer it returned. Its steps ran in a worker of
+                  // their own, so the engine does not stream them here; this is what it was asked and what came back.
+                  (() => {
+                    const s = subagents.find((x) => `sub:${x.id}` === agentView)
+                    return (
+                      <div className="dk-agent-view">
+                        <div className="dk-agent-view-head">
+                          <span className="dk-agent-dot" data-state={s?.state || "running"} aria-hidden="true" />
+                          <b title={s?.title}>{s?.title || "Subagent"}</b>
+                          <span className="dk-agent-view-sub">subagent{s ? ` · ${s.state}` : ""}</span>
+                          <button type="button" className="btn-line dg-mini" onClick={() => setAgentView("main")}>Back to main</button>
+                        </div>
+                        {!s ? (
+                          <p className="dk-note">This subagent is not in this turn&apos;s list any more.</p>
+                        ) : (
+                          <>
+                            {s.brief && (
+                              <div className="dk-agent-turn">
+                                <div className="dk-agent-turn-label">What it was asked</div>
+                                <pre className="dk-code" tabIndex={0}>{s.brief}</pre>
+                              </div>
+                            )}
+                            {s.result ? (
+                              <div className="dk-agent-turn">
+                                <div className="dk-agent-turn-label">What it answered</div>
+                                <Markdown text={s.result} />
+                              </div>
+                            ) : (
+                              <p className="dk-delegate-status" role="status" aria-live="polite">
+                                <span className="dg-pulse" aria-hidden="true" />
+                                {s.state === "running" ? "Working…" : s.state === "failed" ? "It failed: nothing came back." : "No answer came back."}
+                              </p>
+                            )}
+                            <p className="dk-note">Its steps ran in a worker of their own; the chat shows its tool calls as they happened.</p>
+                          </>
+                        )}
+                      </div>
+                    )
+                  })()
+                ) : agentView === "delegated" ? (
                   // The delegated agent's own view: what the router picked, the turn it ran, and every direct answer.
                   <div className="dk-agent-view">
                     <div className="dk-agent-view-head">
@@ -2577,6 +2656,14 @@ export default function Home() {
                 <span><b>No delegated agent</b><small>send a task</small></span>
               </div>
             )}
+            {subagents.map((s) => (
+              // A subagent the engine ran for this turn: its one-line task and live state, and its own view on click.
+              <button key={s.id} type="button" role="tab" className="dk-agent" aria-selected={agentView === `sub:${s.id}`}
+                title={s.title} onClick={() => setAgentView(`sub:${s.id}`)}>
+                <span className="dk-agent-dot" data-state={s.state} aria-hidden="true" />
+                <span><b>{s.title}</b><small>subagent · {s.state}</small></span>
+              </button>
+            ))}
           </div>
           {/* The file view: the file picked in the sidebar's tree, read-only, with its size and a copy button. */}
           {filePath && (

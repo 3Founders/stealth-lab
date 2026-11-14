@@ -429,6 +429,13 @@
 .dk-agent small { font-size: 10.5px; color: var(--grey); }
 .dk-agent-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cobalt); flex: none; }
 .dk-agent-dot[data-rung="strong"] { background: var(--ink); }
+/* A subagent's state: a ring while it works, filled when it answered, a cross-coloured dot when it failed (never colour
+   alone: the row's small line says "running" / "done" / "failed"). */
+.dk-agent-dot[data-state="running"] { background: transparent; border: 2px solid var(--cobalt); animation: dk-agent-pulse 1.6s ease-in-out infinite; }
+.dk-agent-dot[data-state="done"] { background: var(--cobalt); }
+.dk-agent-dot[data-state="failed"] { background: var(--ink); }
+@keyframes dk-agent-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .dk-agent-dot[data-state="running"] { animation: none; } }
 .dk-agent-empty { cursor: default; opacity: .65; }
 .dk-agent-empty:hover { background: transparent; }
 
