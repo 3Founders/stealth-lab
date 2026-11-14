@@ -232,6 +232,9 @@ async def _ways(pool: Any, hits: Sequence[dict[str, Any]]) -> dict[str, list[Way
                   AND pr.t_invalid IS NULL
                   AND pr.approval_status <> 'rejected'
                   AND pr.availability = 'active'
+                  -- A one-step Way materialized from a tool card is the tool itself, not a procedure (2026-11-14):
+                  -- the tool router still offers that tool, so the Way list is left to real Ways.
+                  AND COALESCE(pr.provenance, '') <> 'tool_card'
                 ORDER BY (pr.verification_state = 'verified') DESC,
                          COALESCE((pr.verification_stats->>'successes')::int, 0) DESC,
                          COALESCE((pr.domain_payload->>'goal_score')::float, 0) DESC,
@@ -540,6 +543,7 @@ async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] 
             WITH ranked_cards AS (
                 SELECT g.goal_id::text AS goal_id, t.id, t.name, t.server, t.title, t.description,
                        t.source, g.score, g.source = 'manual' AS pinned,
+                       COALESCE((t.extra->>'archived')::boolean, false) AS archived,
                        row_number() OVER (PARTITION BY g.goal_id
                                           ORDER BY g.score DESC,
                                                    NULLIF(t.extra->>'stars', '')::int DESC NULLS LAST,
@@ -548,7 +552,7 @@ async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] 
                 JOIN tool_cards t ON t.id = g.card_id
                 WHERE g.goal_id = ANY($1::uuid[])
             )
-            SELECT goal_id, id, name, server, title, description, source, score, pinned
+            SELECT goal_id, id, name, server, title, description, source, score, pinned, archived
             FROM ranked_cards
             WHERE rn <= $2
             ORDER BY goal_id, rn
@@ -559,6 +563,11 @@ async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] 
         return {}
     out: dict[str, list[ToolHit]] = {}
     for row in rows:
+        # Archived servers and other coding agents' bridges are not tools kell offers (app/tool_routing/catalog.py).
+        from app.tool_routing.catalog import hidden_server
+        if hidden_server(str(row["name"] or ""), str(row["title"] or ""), str(row["description"] or ""),
+                         archived=bool(row["archived"]), source=str(row["source"] or "")):
+            continue
         bucket = out.setdefault(str(row["goal_id"]), [])
         if len(bucket) >= per_goal:
             continue
@@ -747,33 +756,10 @@ async def route_goal(
                          request_id=request_id, query=text,
                          query_hits=(await query_task) if query_task is not None else None) if include_tools else {}
 
-    # A one-step Way is its tool: build the Ways from the ranked tools so the first Way is the
-    # first tool (trust when GOAL_RANKING=trust, goal fit otherwise). A tool with no materialized
-    # procedure gets a synthesized one-step Way; a real multi-step Way is kept when one of its
-    # cards is in the ranked list.
-    if include_ways and include_tools:
-        for goal_id, hits in tools.items():
-            by_card: dict[str, Any] = {}
-            for w in ways.get(goal_id, []):
-                for c in (w.cards or []):
-                    by_card.setdefault(str(c.get("card_id") or ""), w)
-            built: list[Any] = []
-            for t in hits:
-                w = by_card.get(t.card_id)
-                if w is None:
-                    w = WayHit(
-                        procedure_id=f"tool:{t.card_id}",
-                        name=t.title or t.name or t.server,
-                        steps=[{"order": 0, "goal": f"Use {t.name or t.server}", "card_id": t.card_id}],
-                        preconditions=[],
-                        verification_state="candidate",
-                        availability="active",
-                        approval_status="submitted",
-                        cards=[{"card_id": t.card_id, "name": t.name, "server": t.server,
-                                "step_order": 0}],
-                    )
-                built.append(w)
-            ways[goal_id] = built[:MAX_WAYS_PER_GOAL]
+    # Ways are the real procedures only. The router used to build a one-step "Way" out of each ranked tool card here
+    # (procedure_id "tool:<card>"), so the Way list was really the tool list: a Goal with no procedure showed a wall of
+    # tool cards, including archived servers and other coding agents' bridges (2026-11-14). The tools are still listed
+    # in `tools` for the agent to use; the Way list is left to Ways somebody actually wrote.
 
     return [
         GoalHit(

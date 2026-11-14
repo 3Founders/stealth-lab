@@ -271,6 +271,9 @@ async def _load_ways(pool: Any) -> dict[str, list[dict[str, Any]]]:
                 WHERE pr.t_invalid IS NULL
                   AND pr.approval_status <> 'rejected'
                   AND pr.availability = 'active'
+                  -- A one-step Way materialized from a tool card is the tool itself, not a procedure: the tool router
+                  -- still offers that tool, so the Way list stays for real Ways (2026-11-14).
+                  AND COALESCE(pr.provenance, '') <> 'tool_card'
             )
             SELECT r.id::text AS id, r.achieves_goal_id::text AS goal_id, r.name, r.steps,
                    r.preconditions, r.verification_state, r.approval_status, r.availability,

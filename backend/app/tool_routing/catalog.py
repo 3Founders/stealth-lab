@@ -269,9 +269,35 @@ def read_json(path: Path) -> dict:
     return {}
 
 
+# A registry server that is another coding agent (or a bridge to one) is not a tool kell should offer: kell runs the
+# agent itself, so a card like "run Claude Code / Codex / Cursor for me" is noise in the router. An archived server is
+# dead upstream. Both stay in the snapshot and in the database; they are only kept out of what the router offers.
+AGENT_SERVER = re.compile(
+    r"(?:^|[-_/.])(claude-code|claude|codex|cursor-agent|cursor|windsurf|opencode|aider|cline|copilot|"
+    r"gemini-cli|goose|devin|jules|antigravity)(?:[-_/.]|$)", re.I)
+AGENT_HINT = re.compile(r"(coding agent|code agent|agentic cod|\bcli\b|subagent|delegate|bridge|harness|session)", re.I)
+
+
+def hidden_server(name: str, title: str = "", description: str = "", *, archived: bool = False,
+                  source: str = "registry") -> bool:
+    """Whether the router must never offer this server: an archived one, or another coding agent's (2026-11-14)."""
+    if source != "registry":
+        return False
+    if archived:
+        return True
+    seg = str(name or "").rsplit("/", 1)[-1]
+    return bool(AGENT_SERVER.search(seg) and AGENT_HINT.search(f"{title or ''} {description or ''}"))
+
+
+def hidden_card(card: ToolCard) -> bool:
+    """Whether the router must never offer this card (hidden_server, on a card)."""
+    return hidden_server(card.name, card.title, card.description,
+                         archived=bool(card.extra.get("archived")), source=card.source)
+
+
 @lru_cache(maxsize=1)
 def registry_cards() -> tuple[ToolCard, ...]:
-    """The bundled registry snapshot's cards ((): no snapshot)."""
+    """The bundled registry snapshot's cards ((): no snapshot). Dead, archived and other-agent servers are left out."""
     data = read_json(REGISTRY_FILE)
     if not data:
         return ()
@@ -281,10 +307,12 @@ def registry_cards() -> tuple[ToolCard, ...]:
     for s in servers:
         ns = s["name"].split("/")[0]
         owners[ns] = owners.get(ns, 0) + 1
-    # a server the probe found dead is not recommended (it stays in the snapshot)
-    return tuple(card_from_registry(s, exp.get(f"registry:{s['name']}", ""), probe.get(s["name"]), owners[s["name"].split("/")[0]],
-                                    stars.get(repo_key(str(s.get("repository") or "")) or ""))
-                 for s in servers if (probe.get(s["name"]) or {}).get("status") != "dead")
+    # a server the probe found dead is not recommended (it stays in the snapshot); neither is an archived one, nor
+    # another coding agent's server (hidden_card below)
+    cards = (card_from_registry(s, exp.get(f"registry:{s['name']}", ""), probe.get(s["name"]),
+                                owners[s["name"].split("/")[0]], stars.get(repo_key(str(s.get("repository") or "")) or ""))
+             for s in servers if (probe.get(s["name"]) or {}).get("status") != "dead")
+    return tuple(c for c in cards if not hidden_card(c))
 
 
 def installed_cards(installed: Optional[Iterable[dict]]) -> list[ToolCard]:

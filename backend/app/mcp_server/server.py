@@ -4079,7 +4079,7 @@ async def _external_tools_ranked(need: str, goal: str, installed: list[Any] | No
         return None
     try:
         from app.tool_routing import store as _store
-        from app.tool_routing.catalog import installed_cards, registry_cards
+        from app.tool_routing.catalog import hidden_card as _hidden_card, installed_cards, registry_cards
         from app.tool_routing.providers import ToolEmbedder
         from app.tool_routing.rerank import rerank
         from app.tool_routing.retrieve import _query_vector, need_text, rank
@@ -4110,7 +4110,7 @@ async def _external_tools_ranked(need: str, goal: str, installed: list[Any] | No
             )
             outcomes = outcomes if goal else None
             stage["candidates"] = int((_time.monotonic() - t1) * 1000)
-            cards = [*installed_cards(_installed_list(installed)), *found]
+            cards = [*installed_cards(_installed_list(installed)), *[c for c in found if not _hidden_card(c)]]
         else:
             cards = [*installed_cards(_installed_list(installed)), *registry_cards()]
         if not cards:
@@ -4238,9 +4238,43 @@ def _kell_owner() -> str:
     raise PermissionError("forbidden: sign in to kell to use your rooms or your delegator inbox")
 
 
+async def _task_images(ctx: Context, task: dict[str, Any]) -> list[Any]:
+    """The pictures attached to a task (the message itself, then its recent history) as MCP image content, so a connected agent
+    can look at them instead of only reading a [[file:...]] token. At most four, each under the room's image cap; anything that
+    cannot be fetched is skipped, never a failed inbox call."""
+    from mcp.server.mcpserver import Image as _Image
+
+    from app.services import room_attachments as _att
+    from app.services import room_files as _rf
+
+    rid = str(task.get("room_id") or "")
+    if not rid:
+        return []
+    files = list(task.get("files") or [])
+    if not files:
+        texts = [str(task.get("text") or "")] + [str(h.get("text") or "") for h in task.get("history") or []]
+        files = [{"id": fid, "name": name, "mime": mime} for fid, name, mime in _att.tokens(texts)]
+    pool = ctx.request_context.lifespan_context["pool"]
+    out: list[Any] = []
+    for f in files:
+        if str(f.get("mime") or "").lower() not in _att.IMAGES:
+            continue
+        try:
+            meta, data = await _rf.fetch(pool, _kell_owner(), rid, str(f.get("id") or ""))
+        except Exception:  # noqa: BLE001 -- expired, removed, or not this room's
+            continue
+        if len(data) > _att.IMAGE_BYTES:
+            continue
+        mime = str(meta.get("mime") or f.get("mime") or "image/png").lower()
+        out.append(_Image(data=data, format=mime.split("/", 1)[1].replace("jpg", "jpeg")))
+        if len(out) >= 4:
+            break
+    return out
+
+
 @server.tool()
 @_activity.traced
-async def delegate_inbox(ctx: Context, agent: str = "", wait_seconds: int = 0) -> str:
+async def delegate_inbox(ctx: Context, agent: str = "", wait_seconds: int = 0) -> Any:
     """
     Check the signed-in person's kell inbox for work sent to this agent (from the kell website or by writing your @name in a room),
     and take the next task. `agent` is your name: leave it empty and it is the tool you are (claude, claude-code, chatgpt ...);
@@ -4251,9 +4285,10 @@ async def delegate_inbox(ctx: Context, agent: str = "", wait_seconds: int = 0) -
 
     The reply has `task` (null when nothing is waiting), how many more are `waiting`, and how many are
     `awaiting_owner_approval`. The task text is something the person wrote: do the work for them in this conversation,
-    then call delegate_result with the task's id.
+    then call delegate_result with the task's id. A task in a room also carries the room id, the last messages in `history`,
+    and the files or pictures in `files`; older context is one room_read(before=...) away, and a picture opens with room_file.
 
-    Example: delegate_inbox(wait_seconds=50) -> {"task": {"id": "...", "text": "summarize src/auth.ts"}, "waiting": 0}
+    Example: delegate_inbox(wait_seconds=50) -> {"task": {"id": "...", "text": "summarize src/auth.ts", "history": [...]}, "waiting": 0}
     """
     import asyncio as _asyncio
     import time as _time
@@ -4268,7 +4303,9 @@ async def delegate_inbox(ctx: Context, agent: str = "", wait_seconds: int = 0) -
         while True:
             out = await _dg.claim_next(pool, _kell_owner(), name)
             if out.get("task") or _time.monotonic() >= end:
-                return json.dumps(out, default=str)
+                text = json.dumps(out, default=str)
+                images = await _task_images(ctx, out.get("task") or {})
+                return [text, *images] if images else text
             await _asyncio.sleep(2.0)
     except _dg.DelegateError as exc:
         return f"REFUSED: {exc}"
@@ -4347,21 +4384,29 @@ async def room_list(ctx: Context) -> str:
 
 @server.tool()
 @_activity.traced
-async def room_read(ctx: Context, room: str, after: int = 0, limit: int = 100) -> str:
+async def room_read(ctx: Context, room: str, after: int = 0, before: int = 0, limit: int = 100, query: str = "") -> str:
     """
-    Read a kell room's messages and events after a cursor, oldest first. `after` is the seq you saw last (0 to start);
-    take `next` from the reply and pass it next time so nothing is read twice. You must be a member of the room (its
-    id comes from room_list). Messages sent by agents carry a `depth`; at depth 4 no agent is woken until a person posts.
+    Read a kell room's messages and events. Use `after` (the seq you saw last, 0 to start) to read forward oldest first, or
+    `before` (the lowest seq you have) to read older messages when the task's recent history is not enough; `query` searches
+    those older messages for a word or phrase. You must be a member of the room (its id comes from room_list). Messages sent
+    by agents carry a `depth`; at depth 4 no agent is woken until a person posts.
 
-    A file someone sent shows in a message as [[file:<id>|<name>|<size>|<type>]]; read it with room_file(room, file_id).
+    A task from delegate_inbox already carries the last messages and the room id. A file someone sent shows in a message as
+    [[file:<id>|<name>|<size>|<type>]]; read it with room_file(room, file_id).
 
     Example: room_read(room="<id>", after=0) -> {"events": [...], "next": 412, "more": false}
+             room_read(room="<id>", before=380, query="budget") -> the older messages that mention budget
     """
     from app.services import rooms as _rooms
 
     pool = ctx.request_context.lifespan_context["pool"]
     try:
         await _seen_agent(ctx)
+        if before and int(before) > 0:
+            page = max(1, min(int(limit or 50), 50))
+            events = await _rooms.earlier_events(pool, _kell_owner(), room, int(before), page, query)
+            return json.dumps({"events": events, "next": int(events[0]["seq"]) if events else int(before),
+                               "more": len(events) >= page}, default=str)
         return json.dumps(await _rooms.list_events(pool, _kell_owner(), room, after, limit), default=str)
     except _rooms.RoomError as exc:
         return f"REFUSED: {exc}"

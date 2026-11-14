@@ -69,6 +69,18 @@ same shape of query. The variance is the judge and the graph work, not the trans
 
 Warm cost is ~3-6 ms for `/v1/goals/rank`; a cold build is ~1 s, and `refresh_now` ~0.65 s (measured 2026-11-13).
 
+**What is left out of the results** (2026-11-14):
+
+- a Way materialized from a tool card (`procedures.provenance = 'tool_card'`, 56,741 rows) is the tool itself, not a
+  procedure: the Way list carries only Ways somebody wrote, and the same tool is still offered in `tools`. `route_goal`
+  also no longer synthesizes a one-step Way per ranked tool (`procedure_id "tool:<card>"`), which had made the Way list
+  a copy of the tool list;
+- a registry card whose repository is archived, or whose server is another coding agent (Claude Code, Codex, Cursor,
+  opencode, aider, Cline, Copilot, Gemini CLI, Jules, Antigravity ...) or a bridge to one, is never ranked by the tool
+  router (`app/tool_routing/catalog.py` `hidden_server`, applied to both the bundled snapshot and the database path).
+  The name must look like that agent and the description must say it is a coding agent/CLI: "Eclipse Codex" (banking
+  regulation) and "journald cursor" are kept.
+
 `route_goal` (used by `/v1/goals/route`) tries the catalog first and only falls back to the DB legs
 (`_exact` + `_k000_full_text`) when the catalog itself failed. The global search group is a second opinion only when
 `GOAL_SEARCH_GROUP=on` (or the catalog is unavailable), because that check was a round trip on the hot path.
