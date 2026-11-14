@@ -61,10 +61,25 @@ export const engineStatus = () => (state.engine && state.child && !state.child.k
 
 // Starts (or reuses) the engine for a project directory. `opencode serve` prints a "server listening on <url>" line
 // and a "server password <x>" line on stdout; the token protects its loopback API.
+// Starts in flight, by folder. Two callers starting the same folder at once (the app restoring its last project while the
+// person clicks it) used to start two engines: the second killed the first, whose caller then waited out the whole timeout
+// and reported "did not report a port". Now the second caller waits on the first start instead.
+const starting = new Map<string, Promise<Engine>>()
+const sameDir = (a: string, b: string) => a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+
 export async function engineStart(directory: string): Promise<Engine> {
+  if (state.engine && state.child && !state.child.killed && sameDir(state.engine.directory, directory)) return state.engine
+  const key = directory.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+  const inflight = starting.get(key)
+  if (inflight) return inflight
+  const run = startEngine(directory).finally(() => { if (starting.get(key) === run) starting.delete(key) })
+  starting.set(key, run)
+  return run
+}
+
+async function startEngine(directory: string): Promise<Engine> {
   const exe = findEngineExe()
   if (!exe) throw new Error("opencode.exe not found; set KELL_OC_ENGINE or run `kell setup --client opencode`")
-  if (state.engine && state.child && !state.child.killed && state.engine.directory === directory) return state.engine
   engineStop()
   // Which lane pays: a joined organization first; else a developer's own key when `kell setup --client opencode` set one up;
   // else the signed-in person's own plan through kell's gateway (the models come from the gateway, so this waits on it).
@@ -116,7 +131,13 @@ export async function engineStart(directory: string): Promise<Engine> {
     }, ENGINE_START_MS)
     state.child.stdout?.on("data", (c: Buffer) => read(c.toString(), false))
     state.child.stderr?.on("data", (c: Buffer) => read(c.toString(), true))
-    state.child.on("exit", () => { state.engine = undefined; state.child = undefined })
+    // An engine that exits before reporting its port (killed by a newer start, or crashed) fails its start now, instead of
+    // leaving the caller to wait out the timer. Only this start's own child clears the shared state.
+    const child = state.child
+    child.on("exit", (code) => {
+      if (!engine) { clearTimeout(timer); no(new Error(`the coding engine stopped while starting (exit ${code ?? "?"})`)) }
+      if (state.child === child) { state.engine = undefined; state.child = undefined }
+    })
   })
   state.engine = engine
   return engine
