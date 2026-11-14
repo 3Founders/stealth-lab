@@ -67,22 +67,29 @@ async def run(args: argparse.Namespace) -> int:
         # (a manual pin survives map_tool_cards_to_goals.py --replace)
         from map_tool_cards_to_goals import tool_goal_id
 
+        # docs/goal_router.md routes "scan this repository for vulnerabilities" to the security Goal or its pentest
+        # subgoal, whichever the request lands on: the card is pinned to both (the subgoal only when it exists)
         goal_id = tool_goal_id("security")
+        goal_ids = [goal_id]
         async with pool.acquire() as conn:
             await store.upsert_cards(conn, [c])
             if not await conn.fetchval("SELECT 1 FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", goal_id):
                 raise SystemExit("no security tool Goal: run scripts/map_tool_cards_to_goals.py first")
-            await conn.execute("""INSERT INTO tool_card_goals (card_id, goal_id, score, source)
-                                  VALUES ($1, $2::uuid, $3, 'manual')
-                                  ON CONFLICT (card_id, goal_id) DO UPDATE SET score = EXCLUDED.score,
-                                                                              source = 'manual'""",
-                               c.id, goal_id, PIN_SCORE)
-        print(f"written: {c.id}, pinned to the security Goal {goal_id} ({PIN_SCORE}, manual)")
+            sub = tool_goal_id("security_pentest")
+            if await conn.fetchval("SELECT 1 FROM goals WHERE id = $1::uuid AND t_invalid IS NULL", sub):
+                goal_ids.append(sub)
+            for gid in goal_ids:
+                await conn.execute("""INSERT INTO tool_card_goals (card_id, goal_id, score, source)
+                                      VALUES ($1, $2::uuid, $3, 'manual')
+                                      ON CONFLICT (card_id, goal_id) DO UPDATE SET score = EXCLUDED.score,
+                                                                                  source = 'manual'""",
+                                   c.id, gid, PIN_SCORE)
+        print(f"written: {c.id}, pinned to {', '.join(goal_ids)} ({PIN_SCORE}, manual)")
         from app.tool_routing import ranking
 
-        await ranking.mark_dirty(pool, [goal_id], reason="hinoki card")
+        await ranking.mark_dirty(pool, goal_ids, reason="hinoki card")
         try:
-            await ranking.drain(pool, limit=1, min_age_s=0)
+            await ranking.drain(pool, limit=len(goal_ids), min_age_s=0)
         except Exception as exc:  # noqa: BLE001 -- the server's own drain recomputes it later
             print(f"ranking not recomputed now ({type(exc).__name__}); the server's drain will")
         e = ToolEmbedder()

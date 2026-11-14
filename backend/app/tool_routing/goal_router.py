@@ -49,6 +49,7 @@ class ToolHit:
     rank_score: Optional[float] = None                         # P3-03, GOAL_RANKING=trust; None in the fit order
     rank_inputs: dict[str, Any] = field(default_factory=dict)  # trust, exploration, cost, latency, risk, trial
     trial: bool = False                                        # shown as "New - free trial" (P3-02)
+    pinned: bool = False                                       # a manual pin (P1-03): keeps a place in its Goal's list
 
 
 # The review ladder (db/201, db/204): submitted < proposed < ai_approved < approved. `rejected` is
@@ -380,7 +381,13 @@ async def _rank(pool: Any, goal_id: str, cards: list[ToolHit], *, owner_id: Opti
         c.rank_score = round(lb + inputs["exploration"] - inputs["cost_penalty"] - inputs["latency_penalty"]
                              - inputs["risk_penalty"] - inputs.get("retiring_penalty", 0.0), 4)
     cards.sort(key=lambda c: (-(c.rank_score or 0.0), -c.score, c.card_id))
-    cards = cards[:MAX_TOOLS_PER_GOAL]
+    # A manual pin (P1-03: a launch tool such as Hinoki, pinned without waiting for data) keeps a place in the list even
+    # when its risk penalty ranks it below the cut: after the proven leader, like a trial, never instead of it.
+    pinned = {str(r["card_id"]) for r in await _optional_fetch(
+        pool, "SELECT card_id FROM tool_card_goals WHERE goal_id = $1::uuid AND source = 'manual'", goal_id)}
+    for c in cards:
+        c.pinned = c.pinned or c.card_id in pinned
+    cards = _keep_pins(cards[:MAX_TOOLS_PER_GOAL], cards)
     if trial is not None:
         cards.insert(min(1, len(cards)), trial)     # after the proven leader, never instead of it
         cards = cards[:MAX_TOOLS_PER_GOAL]
@@ -476,6 +483,17 @@ def _from_retrieval(hit: Any, base: Optional[ToolHit]) -> ToolHit:
     )
 
 
+def _keep_pins(tools: list[ToolHit], pool_of: Sequence[ToolHit]) -> list[ToolHit]:
+    """Manual pins (P1-03) the list would drop come back after its leader, like a trial: never instead of it."""
+    have = {t.card_id for t in tools}
+    out = list(tools)
+    for t in pool_of:
+        if t.pinned and t.card_id not in have:
+            out.insert(min(1, len(out)), t)
+            have.add(t.card_id)
+    return out[:MAX_TOOLS_PER_GOAL]
+
+
 def _apply_query(out: dict[str, list[ToolHit]], hits: Sequence[Any]) -> dict[str, list[ToolHit]]:
     """Reorder each Goal's tools by the request, inside that Goal.
 
@@ -505,7 +523,7 @@ def _apply_query(out: dict[str, list[ToolHit]], hits: Sequence[Any]) -> dict[str
                     merged.append(t)
                 if len(merged) >= MAX_TOOLS_PER_GOAL:
                     break
-        out[goal_id] = merged
+        out[goal_id] = _keep_pins(merged, base)
     return out
 
 
@@ -521,7 +539,7 @@ async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] 
             """
             WITH ranked_cards AS (
                 SELECT g.goal_id::text AS goal_id, t.id, t.name, t.server, t.title, t.description,
-                       t.source, g.score,
+                       t.source, g.score, g.source = 'manual' AS pinned,
                        row_number() OVER (PARTITION BY g.goal_id
                                           ORDER BY g.score DESC,
                                                    NULLIF(t.extra->>'stars', '')::int DESC NULLS LAST,
@@ -530,7 +548,7 @@ async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] 
                 JOIN tool_cards t ON t.id = g.card_id
                 WHERE g.goal_id = ANY($1::uuid[])
             )
-            SELECT goal_id, id, name, server, title, description, source, score
+            SELECT goal_id, id, name, server, title, description, source, score, pinned
             FROM ranked_cards
             WHERE rn <= $2
             ORDER BY goal_id, rn
@@ -552,6 +570,7 @@ async def _tools(pool: Any, goal_ids: Sequence[str], *, owner_id: Optional[str] 
             description=str(row["description"] or ""),
             source=str(row["source"] or ""),
             score=float(row["score"] or 0.0),
+            pinned=bool(row["pinned"]),
         ))
     if ranked:
         from app.tool_routing import ranking as _ranking

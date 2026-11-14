@@ -1146,7 +1146,7 @@ Update only your own row. `—` means unclaimed.
 | P1-06 | Intent certificates | opencode | done | this commit |
 | P1-07 | Signed audit | opencode | done | this commit |
 | P1-08 | Exa adapter | anuj-claude | done | #27 |
-| P1-09 | Hinoki adapter | - | built 2026-11-14 against a fake Hinoki; no live call yet (needs the owner's consent and HINOKI_API_KEY) | #26 |
+| P1-09 | Hinoki adapter | - | built 2026-11-14 against a fake Hinoki; manual checks pass on the scratch DB (Hinoki 2nd in the top tools; `--call` without a certificate: deny cert:required). Manual pins now keep a place in their Goal's list (goal_router._keep_pins), and the card is pinned to the security Goal and `security_pentest`. No live call yet (needs the owner's consent and HINOKI_API_KEY) | #26 |
 | P1-10 | Run recording | anuj-claude | done | #25 |
 | P1-11 | Approval surface | opencode | done | this commit |
 | P2-01 | Corpus and contracts | anuj-claude | done | #30 |
