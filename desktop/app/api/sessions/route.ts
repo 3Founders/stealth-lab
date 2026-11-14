@@ -65,19 +65,42 @@ export async function GET(req: Request) {
     // The engine gives at most 200 messages a call: the newest 200, put back in order (a long session shows its latest part).
     const out = await client.message.list({ sessionID: id as any, limit: 200, order: "desc" })
     const lines: Line[] = []
+    // The subagents this session ran (the engine's own `subagent` tool). The chat history keeps text, so the agents
+    // panel would be empty after a restart without this: the tool calls are in the engine's own record (2026-11-14).
+    const subagents: { id: string; title: string; state: "running" | "done" | "failed"; brief?: string; result?: string; at?: number }[] = []
     for (const m of [...(out.data as any[])].reverse()) {
       const at = Number(m.time?.created) || undefined
       if (m.type === "user" || (m.type === undefined && typeof m.text === "string")) {
         if (String(m.text || "").trim()) lines.push({ who: "user", text: String(m.text), at })
       } else if (m.type === "assistant") {
-        const text = (Array.isArray(m.content) ? m.content : []).filter((c: any) => c?.type === "text").map((c: any) => String(c.text || "")).join("")
+        const content = Array.isArray(m.content) ? m.content : []
+        // The subagent tool calls first: a step that only called one has no text, and it still belongs in the panel.
+        for (const c of content) {
+          if (c?.type !== "tool" || !/^(subagent|task)$/i.test(String(c.name || ""))) continue
+          const st = c.state && typeof c.state === "object" ? c.state : {}
+          const input = st.input && typeof st.input === "object" ? st.input : {}
+          const answered = (Array.isArray(st.content) ? st.content : [])
+            .filter((x: any) => x?.type === "text").map((x: any) => String(x.text || "")).join("\n\n").trim()
+          // The engine wraps a subagent's answer in <subagent sessionID=... state=...>: show the answer, not the tag.
+          const result = answered.replace(/^<subagent[^>]*>\s*/i, "").trim()
+          const status = String(st.status || "")
+          subagents.push({
+            id: String(c.id || ""),
+            title: String(input.description || input.subagent_type || input.agent || "Subagent").slice(0, 120),
+            state: status === "completed" ? "done" : status === "error" ? "failed" : "running",
+            ...(typeof input.prompt === "string" ? { brief: input.prompt } : {}),
+            ...(result ? { result } : {}),
+            ...(at ? { at } : {}),
+          })
+        }
+        const text = content.filter((c: any) => c?.type === "text").map((c: any) => String(c.text || "")).join("")
         if (!text.trim()) continue
         const last = lines.at(-1)
         if (last?.who === "assistant") last.text += `\n\n${text}`     // one answer over several steps reads as one message
         else lines.push({ who: "assistant", text, at })
       }
     }
-    return Response.json({ lines })
+    return Response.json({ lines, subagents })
   } catch (err: any) {
     return Response.json({ error: String(err?.message || err), sessions: [], lines: [] }, { status: 502 })
   }

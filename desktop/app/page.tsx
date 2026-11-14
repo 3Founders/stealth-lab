@@ -442,7 +442,7 @@ export default function Home() {
   const menuRef = useRef<(what: string) => void>(() => {})
   menuRef.current = (what) => {
     if (what === "open-folder" && !busy && !opening) void (async () => { const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); setSideView("project"); void openProject(d) } })()
-    if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); loadChanges(null) }
+    if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); loadChanges(null) }
   }
   useEffect(() => desktop()?.onMenu?.((w) => menuRef.current(w)), [])
   // Follow the window's maximize state: our button, a double-click on the title bar, or Windows itself all keep the
@@ -472,6 +472,9 @@ export default function Home() {
   // The subagents this turn ran (the engine's own subagent/task tool). They are listed with the agents in the right
   // panel, so a delegated worker is visible while it runs instead of only as a chip in the chat (2026-11-14).
   const [subagents, setSubagents] = useState<SubagentRun[]>([])
+  // The call ids already known to be subagents: the tool's name comes on input.started, and the later events for the same
+  // call may carry only its id (so the panel must not depend on the name arriving twice).
+  const subagentIds = useRef<Set<string>>(new Set())
   const [ledger, setLedger] = useState<LedgerRow[]>([])
   const [sessionID, setSessionID] = useState<string | null>(null)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
@@ -814,7 +817,7 @@ export default function Home() {
   // A past session: its conversation back on screen, and the next message continues it.
   const openSession = async (id: string) => {
     if (busy || id === sessionID) return
-    setQueued([]); setSteps([]); setSubagents([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
+    setQueued([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
     setSessionID(id); setLines([])
     void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: id }) }).catch(() => undefined)
     try {
@@ -822,6 +825,15 @@ export default function Home() {
       let j = await (await fetch(`/api/local/sessions?id=${encodeURIComponent(id)}`)).json()
       if (j.error || !Array.isArray(j.lines)) j = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`)).json()
       setLines(Array.isArray(j.lines) ? j.lines : [])
+      // The agents panel is rebuilt from the engine's own record (the app's local history keeps text, not tool calls), so
+      // the subagents this chat already ran are still listed after a restart or when an older chat is opened.
+      if (Array.isArray(j.subagents)) setSubagents(j.subagents)
+      else {
+        try {
+          const s = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`)).json()
+          if (Array.isArray(s.subagents)) setSubagents(s.subagents)
+        } catch { /* the panel is an addition; the chat still opens */ }
+      }
     } catch { setLines([{ who: "assistant", text: "kell could not read this session.", at: Date.now() }]) }
     loadChanges(id)
   }
@@ -908,7 +920,7 @@ export default function Home() {
     setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
     if (j.up) remember(dir)
     if (j.up) {
-      setQueued([]); setLines([]); setSteps([]); setSubagents([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null)
+      setQueued([]); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null)
       // The folder (and the chat to reopen, when the app is restoring the last one) is kept in the app's store.
       void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir, sessionID: session ?? null }) }).catch(() => undefined)
     }
@@ -1188,7 +1200,7 @@ export default function Home() {
     if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
     else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
-    setSubagents([])                                        // the agents panel is this turn's workers
+    setSubagents([]); subagentIds.current.clear()                                        // the agents panel is this turn's workers
     if (again === undefined) { setText(""); setAttachments([]); histPos.current = null }   // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
     setStopNote("")
@@ -1246,6 +1258,7 @@ export default function Home() {
           setSteps((s) => s.some((x) => x.id === id) ? s : [...s, { kind: "tool", label, id, state: "running" }])
           // A subagent shows in the agents panel from its first moment; `called` below fills in what it was asked to do.
           if (SUBAGENT_TOOL.test(label) && id) {
+            subagentIds.current.add(id)
             setSubagents((a) => a.some((x) => x.id === id) ? a : [...a, { id, title: "Subagent", state: "running" }])
           }
         }
@@ -1256,8 +1269,10 @@ export default function Home() {
           setSteps((s) => s.some((x) => x.id === id)
             ? s.map((x) => (x.id === id ? { ...x, state, hint: hint ?? x.hint, note: state === "failed" ? "failed" : x.note } : x))
             : [...s, { kind: "tool", label: String(d.name || "tool"), id, state, hint, note: state === "failed" ? "failed" : undefined }])
-          // The subagent's row: its one-line task while it runs, its answer (or failure) when it ends.
-          if (SUBAGENT_TOOL.test(String(d.name || "")) && id) {
+          // The subagent's row: its one-line task while it runs, its answer (or failure) when it ends. The call's name is
+          // not repeated on every event, so a known id is enough (2026-11-14: the row never filled in).
+          if (id && SUBAGENT_TOOL.test(String(d.name || ""))) subagentIds.current.add(id)
+          if (id && subagentIds.current.has(id)) {
             if (t === "session.tool.called") {
               const title = subagentTitle(d.input)
               const brief = typeof d.input?.prompt === "string" ? d.input.prompt : undefined
@@ -1806,7 +1821,7 @@ export default function Home() {
     run()
   }
   const commands = [
-    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
+    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
     { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); setSideView("project"); void openProject(d) } }) } },
     { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
     { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
@@ -2094,7 +2109,7 @@ export default function Home() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg><h2>Sessions</h2>{sessions.length > 0 && <span className="dk-count">{sessions.length}</span>}
                 </button>
                 <button type="button" className="dk-icon dk-icon-sm" aria-label="New session" title="New session" disabled={busy}
-                  onClick={() => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); loadChanges(null) }}>
+                  onClick={() => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); loadChanges(null) }}>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                 </button>
               </div>
@@ -2715,8 +2730,32 @@ export default function Home() {
           {/* While the divider is dragged, a transparent shield keeps a file view or an embedded frame from swallowing the pointer. */}
           {resizing === "right" && <div className="dk-shield" aria-hidden="true" />}
           {/* The agents in this session: the session itself and the model the router delegated to. Clicking one swaps the
-              middle column between the chat and that agent's own output. */}
-          <div className="dk-panel-head"><h2>Agents</h2></div>
+              middle column between the chat and that agent's own output. The panel's own actions (hide, refresh, undo) sit
+              here at the top, not buried in the third fold. */}
+          <div className="dk-panel-head">
+            <h2>Agents</h2>
+            <span className="dk-iconrow">
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Hide the changes panel" title="Hide the changes panel"
+                onClick={() => toggleSidebar("right")}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg>
+              </button>
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the changes" title="Refresh" onClick={() => loadChanges(sessionID)} disabled={!readEngine}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+              </button>
+              <button type="button" className="dk-icon dk-icon-sm" aria-label="Undo kell's last changes" title="Undo kell's last changes" onClick={() => undo()} disabled={!directory || busy || (!!sessionID && pending === 0)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+              </button>
+            </span>
+          </div>
+          {confirm && (
+            <div className="dk-err">
+              <p style={{ margin: "0 0 6px" }}>{confirm}. Undo would drop that.</p>
+              <div className="dk-row" style={{ margin: 0 }}>
+                <button type="button" className="btn-ink" onClick={() => undo(true)}>Undo anyway</button>
+                <button type="button" className="btn-line" onClick={() => setConfirm("")}>Keep it</button>
+              </div>
+            </div>
+          )}
           <div className="dk-agents" role="tablist" aria-label="Agents">
             <button type="button" role="tab" className="dk-agent" aria-selected={agentView === "main"} onClick={() => setAgentView("main")}>
               <span className="dk-agent-dot" aria-hidden="true" />
@@ -2827,28 +2866,7 @@ export default function Home() {
           <details className="dk-fold" open>
           <summary className="dk-panel-head">
             <h2>Changed by kell{files.length ? ` · ${files.length}` : ""}</h2>
-            <span className="dk-iconrow">
-              <button type="button" className="dk-icon dk-icon-sm" aria-label="Hide the changes panel" title="Hide the changes panel"
-                onClick={(e) => { e.preventDefault(); toggleSidebar("right") }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg>
-              </button>
-              <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the changes" title="Refresh" onClick={(e) => { e.preventDefault(); loadChanges(sessionID) }} disabled={!readEngine}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
-              </button>
-              <button type="button" className="dk-icon dk-icon-sm" aria-label="Undo kell's last changes" title="Undo kell's last changes" onClick={(e) => { e.preventDefault(); undo() }} disabled={!directory || busy || (!!sessionID && pending === 0)}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
-              </button>
-            </span>
           </summary>
-          {confirm && (
-            <div className="dk-err">
-              <p style={{ margin: "0 0 6px" }}>{confirm}. Undo would drop that.</p>
-              <div className="dk-row" style={{ margin: 0 }}>
-                <button type="button" className="btn-ink" onClick={() => undo(true)}>Undo anyway</button>
-                <button type="button" className="btn-line" onClick={() => setConfirm("")}>Keep it</button>
-              </div>
-            </div>
-          )}
           {filesNote && !files.length && <p className="dk-note">{filesNote}</p>}
           <FileList files={files} openOne />
           </details>
