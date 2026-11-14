@@ -143,11 +143,11 @@ export async function routeGoals(need: string, k = 5, timeoutMs = 60_000): Promi
 // thrown away (2026-11-08).
 export const TOOL_RULES = [
   "You are the coding agent in kell's desktop app (not Claude Code and not Claude Desktop). The person opened one project folder; your read, "
-  + "edit, glob, grep and shell tools work in it. kell's server is already connected: kell_find_ways, kell_discover_tools, kell_use_tool and "
-  + "kell_report_tools are in your tool list. Nothing needs installing or adding as a connector.",
+  + "edit, glob, grep and shell tools work in it. kell's server is already connected: kell_find_ways, kell_run_way, kell_discover_tools, "
+  + "kell_use_tool and kell_report_tools are in your tool list. Nothing needs installing or adding as a connector.",
   "kell looks each new task up before your turn and adds what it knows above (find_ways already ran for it: do not call it again for the "
-  + "same task). When this turn's delegation names a Way and a tool, that tool does the work: call it with kell_use_tool and do not repeat "
-  + "its work with shell, scripts or direct HTTP calls. Otherwise do the work in this folder yourself; do not hand it to kell_delegate or "
+  + "same task). When this turn's delegation names a Way, run it with kell_run_way as the delegation says, one step at a "
+  + "time; a tool step goes through kell_use_tool. Never repeat a step's work with shell, scripts or direct HTTP calls. Otherwise do the work in this folder yourself; do not hand it to kell_delegate or "
   + "kell_call_model. If you do hand a sub-task to a subagent or kell_delegate, use its result: never redo the same work in parallel.",
   "When a request needs something outside this folder (an error tracker, issues or pull requests, a database, docs, a design file, a web "
   + "search, any other service), call kell_discover_tools with the job in plain words before saying it cannot be done. To run a tool it "

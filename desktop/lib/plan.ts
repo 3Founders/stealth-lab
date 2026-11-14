@@ -146,13 +146,25 @@ export function planFromRoute(task: string, models: Models, routed: Routed): Del
 export function contractOf(plan: Pick<Delegation, "goal" | "way" | "tool"> | null | undefined): string {
   if (!plan?.way) return ""
   const head = `kell delegation for this turn: Goal "${plan.goal?.name || "none"}" -> Way "${plan.way.name}" [${plan.way.approval}]`
-  if (!plan.tool) return `${head}. No tool is bound to this Way: do the work yourself in this folder.`
+  // The Way runs on kell's executor (backend app/execution/way_runs.py): it walks the steps in order, feeds each output to
+  // the next, runs scripts and plain fetches itself, and pauses for the person. The older one-tool contract is only the
+  // fallback for a Way the executor refuses (not approved, or not a stored procedure).
+  const run = plan.way.id ? [
+    `${head}.`,
+    `Run this Way step by step with kell_run_way(way_id="${plan.way.id}", input=<the person's task, in full>). First tell the person the reply's notice, word for word.`,
+    "Then follow each reply: status waiting_session -> do your_turn.do yourself (your_turn.earlier holds what the steps before produced; a tool step goes through kell_use_tool), then kell_run_way(run_id=<run_id>, output=<the step's result, in full>), or failed=<why> if it cannot be done.",
+    "Status waiting_human -> show the person waiting_on and wait for them; when they say it is done, kell_run_way(run_id=<run_id>, done=true, note=<what they did or found>). Status done -> give the person result. Status failed -> say why in one line and ask before doing anything else.",
+    "Do the Way's steps only through the run: never do a step outside it, skip one, or run both.",
+  ] : []
+  const fallback = run.length ? "If kell_run_way refuses this Way, do this instead: " : ""
+  if (!plan.tool) return [...run, `${fallback}${run.length ? "" : `${head}. `}No tool is bound to this Way: do the work yourself in this folder.`].join("\n")
   // `use_tool` names an outside server by its registry name (the Way's name for a tool_goals Way), not by URL.
   const server = plan.tool.server && !/^https?:/i.test(plan.tool.server)
     ? plan.tool.server
     : (plan.way.name || plan.tool.server)
   return [
-    `${head} -> tool "${plan.tool.name}"${plan.tool.server ? ` (${plan.tool.server})` : ""}.`,
+    ...run,
+    `${fallback}${head} -> tool "${plan.tool.name}"${plan.tool.server ? ` (${plan.tool.server})` : ""}.`,
     `That tool does this task's work: call kell_discover_tools(server="${server}") for its arguments if you do not have them, then kell_use_tool(server="${server}", name="${plan.tool.name}", arguments={...}).`,
     "Do not re-implement or pre-empt the tool's work with shell commands, scripts, direct HTTP calls or your own scan: never run both.",
     "If the tool fails or cannot do the job, say in one line what it could not do, then stop and ask the person. Never claim a check you did not run.",

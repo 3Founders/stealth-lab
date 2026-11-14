@@ -106,6 +106,15 @@ def test_the_notice_says_whether_the_person_is_needed():
     assert way_runs.notice([{"kind": "tool"}]).startswith(way_runs.AUTONOMOUS)
 
 
+def test_find_ways_says_how_to_run_the_chosen_way():
+    out = json.loads(way_runs.with_run(json.dumps({"outcome": "resolved", "procedures": [{"procedure_id": "p-1"}]})))
+    assert out["run"]["call"] == {"tool": "run_way", "arguments": {"way_id": "p-1", "input": "<the task>"}}
+    assert 'way_id="p-1"' in out["run"]["next"] and "notice" in out["run"]["next"]
+    for reply in (json.dumps({"outcome": "no_match"}), json.dumps({"outcome": "resolved", "procedures": []}),
+                  "REFUSED: no", json.dumps([1])):
+        assert way_runs.with_run(reply) == reply
+
+
 # ----------------------------------------------------------------------------------------------------- the database
 
 @pytest.mark.asyncio

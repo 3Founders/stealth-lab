@@ -48,6 +48,35 @@ NEEDS_YOU = "This will require your inputs at some steps along the way, stay tun
 SIDE_EFFECTS = ("If this step sends, posts, publishes, pays, buys or deletes anything, ask the person first.")
 
 
+# --------------------------------------------------------------------------------------------- find_ways' handoff
+
+RUN_NEXT = (
+    "To carry out this Way, run it: run_way(way_id=\"{way_id}\", input=<the task as the person gave it>). Tell the person "
+    "the reply's notice word for word, then follow its replies step by step (your_turn: do it and report output=...; "
+    "waiting_on: the person acts, then done=true). Each step's output feeds the next and the outcome is recorded on the "
+    "Way. Do the steps through the run, not on your own beside it. If run_way refuses this Way, use its steps as "
+    "knowledge and do the task yourself.")
+
+
+def with_run(reply: str) -> str:
+    """A find_ways reply that chose a Way says how to run it: `run` names the run_way call (docs/way_executor.md). A
+    reply with no chosen Way, or one that is not a JSON object, is returned unchanged."""
+    try:
+        body = json.loads(reply)
+    except (TypeError, ValueError):
+        return reply
+    if not isinstance(body, dict) or body.get("outcome") not in (None, "resolved"):
+        return reply
+    procs = body.get("procedures") if isinstance(body.get("procedures"), list) else []
+    way = procs[0] if procs and isinstance(procs[0], dict) else None
+    way_id = str((way or {}).get("procedure_id") or (way or {}).get("id") or "")
+    if not way_id:
+        return reply
+    body["run"] = {"call": {"tool": "run_way", "arguments": {"way_id": way_id, "input": "<the task>"}},
+                   "next": RUN_NEXT.replace("{way_id}", way_id)}
+    return json.dumps(body, default=str)
+
+
 # ------------------------------------------------------------------------------------------------------- the plan
 
 def _text(*values: Any) -> str:

@@ -3488,7 +3488,8 @@ async def find_ways(
         reply = with_triage(reply, triaged)
     if decision is not None:
         gov.remember(caller, decision.key, reply)        # the knowledge only: a plan is per call, never cached
-    final = await _with_routes(await _plan_for(_no_way_next(_mark_untrusted(shape(reply)))), triaged, query, installed)
+    final = await _with_routes(await _plan_for(_with_run(_no_way_next(_mark_untrusted(shape(reply))))), triaged, query,
+                               installed)
     # recorded AFTER the plan so the request time includes it and `plan_ms` (the router's overhead) is stored with it
     await _record_find_ways(ctx, query, final, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
     return final
@@ -3593,6 +3594,13 @@ def _no_way_next(reply: str) -> str:
         return reply
     body["no_stored_way_next"] = NO_WAY_NEXT.replace("{model}", _default_call_model())
     return json.dumps(body, default=str)
+
+
+def _with_run(reply: str) -> str:
+    """A find_ways reply that chose a Way says how to run it (app/execution/way_runs.with_run)."""
+    from app.execution.way_runs import with_run
+
+    return with_run(reply)
 
 
 def _mark_untrusted(reply: str) -> str:

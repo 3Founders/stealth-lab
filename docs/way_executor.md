@@ -50,10 +50,24 @@ Active Ways, public or the caller's own. Every stored step shape maps to a kind 
 references. `run_way(submission_id=...)` runs a submission's approved parent Way the same way. A run id from the older
 submission runner (`goal_submission_runs`) still continues there.
 
+## Wiring (2026-11-14)
+
+- **find_ways -> run_way:** a reply that chose a Way carries `run` (`way_runs.with_run`): the `run_way` call for the
+  first Way and what to do with its replies.
+- **Desktop:** the delegation for a picked Way (`desktop/lib/plan.ts` `contractOf`) tells the turn to run it with
+  `kell_run_way`, falling back to the older one-tool instruction only when the executor refuses the Way.
+- **Outcomes:** a done or failed run is recorded on the Way through `procedures.record_execution_outcome` as a self-report
+  (`execution_verified=False`): evidence ranking reads, never a promotion or a quarantine by itself. Cancelled runs say
+  nothing.
+- **One runner:** the website's submission run routes start headless runs here; a run id from the older runner
+  (`goal_submission_runs`) still continues there. Stored actors are `human` / `ai` / `session`.
+- **Headless pinned models:** a step pinned to a model runs on it through kell's providers; strict fails when it cannot,
+  otherwise kell's own model does it.
+- **Thin coding steps:** `your_turn` carries the step's check and note and, in `part_of`, what the whole Way achieves.
+
 ## Not done yet
 
-- A run's outcome is not fed back into the Way's ranking.
-- The desktop app and the find_ways reply do not call `run_way` yet (find_ways gives the Way; the session must call it).
-- The HTTP submission run routes (`app/mcp_server/submission_routes.py`) still use the older submission runner.
+- Not yet exercised against production data.
+- The desktop change reaches people only in the next desktop release.
 
 Tests: `tests/test_way_runs_e2e.py` (11, on a real database).
