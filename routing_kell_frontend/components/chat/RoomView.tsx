@@ -87,6 +87,17 @@ function withLinks(text: string) {
       : part);
 }
 
+/** A sign-in card's title: the card's own title, else the registry name in people's words. */
+const signInTitle = (x: ToolSignIn) => x.title || toolLabel(x.server);
+/** A tile monogram, for a card with no avatar (or while its avatar loads). */
+const signInInitial = (x: ToolSignIn) => signInTitle(x).trim().slice(0, 1).toUpperCase() || "?";
+/** A stable hue per tool, so the tile is its own colour without an image. */
+const signInHue = (x: ToolSignIn) => {
+  let h = 0;
+  for (const ch of `${x.server}${x.title || ""}`) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+};
+
 /** A message older than this when it arrives is history, not news: it raises no alert, bell entry or sound. */
 const NEW_MESSAGE_MS = 3 * 60 * 1000;
 
@@ -166,6 +177,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [, bump] = useState(0);
   const lineStore = useRef<Record<string, Line[]>>({});
   const [activity, setActivity] = useState<Record<string, AgentActivity>>({});
+  // Whether the sign-in cards show how often each tool has been used. A person can hide it; the choice is per machine.
+  const [showUses, setShowUses] = useState(true);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("kell.rooms.showUses");
+      if (saved === "on" || saved === "off") setShowUses(saved === "on");
+    } catch { /* storage can be blocked; the default stands */ }
+  }, []);
   const [streaming, setStreaming] = useState<Record<string, { room: string; text: string; final?: GroupMessage }>>({});
   const [kellBusy, setKellBusy] = useState<Record<string, boolean>>({});
   const streamingRef = useRef(streaming);
@@ -840,15 +859,35 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           ? (
             <MessageScroller.Item key={l.id} className="dg-signin-card" role="status">
               <div className="dg-signin-head">
-                <b>{l.signIns.length === 1
-                  ? (l.signIns[0].server ? `Sign in to ${toolLabel(l.signIns[0].server)} to continue` : "Sign in to continue")
-                  : `You can use these ${l.signIns.length} options. Sign in to continue.`}</b>
+                <div className="dg-signin-head-row">
+                  <b>{l.signIns.length === 1
+                    ? (l.signIns[0].server ? `Sign in to ${signInTitle(l.signIns[0])} to continue` : "Sign in to continue")
+                    : `You can use these ${l.signIns.length} options. Sign in to continue.`}</b>
+                  <label className="dg-signin-uses-toggle" title="Show how often each tool has been used">
+                    <input type="checkbox" checked={showUses} onChange={(e) => {
+                      const on = e.target.checked; setShowUses(on);
+                      try { localStorage.setItem("kell.rooms.showUses", on ? "on" : "off"); } catch { /* the state still changes */ }
+                    }} />
+                    <span>Show uses</span>
+                  </label>
+                </div>
                 <span>Once per tool, only you see this. Your request runs again by itself after.</span>
               </div>
               <ol>
                 {l.signIns.map((x, i) => (
                   <li key={x.link}>
-                    <span className="dg-signin-name">{toolLabel(x.server)}</span>
+                    <span className="dg-signin-icon" aria-hidden="true"
+                      style={{ background: `linear-gradient(145deg, hsl(${signInHue(x)} 62% 42%), hsl(${signInHue(x) + 38} 62% 30%))` }}>
+                      <span className="dg-signin-mono">{signInInitial(x)}</span>
+                      {x.icon && <img src={x.icon} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} />}
+                    </span>
+                    <span className="dg-signin-text">
+                      <span className="dg-signin-name">{signInTitle(x)}</span>
+                      {x.description && <span className="dg-signin-desc">{x.description}</span>}
+                      {showUses && typeof x.uses === "number" && (
+                        <span className="dg-signin-uses">{x.uses > 0 ? `${x.uses} ${x.uses === 1 ? "use" : "uses"}` : "No uses yet"}</span>
+                      )}
+                    </span>
                     {i === 0 && l.signIns!.length > 1 ? <span className="dg-signin-best">Best fit</span> : null}
                     {x.done
                       ? <span className="dg-signin-done">Signed in</span>

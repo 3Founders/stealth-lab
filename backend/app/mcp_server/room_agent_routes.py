@@ -167,6 +167,26 @@ def _one_per_link(tools: list[dict[str, str]]) -> list[dict[str, str]]:
     return [t for t in tools if t.get("link") and not (t["link"] in seen or seen.add(t["link"]))]
 
 
+async def _sign_in_details(pool: Any, tools: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """One sign-in option per link, with what the card needs: title, one-line description, uses, and a GitHub avatar
+    when the card's repository has one. The link stays the person's own; nothing here is posted into the room."""
+    from app.tool_routing import store as _store
+
+    out: list[dict[str, Any]] = []
+    for t in _one_per_link(tools):
+        server = str(t.get("server") or "")
+        card = await _store.card_by_name(pool, server) if server else None
+        uses = await _store.uses_for(pool, card) if card else 0
+        icon = ""
+        if card and card.url:
+            m = re.match(r"https?://github\.com/([^/]+)/", card.url)
+            if m:
+                icon = f"https://github.com/{m.group(1)}.png?size=96"
+        out.append({**t, "title": card.title if card else "", "description": card.description if card else "",
+                    "uses": uses, **({"icon": icon} if icon else {})})
+    return out
+
+
 async def _hand_to_desktop(request: Request, pool: Any, subject: str, room_id: str, text: str, recent_rows: list[dict[str, Any]],
                            post_handle: str, *, their_sub: str | None, call: Any) -> "Response | str | None":
     """The answer when @kell hands the message to a desktop session: a Response (a short note posted in the room; the desktop posts the
@@ -591,7 +611,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         if kind == "delta":
                             queue.put_nowait(_sse({"delta": value}))
                         elif kind == "sign_in":          # the person's private Sign in button, as soon as the tool asks
-                            queue.put_nowait(_sse({"sign_in_tool": value}))
+                            queue.put_nowait(_sse({"sign_in_tool": (await _sign_in_details(pool, [value]))[0]}))
                         else:
                             final = value
                     reply, accepted, why, links, sign_ins, remembered = await finish(final or agent.AgentOutcome(text=""))
@@ -600,7 +620,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         queue.put_nowait(_sse({"error": why}))
                     else:
                         queue.put_nowait(_sse({"done": True, "text": reply, "event": accepted, "consent": links, "sign_in": sign_ins,
-                                               "sign_in_tools": _one_per_link(final.sign_in_tools if final else []),
+                                               "sign_in_tools": await _sign_in_details(pool, final.sign_in_tools if final else []),
                                                "memory": {"used": mem_used, "remembered": remembered},
                                                "tools": (final.tools_used if final else [])}))
                 except RuntimeError as exc:          # the model endpoint's own refusal
@@ -659,7 +679,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         if why is not None:
             return _error(request, why, 400)
         return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted,
-                               "consent": links, "sign_in": sign_ins, "sign_in_tools": _one_per_link(outcome.sign_in_tools),
+                               "consent": links, "sign_in": sign_ins,
+                               "sign_in_tools": await _sign_in_details(pool, outcome.sign_in_tools),
                                "memory": {"used": mem_used, "remembered": remembered}})
 
     @server.custom_route("/v1/rooms/{room_id}/agent/vote", methods=["POST", "OPTIONS"], include_in_schema=False)

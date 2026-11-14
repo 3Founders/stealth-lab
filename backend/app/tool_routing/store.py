@@ -329,6 +329,19 @@ def card_refs(card: ToolCard) -> set[str]:
     return {r for r in refs if r}
 
 
+async def uses_for(pool: Any, card: ToolCard) -> int:
+    """How many times this server has actually been used (tool_observations, refs from card_refs). 0 when the table is
+    absent or the card answers to no ref. A use count, not unique people: the sign-in card says "uses"."""
+    refs = sorted(card_refs(card))
+    if not refs:
+        return 0
+    try:
+        return int(await pool.fetchval(
+            "SELECT count(*) FROM tool_observations WHERE used AND ref = ANY($1::text[])", refs) or 0)
+    except Exception:  # noqa: BLE001 -- no observations table yet: no count, never a failed sign-in card
+        return 0
+
+
 async def record_outcome(pool: Any, rows: Sequence[dict[str, Any]]) -> int:
     """Insert tool_observations rows (already validated: ref, used, suggested, outcome, ...). -> how many."""
     rows = [r for r in rows if r.get("ref")][:50]

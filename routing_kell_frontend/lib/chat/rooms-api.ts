@@ -180,12 +180,22 @@ export function roomsApi(deps: RoomsDeps) {
 }
 export type RoomsApi = ReturnType<typeof roomsApi>;
 
-/** A tool that needs the person's own sign-in before it runs: its registry name and the sign-in link (shown to them only). */
-export type ToolSignIn = { server: string; link: string };
+/** A tool that needs the person's own sign-in before it runs: its registry name, the sign-in link (shown to them only),
+ *  and the card details the person needs to choose (title, one-line description, how often it has been used, an icon). */
+export type ToolSignIn = {
+  server: string; link: string; title?: string; description?: string; uses?: number; icon?: string
+};
 
 function toSignIn(v: unknown): ToolSignIn | null {
-  const o = v as { server?: unknown; link?: unknown } | null;
-  return o && typeof o.link === "string" && /^https?:\/\//.test(o.link) ? { server: typeof o.server === "string" ? o.server : "", link: o.link } : null;
+  const o = v as { server?: unknown; link?: unknown; title?: unknown; description?: unknown; uses?: unknown; icon?: unknown } | null;
+  if (!o || typeof o.link !== "string" || !/^https?:\/\//.test(o.link)) return null;
+  return {
+    server: typeof o.server === "string" ? o.server : "", link: o.link,
+    ...(typeof o.title === "string" && o.title ? { title: o.title } : {}),
+    ...(typeof o.description === "string" && o.description ? { description: o.description } : {}),
+    ...(typeof o.uses === "number" ? { uses: o.uses } : {}),
+    ...(typeof o.icon === "string" && /^https?:\/\//.test(o.icon) ? { icon: o.icon } : {}),
+  };
 }
 
 /** A registry name as people say it: "io.github.scite/scite-mcp" -> "Scite". */
