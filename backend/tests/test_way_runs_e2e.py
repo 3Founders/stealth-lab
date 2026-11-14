@@ -243,6 +243,20 @@ async def test_failure_cancel_and_wrong_answers(pool, fakes):
 
 
 @pytest.mark.asyncio
+async def test_a_finished_run_is_self_reported_evidence_and_json_output_is_kept(pool, fakes):
+    w = await way(pool, [prompt(1, "Check the domain")])
+    run = await way_runs.start(pool, w["id"], owner_id=OWNER)
+    run = await way_runs.report(pool, run["run_id"], owner_id=OWNER, output={"domain": "a.com", "available": True})
+    assert run["status"] == "done" and json.loads(run["result"]) == {"domain": "a.com", "available": True}
+    ev = await pool.fetch("SELECT outcome_status, created_by FROM evidence WHERE target_id = $1::uuid", w["id"])
+    assert [(e["outcome_status"], e["created_by"]) for e in ev] == [("success", "record_execution_outcome@1:self_report")]
+    cancelled = await way(pool, [prompt(1, "x")])
+    run = await way_runs.start(pool, cancelled["id"], owner_id=OWNER)
+    await way_runs.report(pool, run["run_id"], owner_id=OWNER, cancel=True)
+    assert not await pool.fetchval("SELECT count(*) FROM evidence WHERE target_id = $1::uuid", cancelled["id"])
+
+
+@pytest.mark.asyncio
 async def test_headless_kell_does_every_automated_step(pool, fakes):
     w = await way(pool, [prompt(1, "One"), prompt(2, "Two")])
     run = await way_runs.start(pool, w["id"], owner_id=OWNER, mode="headless", input="go")

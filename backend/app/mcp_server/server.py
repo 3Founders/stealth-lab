@@ -5401,7 +5401,7 @@ async def submit_goal(ctx: Context, goal: str = "", steps: list[dict] | None = N
 
 @server.tool()
 @_activity.traced
-async def run_way(ctx: Context, way_id: str = "", input: str = "", run_id: str = "", output: str | None = None,
+async def run_way(ctx: Context, way_id: str = "", input: str = "", run_id: str = "", output: Any = None,
                   failed: str = "", done: bool = False, note: str = "", cancel: bool = False,
                   submission_id: str = "") -> str:
     """

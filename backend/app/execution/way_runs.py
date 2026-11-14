@@ -401,9 +401,12 @@ async def start(pool: Any, way_id: str, *, owner_id: str, input: str = "", mode:
     return await advance(pool, await _load(pool, rid, owner_id))
 
 
-async def report(pool: Any, run_id: str, *, owner_id: str, output: Optional[str] = None, failed: str = "",
+async def report(pool: Any, run_id: str, *, owner_id: str, output: Any = None, failed: str = "",
                  done: bool = False, note: str = "", cancel: bool = False) -> dict:
-    """The session's or the person's answer for the step the run waits on."""
+    """The session's or the person's answer for the step the run waits on. `output` is text; a tool's JSON result
+    passed as an object (an MCP client may decode a JSON-looking string) is kept as JSON text."""
+    if output is not None and not isinstance(output, str):
+        output = json.dumps(output, ensure_ascii=False, default=str)
     run = await _load(pool, run_id, owner_id)
     if run["status"] in ("done", "failed", "cancelled"):
         raise RunError(f"this run is already {run['status']}")
