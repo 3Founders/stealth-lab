@@ -14,6 +14,9 @@ export type { Client }
 
 export type Engine = { baseUrl: string; password: string; directory: string }
 
+// How long a starting engine may take to report its port (see engineStart).
+export const ENGINE_START_MS = 180_000
+
 // The platform package inside the app (electron-builder unpacks these binaries beside app.asar) and the binary's name.
 const platformBin = () => (process.platform === "win32" ? "opencode.exe" : "opencode")
 const platformPkg = () =>
@@ -106,7 +109,11 @@ export async function engineStart(directory: string): Promise<Engine> {
         SHELLCHECK_EXTERNAL_SOURCES: "false",
       },
     })
-    const timer = setTimeout(() => { if (!engine) no(new Error("engine did not report a port in 30 s")) }, 30_000)
+    // The first start after an app update migrates the engine's history database (hundreds of MB for a long-used install),
+    // which took well over 30 s on the owner's machine (2026-11-14): 30 s gave up on an engine that was still starting.
+    const timer = setTimeout(() => {
+      if (!engine) no(new Error("the coding engine did not start in 3 minutes; press Retry, and if it keeps failing restart kell"))
+    }, ENGINE_START_MS)
     state.child.stdout?.on("data", (c: Buffer) => read(c.toString(), false))
     state.child.stderr?.on("data", (c: Buffer) => read(c.toString(), true))
     state.child.on("exit", () => { state.engine = undefined; state.child = undefined })

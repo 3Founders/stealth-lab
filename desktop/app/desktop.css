@@ -913,3 +913,16 @@
   .dk-page .dg-shell, .dk-page .dg-side, .dk-page .dk-panel { transition: none !important; }
   .dk-page .dk-fold::details-content, .dk-page .dk-file::details-content, .dk-page .dk-sess-more::details-content { transition: none !important; }
 }
+
+/* The left sidebar's project view (app/page.tsx sideView): a back arrow, the project's name and its menu; then Sessions and Files,
+   each a heading that folds its list away. */
+.dk-proj-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; margin: 4px 2px 0; }
+.dk-proj-head b { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-fold { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; padding: 2px 4px; border-radius: 6px; min-width: 0; }
+.dk-fold:hover { background: var(--soft, rgba(0,0,0,.05)); }
+.dk-fold:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.dk-fold h2 { margin: 0; }
+.dk-fold svg { flex: none; color: var(--grey); transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); transform: rotate(-90deg); }
+.dk-fold[aria-expanded="true"] svg { transform: none; }
+.dk-count { font-size: 11px; color: var(--grey); font-variant-numeric: tabular-nums; }
+.dk-sess-list { padding: 0 4px 8px 4px; }

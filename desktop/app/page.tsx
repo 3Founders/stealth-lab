@@ -441,7 +441,7 @@ export default function Home() {
   // File > Open folder and File > New session from the app's menu bar (electron/menu.ts).
   const menuRef = useRef<(what: string) => void>(() => {})
   menuRef.current = (what) => {
-    if (what === "open-folder" && !busy && !opening) void (async () => { const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); void openProject(d) } })()
+    if (what === "open-folder" && !busy && !opening) void (async () => { const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); setSideView("project"); void openProject(d) } })()
     if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); loadChanges(null) }
   }
   useEffect(() => desktop()?.onMenu?.((w) => menuRef.current(w)), [])
@@ -479,6 +479,10 @@ export default function Home() {
   const dirRef = useRef("")                             // the open folder, for callbacks that outlive a render
   dirRef.current = directory
   const [sessOpen, setSessOpen] = useState(false)
+  // The left sidebar's two views (owner, 2026-11-14): the projects list, or one open project (its sessions, then files).
+  const [sideView, setSideView] = useState<"projects" | "project">("projects")
+  const [showSessions, setShowSessions] = useState(true)
+  const [showFiles, setShowFiles] = useState(true)
   // Import chats from other agents (Claude Code, Codex, OpenCode) into this project: the sessions the sidebar
   // deliberately hides, plus the other agents' own stores on this machine.
   const [importOpen, setImportOpen] = useState(false)
@@ -821,6 +825,35 @@ export default function Home() {
     } catch { setLines([{ who: "assistant", text: "kell could not read this session.", at: Date.now() }]) }
     loadChanges(id)
   }
+
+  // A rooms ask running in a session (lib/remote.ts): followed live when it is the chat on screen, and when it finishes that chat
+  // and the sessions list are read again, so what was asked from the rooms shows here too.
+  const [remoteLive, setRemoteLive] = useState<{ sessionID: string; question: string; text: string; from: string } | null>(null)
+  const remoteSeen = useRef(0)
+  const onScreen = useRef<string | null>(null)
+  onScreen.current = sessionID
+  useEffect(() => {
+    const tick = async () => {
+      try {
+        const j = await (await fetch("/api/remote")).json()
+        setRemoteLive(j.live?.sessionID ? j.live : null)
+        const at = Number(j.touched?.at || 0)
+        if (at > remoteSeen.current) {
+          const first = remoteSeen.current === 0
+          remoteSeen.current = at
+          if (first) return
+          void loadSessions()
+          const id = String(j.touched.sessionID || "")
+          if (!j.live && id && id === onScreen.current && !busyRef.current) {
+            const r = await (await fetch(`/api/local/sessions?id=${encodeURIComponent(id)}`)).json()
+            if (Array.isArray(r.lines) && onScreen.current === id && !busyRef.current) setLines(r.lines)
+          }
+        }
+      } catch { /* the app's server is restarting */ }
+    }
+    const t = window.setInterval(() => void tick(), 2500)
+    return () => window.clearInterval(t)
+  }, [loadSessions])
 
   // Fork: a new session with this chat up to `upTo` (or all of it), opened at once; the original is left as it was.
   const fork = async (upTo?: { who: string; text: string; at?: number }) => {
@@ -1774,7 +1807,7 @@ export default function Home() {
   }
   const commands = [
     { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
-    { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); void openProject(d) } }) } },
+    { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); setSideView("project"); void openProject(d) } }) } },
     { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
     { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
     { id: "fork", title: "Fork this session", hint: "a new session with this whole chat; the original stays as it is", run: () => void fork() },
@@ -1969,100 +2002,126 @@ export default function Home() {
               (routing_kell_frontend/app/chat/chat.css's .dg-side-scroll / .dg-me-wrap). */}
           <div className="dg-side-scroll" ref={sideScrollRef}>
 
-          <h2>Project</h2>
-          {/* One way in: the folder picker (the app), or a typed path where there is no picker (a browser during development). Projects
-              opened before are in the list below. */}
-          {!desktop()?.pickFolder && (
-            <div style={{ margin: "0 6px" }}>
-              <input value={directory} onChange={(e) => setDirectory(e.target.value)} disabled={!!sessionID}
-                placeholder="a folder path to work in" className="dk-field mono" aria-label="Project folder" />
-            </div>
-          )}
-          {desktop()?.pickFolder && directory && <p className="dk-note mono" title={directory} style={{ overflowWrap: "anywhere" }}>{directory}</p>}
-          <div className="dk-row">
-            {!sessionID && (
-              <button type="button" className="btn-ink" disabled={busy || opening}
-                onClick={async () => {
-                  if (!desktop()?.pickFolder) { void openProject(); return }
-                  const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); void openProject(d) }
-                }}>{opening ? "Opening…" : "Open folder"}</button>
-            )}
-            {sessionID && (
-              <button type="button" className="btn-line" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); loadChanges(null) }}>New session</button>
-            )}
-          </div>
-          {engine && !engine.up && (engine.error || sessionID) && !needsWebSignIn(engine.error) && <p className="dk-err" role="status">Engine problem{engine.error ? `: ${engine.error}` : ""}</p>}
-          {needsWebSignIn(engine?.error) && desktop() && (
-            // Models on your own plan run on the website session (the same sign-in as the rooms): one click, in your browser, nothing copied.
-            <div className="dk-err" role="status">
-              <p style={{ margin: "0 0 6px" }}>Sign in once more to run models on your kell plan (the same sign-in the rooms use). It opens in your browser; nothing is copied.</p>
-              <div className="dk-row" style={{ margin: 0 }}>
-                <button type="button" className="btn-ink" onClick={async () => { await connectRooms("google"); void openProject() }}>Continue with Google</button>
-                <button type="button" className="btn-ink" onClick={async () => { await connectRooms("github"); void openProject() }}>Continue with GitHub</button>
-                <button type="button" className="btn-line"
-                  onClick={() => { pendingCoding.current = true; setRoomsForm(true); setPane("rooms"); desktop()?.rooms.emailSignIn() }}>Email and password</button>
-              </div>
-              {signinNote && <p className="dk-note">{signinNote}</p>}
-            </div>
-          )}
-
-          {/* The project's files: a folder opens on click and asks the app for its entries then; a file opens in the
-              right panel's file view. */}
-          {directory && (
+          {/* Two views (owner, 2026-11-14): the projects you have opened, and once you open one, that project alone: its
+              sessions, then its files, each folding away, with a way back to the projects. */}
+          {sideView === "projects" || !directory ? (
             <>
               <div className="dk-sec-head">
-                <h2>Files</h2>
+                <h2>Projects</h2>
+              </div>
+              {/* One way in: the folder picker (the app), or a typed path where there is no picker (a browser during development). */}
+              {!desktop()?.pickFolder && (
+                <div style={{ margin: "0 6px 8px" }}>
+                  <input value={directory} onChange={(e) => setDirectory(e.target.value)} disabled={!!sessionID}
+                    placeholder="a folder path to work in" className="dk-field mono" aria-label="Project folder" />
+                </div>
+              )}
+              <div className="dk-row">
+                <button type="button" className="btn-ink" disabled={busy || opening}
+                  onClick={async () => {
+                    if (!desktop()?.pickFolder) { setSideView("project"); void openProject(); return }
+                    const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); setSideView("project"); void openProject(d) }
+                  }}>{opening ? "Opening…" : "Open folder"}</button>
+              </div>
+              {recents.length === 0 ? <p className="dk-note">Projects you open show here.</p> : (
+                <ul className="dk-recents" aria-label="Projects">
+                  {recents.map((d) => {
+                    const name = d.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || d
+                    const here = !!directory && d.toLowerCase() === directory.toLowerCase()
+                    return (
+                      <li key={d} data-here={here || undefined}>
+                        <button type="button" className="dk-recent" title={d} disabled={busy || opening}
+                          onClick={() => {
+                            setSideView("project")
+                            if (here && engine?.up) return                 // already open: just show it
+                            setSessionID(null); setDirectory(d); void openProject(d)
+                          }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                          <span className="nm">{name}</span>
+                        </button>
+                        <button type="button" className="dk-recent-more" aria-haspopup="menu" aria-expanded={projMenu?.path === d}
+                          aria-label={`Actions for ${name}`} title="More actions" onClick={(e) => openProjectMenu(e, d)}>
+                          {/* Lucide's ellipsis-vertical (ISC), drawn the way the account / console icons at the foot are. */}
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" />
+                          </svg>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="dk-proj-head">
+                <button type="button" className="dk-icon dk-icon-sm" aria-label="Back to the projects" title="Back to the projects" onClick={() => setSideView("projects")}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
+                </button>
+                <b title={directory}>{directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || directory}</b>
+                <button type="button" className="dk-recent-more" aria-haspopup="menu" aria-expanded={projMenu?.path === directory}
+                  aria-label="Project actions" title="More actions" style={{ opacity: 1 }} onClick={(e) => openProjectMenu(e, directory)}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" />
+                  </svg>
+                </button>
+              </div>
+              <p className="dk-note mono" title={directory} style={{ overflowWrap: "anywhere" }}>{directory}</p>
+              {opening && <p className="dk-note" role="status">Starting the coding engine… the first start after an update can take a minute or two.</p>}
+              {engine && !engine.up && !opening && (engine.error || sessionID) && !needsWebSignIn(engine.error) && (
+                <div className="dk-err" role="status">
+                  <p style={{ margin: "0 0 6px" }}>The coding engine didn&rsquo;t start{engine.error ? `: ${engine.error}` : "."}</p>
+                  <button type="button" className="btn-line" onClick={() => void openProject(directory)}>Retry</button>
+                </div>
+              )}
+              {needsWebSignIn(engine?.error) && desktop() && (
+                // Models on your own plan run on the website session (the same sign-in as the rooms): one click, in your browser, nothing copied.
+                <div className="dk-err" role="status">
+                  <p style={{ margin: "0 0 6px" }}>Sign in once more to run models on your kell plan (the same sign-in the rooms use). It opens in your browser; nothing is copied.</p>
+                  <div className="dk-row" style={{ margin: 0 }}>
+                    <button type="button" className="btn-ink" onClick={async () => { await connectRooms("google"); void openProject() }}>Continue with Google</button>
+                    <button type="button" className="btn-ink" onClick={async () => { await connectRooms("github"); void openProject() }}>Continue with GitHub</button>
+                    <button type="button" className="btn-line"
+                      onClick={() => { pendingCoding.current = true; setRoomsForm(true); setPane("rooms"); desktop()?.rooms.emailSignIn() }}>Email and password</button>
+                  </div>
+                  {signinNote && <p className="dk-note">{signinNote}</p>}
+                </div>
+              )}
+
+              {/* Sessions first, then files; each folds away (the choice is kept for this run). */}
+              <div className="dk-sec-head">
+                <button type="button" className="dk-fold" aria-expanded={showSessions} onClick={() => setShowSessions((o) => !o)}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg><h2>Sessions</h2>{sessions.length > 0 && <span className="dk-count">{sessions.length}</span>}
+                </button>
+                <button type="button" className="dk-icon dk-icon-sm" aria-label="New session" title="New session" disabled={busy}
+                  onClick={() => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); setLedger([]); loadChanges(null) }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                </button>
+              </div>
+              {showSessions && (
+                <div className="dk-sess dk-sess-list">
+                  {sessions.length === 0 ? <p className="dk-note">No sessions yet. Write a message to start one.</p> : sessions.map(sessionRow)}
+                  <button type="button" className="dk-sess-import" onClick={() => openImport("opencode")}>Import OpenCode chats</button>
+                </div>
+              )}
+
+              {/* The project's files: a folder opens on click and asks the app for its entries then; a file opens in the
+                  right panel's file view. */}
+              <div className="dk-sec-head">
+                <button type="button" className="dk-fold" aria-expanded={showFiles} onClick={() => setShowFiles((o) => !o)}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg><h2>Files</h2>
+                </button>
                 <button type="button" className="dk-icon dk-icon-sm" aria-label="Refresh the file list" title="Refresh the file list"
                   onClick={() => setTreeEpoch((n) => n + 1)}>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
                 </button>
               </div>
-              <div className="dk-tree" key={`${directory}:${treeEpoch}`}>
-                <TreeLevel directory={directory} rel="" depth={0} onOpen={openFile} selected={filePath || undefined} />
-              </div>
+              {showFiles && (
+                <div className="dk-tree" key={`${directory}:${treeEpoch}`}>
+                  <TreeLevel directory={directory} rel="" depth={0} onOpen={openFile} selected={filePath || undefined} />
+                </div>
+              )}
             </>
-          )}
-
-          {/* Once a project is open its files come first; the projects you have opened sit below them. With no project
-              open there is no Files section, so this is still the first list under the project picker. */}
-          <h2>Projects</h2>
-          {recents.length === 0 ? <p className="dk-note">Projects you open show here.</p> : (
-            <ul className="dk-recents" aria-label="Recent projects">
-              {recents.map((d) => {
-                const name = d.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || d
-                const here = !!directory && d.toLowerCase() === directory.toLowerCase()
-                return (
-                  <li key={d} data-here={here || undefined}>
-                    <button type="button" className="dk-recent" title={d} disabled={busy || opening || (here && !!engine?.up)}
-                      onClick={() => { setSessionID(null); setDirectory(d); void openProject(d) }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-                      <span className="nm">{name}</span>
-                    </button>
-                    <button type="button" className="dk-recent-more" aria-haspopup="menu" aria-expanded={projMenu?.path === d}
-                      aria-label={`Actions for ${name}`} title="More actions" onClick={(e) => openProjectMenu(e, d)}>
-                      {/* Lucide's ellipsis-vertical (ISC), drawn the way the account / console icons at the foot are:
-                          24×24, currentColor, round caps. */}
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" />
-                      </svg>
-                    </button>
-                    {here && (engine?.up || sessions.length > 0) && (
-                      // The open project's sessions under it, one list: the newest shows, a chevron shows the rest.
-                      <div className="dk-sess">
-                        {sessions.length > 0 && (sessOpen || sessions.slice(1).some((x) => x.id === sessionID) ? sessions : sessions.slice(0, 1)).map(sessionRow)}
-                        {sessions.length > 1 && (
-                          <button type="button" className="dk-sess-toggle" aria-expanded={sessOpen} aria-label={sessOpen ? "Show fewer sessions" : "Show all sessions"}
-                            title={sessOpen ? "Show fewer" : "Show all"} onClick={() => setSessOpen((o) => !o)}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-                          </button>
-                        )}
-                        <button type="button" className="dk-sess-import" onClick={() => openImport("opencode")}>Import OpenCode chats</button>
-                      </div>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
           )}
           </div>
 
@@ -2274,7 +2333,7 @@ export default function Home() {
                         <div className="dk-row" style={{ margin: 0 }}>
                           <button type="button" className="btn-ink" onClick={async () => {
                             if (!desktop()?.pickFolder) { void openProject(); return }
-                            const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); void openProject(d) }
+                            const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); setSideView("project"); void openProject(d) }
                           }}>Open a folder</button>
                         </div>
                       </>
@@ -2372,6 +2431,24 @@ export default function Home() {
                     </div>
                   )
                 })}
+                {remoteLive && remoteLive.sessionID === sessionID && !busy && (
+                  <div className="dk-remote-live" role="status" aria-live="polite">
+                    <div className="dg-run dk-you" data-agent={false}>
+                      <span className="dg-avatar" data-kind="human" aria-hidden="true">You</span>
+                      <div className="dg-col">
+                        <div className="dg-meta"><b>{remoteLive.from === "you, from the rooms" ? "You" : remoteLive.from}</b><span className="dg-badge">from the rooms</span></div>
+                        <div className="dg-msg"><div className="dg-body"><p>{remoteLive.question}</p></div></div>
+                      </div>
+                    </div>
+                    <div className="dg-run" data-agent="true">
+                      <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                      <div className="dg-col">
+                        <div className="dg-meta"><b>Kell</b><span className="dg-badge">agent</span></div>
+                        <div className="dg-msg"><div className="dg-body">{remoteLive.text ? <SmoothText text={remoteLive.text} markdown /> : <p className="dk-note">Working…</p>}</div></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {busy && lines.at(-1)?.who !== "assistant" && (
                   <div className="dg-run" data-agent="true">
                     <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>

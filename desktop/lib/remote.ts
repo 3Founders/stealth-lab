@@ -125,12 +125,15 @@ export async function allSessions(limit = 60): Promise<Reported[]> {
   return [...byId.values()].sort((a, b) => b.updated - a.updated).slice(0, limit)
 }
 
-const state = globalThis as typeof globalThis & { __kellRemote?: { started: boolean; busy: boolean; last: string } }
+// `live`: the ask running now, for the page (app/page.tsx follows it when that session is the one on screen). `touched`: the last
+// session a rooms ask ran in and when, so the page reloads that chat and the sessions list once the ask is done.
+type Live = { askId: string; sessionID: string; question: string; text: string; from: string }
+const state = globalThis as typeof globalThis & { __kellRemote?: { started: boolean; busy: boolean; last: string; live: Live | null; touched: { sessionID: string; at: number } | null } }
 
 /** Start the heartbeat and the ask loop once per server. */
 export function startRemote() {
   if (state.__kellRemote?.started || process.env.KELL_REMOTE === "off") return
-  state.__kellRemote = { started: true, busy: false, last: "" }
+  state.__kellRemote = { started: true, busy: false, last: "", live: null, touched: null }
   const beat = async () => {
     if (!remoteOn()) return
     const token = await webToken()
@@ -149,7 +152,9 @@ export const remoteOn = (): boolean => { try { return getMeta("remote") !== "off
 export const setRemoteOn = (on: boolean) => setMeta("remote", on ? "on" : "off")
 
 const remember = (note: string) => { if (state.__kellRemote) state.__kellRemote.last = note }
-export const remoteStatus = () => ({ ...(state.__kellRemote || { started: false, busy: false, last: "" }), device: (() => { try { return deviceId() } catch { return "" } })() })
+export const remoteStatus = () => ({ ...(state.__kellRemote || { started: false, busy: false, last: "", live: null, touched: null }), device: (() => { try { return deviceId() } catch { return "" } })() })
+const setLive = (live: Live | null) => { if (state.__kellRemote) state.__kellRemote.live = live }
+const touch = (sessionID: string) => { if (state.__kellRemote) state.__kellRemote.touched = { sessionID, at: Date.now() } }
 
 async function loop() {
   for (;;) {
@@ -195,6 +200,8 @@ export async function runAsk(token: string, ask: Ask, deps = { api, now: Date.no
     ensureSession({ id: sessionID, engineId: sessionID, source: "kell", directory: dir ?? e.directory })
     const who = ask.level === "owner" ? "" : ` (asked by ${ask.asker_name || "a teammate"} from a kell room)`
     appendMessage(sessionID, { role: "user", text: ask.text + who })
+    setLive({ askId: ask.id, sessionID, question: ask.text + who, text: "", from: ask.level === "owner" ? "you, from the rooms" : (ask.asker_name || "a teammate") })
+    touch(sessionID)
 
     let answer = ""
     let sent = 0
@@ -207,6 +214,7 @@ export async function runAsk(token: string, ask: Ask, deps = { api, now: Date.no
         if (d.sessionID && d.sessionID !== sessionID) continue
         if (k === "session.text.delta") {
           answer += String(d.delta ?? d.text ?? "")
+          if (state.__kellRemote?.live?.askId === ask.id) state.__kellRemote.live.text = answer
           if (answer.length !== sent && deps.now() - lastSent > PROGRESS_MS) { sent = answer.length; lastSent = deps.now(); void report({ answer }) }
         } else if (k === "permission.asked") {
           const reply = ask.level === "answer" ? "reject" : await askOwner(token, ask, d, deps.api)
@@ -225,9 +233,12 @@ export async function runAsk(token: string, ask: Ask, deps = { api, now: Date.no
     const timer = new Promise<void>((r) => setTimeout(() => { failure = failure || "the turn took longer than 20 minutes"; r() }, TURN_LIMIT_MS))
     await Promise.race([pump, timer])
     if (answer.trim()) appendMessage(sessionID, { role: "assistant", text: answer, summary: summarize(answer) })
+    setLive(null)
+    touch(sessionID)
     if (failure && !answer.trim()) await report({ status: "failed", error: failure })
     else await report({ status: "done", answer: answer.trim() || "(the session finished without a written answer)" })
   } catch (err: any) {
+    setLive(null)
     await report({ status: "failed", error: String(err?.message || err).slice(0, 300) })
   }
 }
