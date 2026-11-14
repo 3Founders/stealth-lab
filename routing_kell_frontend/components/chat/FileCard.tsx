@@ -1,6 +1,6 @@
 "use client";
-import { createContext, useContext, useState } from "react";
-import { fileKind, formatSize, type RoomFile } from "@/lib/chat/files";
+import { createContext, useContext, useEffect, useState } from "react";
+import { fileKind, formatSize, INLINE_IMAGE, INLINE_IMAGE_MAX, type RoomFile } from "@/lib/chat/files";
 
 /** What a file card needs from the room around it: how to fetch the bytes. Provided by RoomView. */
 export const FilesContext = createContext<{ fetchBlob: (fileId: string) => Promise<Blob> } | null>(null);
@@ -12,8 +12,29 @@ export const FilesContext = createContext<{ fetchBlob: (fileId: string) => Promi
  */
 export default function FileCard({ file }: { file: RoomFile }) {
   const ctx = useContext(FilesContext);
+  // A picture is shown as the picture (fetched when the message is drawn); the card stays as the fallback when it can't be.
+  const inline = INLINE_IMAGE.test(file.mime) && file.size <= INLINE_IMAGE_MAX;
+  const [src, setSrc] = useState<string | null>(null);
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    if (!inline || !ctx) return;
+    let url: string | null = null;
+    let alive = true;
+    ctx.fetchBlob(file.id)
+      .then((b) => { if (!alive) return; url = URL.createObjectURL(b); setSrc(url); })
+      .catch(() => { if (alive) setBroken(true); });
+    return () => { alive = false; if (url) URL.revokeObjectURL(url); };
+  }, [inline, ctx, file.id]);
   const [state, setState] = useState<"idle" | "busy" | "error">("idle");
   const [why, setWhy] = useState("");
+  if (inline && !broken) {
+    return (
+      <button type="button" className="dg-file-pic" onClick={() => src && window.open(src, "_blank", "noopener")} disabled={!src}
+        aria-label={`Open ${file.name}`} title={file.name}>
+        {src ? <img src={src} alt={file.name} /> : <span className="small dim">Loading {file.name}…</span>}
+      </button>
+    );
+  }
   const open = /^(image\/(png|jpeg|gif|webp)|application\/pdf|audio\/|video\/)/.test(file.mime);
 
   async function go() {

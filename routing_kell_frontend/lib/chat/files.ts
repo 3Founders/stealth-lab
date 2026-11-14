@@ -12,6 +12,20 @@ export interface RoomFile { id: string; name: string; size: number; mime: string
 /** [[file:<id>|<name>|<size>|<mime>]]: a human-readable fallback for anything that does not draw cards (connectors, agents, old clients). */
 const TOKEN = /\[\[file:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\|([^|\]\n]{1,200})\|(\d{1,12})\|([^|\]\n]{1,100})\]\]/g;
 
+/** A picture the composer prepared (scaled down, base64) as a File, so it is sent to the room like any other file. */
+export function pictureFile(p: { data: string; mime: string; name: string }): File {
+  const bin = atob(p.data);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const ext = p.mime.split("/")[1]?.replace("jpeg", "jpg") || "png";
+  const name = p.name && /\.[a-z0-9]+$/i.test(p.name) ? p.name : `${p.name || "picture"}.${ext}`;
+  return new File([bytes], name, { type: p.mime });
+}
+
+/** A picture type the room shows inline (the server serves these as pictures; anything else is a download). */
+export const INLINE_IMAGE = /^image\/(png|jpeg|gif|webp)$/;
+export const INLINE_IMAGE_MAX = 8 * 1024 * 1024;
+
 export const fileToken = (f: RoomFile): string => `[[file:${f.id}|${f.name.replace(/[|\]\n]/g, "_")}|${f.size}|${f.mime.replace(/[|\]\n]/g, "_")}]]`;
 
 /** The message text with the file tokens taken out, and the files they named. */

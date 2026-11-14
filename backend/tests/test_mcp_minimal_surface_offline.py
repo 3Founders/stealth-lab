@@ -94,6 +94,8 @@ EXPECTED_V1_SURFACE: frozenset[str] = frozenset({
     # rooms (P5, docs/rooms_design.md): a connector reads and posts in the person's rooms - a deliberate surface change,
     # visible in the progressive core so that "Claude and ChatGPT can join a room" is true without a discovery step
     "room_list", "room_read", "room_post", "room_members",
+    # a file sent in a room (db/172): a connector can open it, not only see its token
+    "room_file",
     "canvas_list", "canvas_read", "canvas_write",
     # the person's memory (db/173_memory.sql): discoverable, and refused unless they turned memory on and allow their connected agents
     "memory_read", "memory_search", "memory_write",

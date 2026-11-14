@@ -15,7 +15,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { CanvasContext } from "@/components/chat/CanvasCard";
 import { captureFrom, extractCanvasBlocks, hideCanvasWhileStreaming, newCanvas, type Canvas } from "@/lib/chat/canvas";
 import { FilesContext } from "@/components/chat/FileCard";
-import { FileError, filesApi, fileToken, splitFiles } from "@/lib/chat/files";
+import { FileError, filesApi, fileToken, pictureFile, splitFiles } from "@/lib/chat/files";
 import { CONNECTOR_PAGES, connectorInstructions, onboardName, onboardPrompt } from "@/lib/chat/onboard";
 import { KellMark } from "@/components/chat/brand";
 import type { OnboardResult, OnboardTarget } from "@/components/chat/OnboardButton";
@@ -1419,6 +1419,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   };
 
   const submit = async (line: string, pictures?: ImageAttachment[], docs?: File[]) => {
+    // A picture in a room on your account goes to the room like any other file, so everyone in it and every agent sees it (it used to stay on
+    // the sender's device, and the others saw only "a picture attached on the sender's device"). Only a temporary room keeps it here.
+    if (pictures?.length && !tempRef.current.has(room)) {
+      docs = [...(docs ?? []), ...pictures.map(pictureFile)];
+      pictures = undefined;
+    }
     // Files go to the server first; the message carries only their names, sizes and ids. If one fails, nothing is sent.
     if (docs?.length && tempRef.current.has(room)) return note("Files can't be sent in a temporary room.");
     if (docs?.length) {
