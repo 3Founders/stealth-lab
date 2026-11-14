@@ -14,10 +14,19 @@ export async function POST() {
     const rows = (out.data as any[]).filter((s) => !s.parentID)
     let added = 0
     for (const s of rows) {
-      // The app's own sessions carry metadata.kell; leave OpenCode CLI sessions out of the app's list, as before.
-      if (s.metadata?.kell !== true) continue
+      // The app's own sessions: tagged kell, or (older ones, from before the tag) carrying the kell-tools instruction every app
+      // prompt writes, the same rule as /api/sessions. OpenCode CLI sessions stay out of the app's list, as before. Sessions
+      // with only the instruction never reached the sidebar, so a project's earlier chats were missing (2026-11-14).
       const id = String(s.id)
       if (sessionExists(id)) continue
+      if (s.metadata?.kell !== true) {
+        let kell = false
+        try {
+          const entries = await (client as any).experimental.session.instructions.entry.list({ sessionID: id })
+          kell = Array.isArray(entries) && entries.some((x: any) => x?.key === "kell-tools")
+        } catch { kell = false }
+        if (!kell) continue
+      }
       ensureSession({
         id, engineId: id, source: "opencode", title: typeof s.title === "string" ? s.title : undefined,
         directory: e.directory, createdAt: Number(s.time?.created) || undefined, updatedAt: Number(s.time?.updated) || undefined,
