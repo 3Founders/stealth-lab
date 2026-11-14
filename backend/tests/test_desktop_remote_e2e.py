@@ -54,7 +54,7 @@ def pool():
         await admin.execute(f'CREATE DATABASE "{name}"')
         await admin.close()
         p = await asyncpg.create_pool(_swap_db(ADMIN_DSN, name), min_size=1, max_size=8)
-        for f in ("155_delegate_relay.sql", "157_rooms.sql", "159_room_admin_role.sql", "208_desktop_remote.sql"):
+        for f in ("155_delegate_relay.sql", "157_rooms.sql", "159_room_admin_role.sql", "208_desktop_remote.sql", "210_desktop_history.sql"):
             await p.execute((ROOT / "db" / f).read_text(encoding="utf-8"))
         # just enough of the accounts tables for usernames (rooms.sub_of_username falls back to display_name)
         await p.execute("CREATE TABLE users (external_subject text PRIMARY KEY, display_name text)")
@@ -236,3 +236,21 @@ def test_http_routes(pool):
 
     run(pool, go())
     assert room_routes.register  # the desktop routes are registered from room_routes.register
+
+
+def test_history_is_for_the_owner_only_and_only_handed_to_a_desktop_that_can_answer_it(pool):
+    r = shared_room(pool)
+    run(pool, dr.heartbeat(pool, ANUJ, DEV, "laptop", SESSIONS))
+    run(pool, dr.set_grant(pool, ANUJ, "chaitanya", "full"))
+    with pytest.raises(dr.DesktopError) as no:
+        run(pool, dr.request_history(pool, CHAIT, DEV, "ses_api"))           # a grant lets them ask, not read the chat
+    assert no.value.status == 404
+    h = run(pool, dr.request_history(pool, ANUJ, DEV, "ses_api"))
+    assert h["kind"] == "history" and h["status"] == "queued"
+    assert run(pool, dr.next_ask(pool, ANUJ, DEV)) is None                  # an older desktop never gets it as a prompt
+    got = run(pool, dr.next_ask(pool, ANUJ, DEV, ("ask", "history")))
+    assert got["id"] == h["id"] and got["kind"] == "history"
+    done = run(pool, dr.update_ask(pool, ANUJ, h["id"], {"status": "done", "answer": '[{"who": "user", "text": "hi"}]'}))
+    assert done["status"] == "done"
+    assert run(pool, rm.list_events(pool, ANUJ, r["id"]))["events"] == []    # nothing posted anywhere
+    assert run(pool, dr.recent_asks(pool, ANUJ)) == []                       # and not listed as an ask

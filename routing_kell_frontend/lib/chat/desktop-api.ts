@@ -62,6 +62,8 @@ export function desktopApi(deps: DesktopDeps) {
     asks: (sessionId?: string) => call<{ asks: DesktopAsk[] }>("GET", `/asks${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`).then((r) => r.asks),
     ask: (s: { device_id: string; session_id: string }, text: string) => call<DesktopAsk>("POST", "/asks", { device_id: s.device_id, session_id: s.session_id, text }),
     get: (id: string) => call<DesktopAsk>("GET", `/asks/${encodeURIComponent(id)}`),
+    /** Your own session's recent conversation: the desktop answers this request with the lines as JSON (poll `get`). */
+    history: (s: { device_id: string; session_id: string }) => call<DesktopAsk>("POST", "/history", { device_id: s.device_id, session_id: s.session_id }),
     approve: (id: string, yes: boolean) => call<DesktopAsk>("POST", `/asks/${encodeURIComponent(id)}/approve`, { yes }),
     permission: (id: string, decision: "once" | "always" | "reject") => call<DesktopAsk>("POST", `/asks/${encodeURIComponent(id)}/permission`, { decision }),
     cancel: (id: string) => call<DesktopAsk>("POST", `/asks/${encodeURIComponent(id)}/cancel`),

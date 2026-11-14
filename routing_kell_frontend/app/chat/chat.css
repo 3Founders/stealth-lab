@@ -1568,8 +1568,12 @@ span.dg-replyq { cursor: default; }
 .dg-dk-shead { display: grid; gap: 4px; }
 .dg-dk-shead h3 { font-size: 17px; font-weight: 400; margin: 0; }
 .dg-dk-shead small { color: var(--grey); font-size: .85em; }
-.dg-dk-thread { display: grid; align-content: start; gap: 16px; }
-.dg-dk-q { justify-self: end; max-width: 88%; padding: 9px 13px; border-radius: var(--dg-r-dialog, 10px); background: var(--soft); box-shadow: var(--dg-lift); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.dg-dk-thread { display: grid; align-content: start; gap: 18px; }
+.dg-dk-turn { display: grid; gap: 18px; }
+.dg-dk-msg { display: grid; gap: 6px; min-width: 0; }
+.dg-dk-msg[data-who="user"] { justify-items: end; }
+.dg-dk-who { font-size: 12.5px; color: var(--grey); }
+.dg-dk-q { max-width: 88%; padding: 9px 13px; border-radius: var(--dg-r-dialog, 10px); background: var(--soft); box-shadow: var(--dg-lift); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
 .dg-dk-a { display: grid; gap: 6px; line-height: 1.5; }
 .dg-dk-status { display: flex; align-items: center; gap: 8px; color: var(--grey); font-size: 13px; }
 .dg-dk-status[data-status="failed"], .dg-dk-status[data-status="denied"] { color: #b3261e; }

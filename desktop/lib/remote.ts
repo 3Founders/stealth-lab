@@ -17,6 +17,7 @@ import os from "node:os"
 import path from "node:path"
 import { clientFor, engineStart, engineStatus } from "./engine"
 import { appendMessage, ensureSession, getAssistantMessages, getMeta, getSession, importSession, getMessages, listSessions, setMeta } from "./localdb"
+import { localLines } from "./history"
 import { gatewayOrigin } from "./pooled"
 import { summarize } from "./summarize"
 import { TOOL_RULES } from "./tools"
@@ -27,7 +28,7 @@ const PROGRESS_MS = 1_500
 const TURN_LIMIT_MS = 20 * 60_000
 const PERMISSION_WAIT_MS = 10 * 60_000
 
-type Ask = { id: string; session_id: string; text: string; level: "owner" | "answer" | "approve" | "full"; asker_name?: string }
+type Ask = { id: string; session_id: string; text: string; level: "owner" | "answer" | "approve" | "full"; asker_name?: string; kind?: "ask" | "history" }
 
 // A copy that may only look: everything is denied, then the read-only tools are allowed (the engine takes the last rule
 // that matches). Anything that still asks is refused in runAsk.
@@ -161,10 +162,11 @@ async function loop() {
     const token = remoteOn() ? await webToken() : null
     if (!token) { await sleep(15_000); continue }
     try {
-      const j = await api(token, "GET", `/v1/desktop/next?device_id=${encodeURIComponent(deviceId())}&name=${encodeURIComponent(os.hostname())}`, undefined, 40_000)
+      const j = await api(token, "GET", `/v1/desktop/next?device_id=${encodeURIComponent(deviceId())}&name=${encodeURIComponent(os.hostname())}&kinds=ask,history`, undefined, 40_000)
       if (j?.ask) {
         state.__kellRemote!.busy = true
-        try { await runAsk(token, j.ask as Ask) } finally { state.__kellRemote!.busy = false }
+        try { await ((j.ask as Ask).kind === "history" ? sendHistory(token, j.ask as Ask) : runAsk(token, j.ask as Ask)) }
+        finally { state.__kellRemote!.busy = false }
       }
     } catch (err: any) {
       remember(`ask loop: ${err?.message || err}`)
@@ -174,6 +176,30 @@ async function loop() {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** The owner opened this session in the rooms' Desktop sessions panel: its recent lines, for that view only (never posted). */
+export const HISTORY_LINES = 80
+const HISTORY_CHARS = 50_000
+export async function sendHistory(token: string, ask: Ask, deps = { api }) {
+  const report = (data: Record<string, unknown>) => deps.api(token, "POST", `/v1/desktop/asks/${ask.id}/update`, data).catch(() => undefined)
+  try {
+    const local = getSession(ask.session_id)
+    const lines = (await localLines(ask.session_id, local?.directory || sessionDirs.get(ask.session_id) || null, local?.title ?? null))
+      .slice(-HISTORY_LINES)
+    // the newest lines win when the whole is too long: drop from the start, and cut a single huge answer
+    const out: { who: string; text: string; at?: number }[] = []
+    let used = 0
+    for (const l of [...lines].reverse()) {
+      const text = l.text.length > 12_000 ? `${l.text.slice(0, 12_000)}\n…` : l.text
+      if (used + text.length > HISTORY_CHARS) break
+      used += text.length
+      out.unshift({ who: l.who, text, at: l.at })
+    }
+    await report({ status: "done", answer: JSON.stringify(out) })
+  } catch (err: any) {
+    await report({ status: "failed", error: String(err?.message || err).slice(0, 300) })
+  }
+}
 
 /** Run one ask to the end and report it. Never throws: a failure is reported as the ask's failure. */
 export async function runAsk(token: string, ask: Ask, deps = { api, now: Date.now }) {

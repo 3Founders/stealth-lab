@@ -166,7 +166,7 @@ def _ask_json(r: Any) -> dict[str, Any]:
             "session_id": r["session_id"], "room_id": str(r["room_id"]) if r["room_id"] else None, "text": r["text"],
             "level": r["level"], "status": r["status"], "answer": r["answer"],
             "waiting": json.loads(r["waiting"]) if isinstance(r["waiting"], str) else r["waiting"],
-            "decision": r["decision"], "error": r["error"], "run_session": r["run_session"],
+            "decision": r["decision"], "error": r["error"], "run_session": r["run_session"], "kind": r["kind"],
             "created_at": _iso(r["created_at"]), "updated_at": _iso(r["updated_at"])}
 
 
@@ -198,6 +198,23 @@ async def create_ask(pool: Any, asker: str, device_id: str, session_id: str, tex
     return _ask_json(r)
 
 
+async def request_history(pool: Any, sub: str, device_id: str, session_id: str) -> dict[str, Any]:
+    """The owner wants one of their sessions' recent conversation (the Desktop sessions panel): a 'history' request the desktop
+    answers with the session's lines as JSON in `answer`. Never for a teammate: a grant lets them ask, not read the chat."""
+    row = await pool.fetchrow(
+        f"""SELECT s.owner_id, d.last_seen > now() - interval '{ONLINE_SECONDS} seconds' AS online
+              FROM desktop_sessions s JOIN desktop_devices d ON d.id = s.device_id
+             WHERE s.device_id = $1 AND s.session_id = $2""", device_id, session_id)
+    if row is None or row["owner_id"] != sub:
+        raise DesktopError("no such desktop session of yours", 404)
+    if not row["online"]:
+        raise DesktopOffline(await rm.owner_label(pool, sub))
+    r = await pool.fetchrow(
+        """INSERT INTO desktop_asks (owner_id, asker_id, device_id, session_id, text, level, status, kind)
+           VALUES ($1, $1, $2, $3, '', 'owner', 'queued', 'history') RETURNING *""", sub, device_id, session_id)
+    return _ask_json(r)
+
+
 async def get_ask(pool: Any, sub: str, ask_id: str) -> dict[str, Any]:
     r = await pool.fetchrow("SELECT * FROM desktop_asks WHERE id = $1::uuid AND (owner_id = $2 OR asker_id = $2)",
                             _uuid(ask_id), sub)
@@ -224,6 +241,7 @@ async def pending_for_owner(pool: Any, owner: str) -> list[dict[str, Any]]:
 async def recent_asks(pool: Any, sub: str, session_id: Optional[str] = None, limit: int = 30) -> list[dict[str, Any]]:
     rows = await pool.fetch(
         """SELECT * FROM desktop_asks WHERE (owner_id = $1 OR asker_id = $1) AND ($2::text IS NULL OR session_id = $2)
+              AND kind = 'ask'
             ORDER BY created_at DESC LIMIT $3""", sub, session_id, max(1, min(int(limit), 100)))
     return [_ask_json(r) for r in rows]
 
@@ -261,13 +279,15 @@ async def cancel(pool: Any, sub: str, ask_id: str) -> dict[str, Any]:
 
 # ----------------------------------------------------------------------------------------------- the desktop runs it
 
-async def next_ask(pool: Any, sub: str, device_id: str) -> Optional[dict[str, Any]]:
-    """Claim the oldest queued ask for this device (the caller must own it), or None."""
+async def next_ask(pool: Any, sub: str, device_id: str, kinds: tuple[str, ...] = ("ask",)) -> Optional[dict[str, Any]]:
+    """Claim the oldest queued ask for this device (the caller must own it), or None. `kinds`: what the desktop says it can
+    answer; an older desktop knows only "ask", so a history request is never handed to it as a prompt."""
     r = await pool.fetchrow(
         """UPDATE desktop_asks SET status = 'running', claimed_at = now(), updated_at = now()
             WHERE id = (SELECT id FROM desktop_asks WHERE device_id = $1 AND owner_id = $2 AND status = 'queued'
+                           AND kind = ANY($3::text[])
                          ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-            RETURNING *""", device_id, sub)
+            RETURNING *""", device_id, sub, list(kinds))
     if r is None:
         return None
     ask = _ask_json(r)
@@ -295,7 +315,7 @@ async def update_ask(pool: Any, sub: str, ask_id: str, data: dict[str, Any]) -> 
         _clean(data["error"], 600) if data.get("error") else None, _clean(data.get("run_session"), 120) or None)
     if r is None:
         raise DesktopError("no running ask of this desktop with that id", 404)
-    if r["status"] in ("done", "failed") and r["room_id"]:
+    if r["status"] in ("done", "failed") and r["room_id"] and r["kind"] == "ask":
         text = r["answer"] if r["status"] == "done" else f"The desktop session could not answer: {r['error'] or 'it failed'}"
         await _post(pool, r, text or "(no answer)")
     return _ask_json(r)

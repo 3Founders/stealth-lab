@@ -64,11 +64,12 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
         """Long poll: the next ask for this device, waiting up to NEXT_WAIT_SECONDS. Each call also counts as a heartbeat
         (without changing the session list), so a desktop that is polling is online."""
         device = str(request.query_params.get("device_id") or "")
+        kinds = tuple(k for k in str(request.query_params.get("kinds") or "ask").split(",") if k in ("ask", "history")) or ("ask",)
         await dr.heartbeat(pool, subject, device, str(request.query_params.get("name") or ""), None)
         loop = asyncio.get_event_loop()
         until = loop.time() + NEXT_WAIT_SECONDS
         while True:
-            ask = await dr.next_ask(pool, subject, device)
+            ask = await dr.next_ask(pool, subject, device, kinds)
             if ask is not None or loop.time() >= until:
                 return _json(request, {"ask": ask})
             await asyncio.sleep(NEXT_POLL_SECONDS)
@@ -96,6 +97,14 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
         ask = await dr.create_ask(pool, subject, str(data.get("device_id") or ""), str(data.get("session_id") or ""),
                                   str(data.get("text") or ""), data.get("room_id") or None)
         return _json(request, ask, 201)
+
+    @server.custom_route("/v1/desktop/history", methods=["POST", "OPTIONS"], include_in_schema=False)
+    @handler
+    async def history(request: Request, pool: Any, subject: str) -> Response:
+        """The owner's request for one of their sessions' recent conversation; poll /v1/desktop/asks/{id} for it (answer: JSON)."""
+        data = await body_of(request)
+        return _json(request, await dr.request_history(pool, subject, str(data.get("device_id") or ""),
+                                                       str(data.get("session_id") or "")), 201)
 
     @server.custom_route("/v1/desktop/asks/{ask_id}", methods=["GET", "OPTIONS"], include_in_schema=False)
     @handler

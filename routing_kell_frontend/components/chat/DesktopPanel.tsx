@@ -184,9 +184,27 @@ function Access({ grants, api, reload }: { grants: Grants | null; api: DesktopAp
   );
 }
 
-/** One session, like a chat with it: what was asked of it from here, the answers (live while it works), and a box to ask more. */
+type Line = { who: "user" | "assistant"; text: string; at?: number };
+
+/** A message in the session's chat: who said it, then the words, spaced like the room's own messages. */
+function Msg({ who, text, label, children }: { who: "user" | "assistant"; text: string; label?: string; children?: React.ReactNode }) {
+  return (
+    <div className="dg-dk-msg" data-who={who}>
+      <span className="dg-dk-who">{label ?? (who === "user" ? "You" : "Kell")}</span>
+      {who === "user" ? <div className="dg-dk-q">{text}</div> : <div className="dg-dk-a">{text ? <Markdown text={text} /> : null}{children}</div>}
+    </div>
+  );
+}
+
+/**
+ * One session, like the chat on the desktop: for your own session, its real conversation (the desktop sends its recent lines when
+ * you open it here, and again after each ask finishes); for a teammate's, only what was asked of it from here (a grant lets you ask,
+ * not read their chat). Asks still running show live under it, and the box at the bottom asks more.
+ */
 function SessionView({ api, session, mine }: { api: DesktopApi; session: DesktopSession; mine: boolean }) {
   const [asks, setAsks] = useState<DesktopAsk[]>([]);
+  const [history, setHistory] = useState<Line[] | null>(null);
+  const [historyNote, setHistoryNote] = useState("");
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
@@ -196,14 +214,33 @@ function SessionView({ api, session, mine }: { api: DesktopApi; session: Desktop
     try { setAsks((await api.asks(session.session_id)).filter((a) => a.device_id === session.device_id).reverse()); }
     catch (e) { setError((e as Error).message); }
   }, [api, session]);
-  useEffect(() => { void load(); }, [load]);
+
+  const loadHistory = useCallback(async () => {
+    if (!mine || !session.online) return;
+    try {
+      const req = await api.history(session);
+      for (let i = 0; i < 20; i++) {                     // the desktop answers within a few seconds while it is online
+        await new Promise((r) => window.setTimeout(r, 1000));
+        const a = await api.get(req.id);
+        if (a.status === "done") { setHistory(JSON.parse(a.answer || "[]")); setHistoryNote(""); return; }
+        if (a.status === "failed") { setHistoryNote(`The desktop could not read this chat: ${a.error || "it failed"}.`); return; }
+      }
+      void api.cancel(req.id).catch(() => undefined);
+      setHistoryNote("This chat's earlier messages need kell desktop 0.1.21 or newer; what you ask from here still shows below.");
+    } catch (e) { setHistoryNote((e as Error).message); }
+  }, [api, session, mine]);
+
+  useEffect(() => { void load(); void loadHistory(); }, [load, loadHistory]);
   const active = asks.some(isActive);
+  const wasActive = useRef(false);
   useEffect(() => {
+    if (wasActive.current && !active) void loadHistory();  // an ask finished: the chat has new lines
+    wasActive.current = active;
     if (!active) return;
     const t = window.setInterval(() => void load(), POLL_MS);
     return () => window.clearInterval(t);
-  }, [active, load]);
-  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [asks.length, asks.at(-1)?.answer]);
+  }, [active, load, loadHistory]);
+  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [asks.length, asks.at(-1)?.answer, history?.length]);
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -214,6 +251,8 @@ function SessionView({ api, session, mine }: { api: DesktopApi; session: Desktop
     finally { setSending(false); }
   };
 
+  // With the real chat on screen, a finished ask is already in it: only the ones still going are added below.
+  const shownAsks = history ? asks.filter(isActive) : asks;
   return (
     <div className="dg-dk-session">
       <div className="dg-dk-shead">
@@ -222,15 +261,19 @@ function SessionView({ api, session, mine }: { api: DesktopApi; session: Desktop
         {!mine && <p className="dg-dk-lead">A teammate's session: your asks run in a copy of it, with the access they gave you.</p>}
       </div>
       <div className="dg-dk-thread">
-        {asks.length === 0 && <p className="dg-dk-lead">Nothing asked from here yet. What you write runs in this session on {mine ? "your" : "their"} desktop{mine ? ", as if you typed it there" : ""}.</p>}
-        {asks.map((a) => (
+        {mine && history === null && !historyNote && session.online && <p className="dg-dk-lead">Loading this chat from your desktop…</p>}
+        {historyNote && <p className="dg-dk-lead">{historyNote}</p>}
+        {history?.map((l, i) => <Msg key={`h${i}`} who={l.who} text={l.text} />)}
+        {!history && shownAsks.length === 0 && !historyNote && !(mine && session.online) && (
+          <p className="dg-dk-lead">Nothing asked from here yet. What you write runs in this session on {mine ? "your" : "their"} desktop{mine ? ", as if you typed it there" : ""}.</p>
+        )}
+        {shownAsks.map((a) => (
           <div key={a.id} className="dg-dk-turn">
-            <div className="dg-dk-q">{a.text}</div>
-            <div className="dg-dk-a">
-              {a.answer ? <Markdown text={a.answer} /> : null}
+            <Msg who="user" text={a.text} label="You, from the rooms" />
+            <Msg who="assistant" text={a.answer}>
               <span className="dg-dk-status" data-status={a.status}>{a.status === "failed" ? `Failed: ${a.error}` : STATUS[a.status]}
                 {isActive(a) && <button type="button" className="dg-cv-chip dg-cv-big" onClick={() => void api.cancel(a.id).then(load)}>Stop</button>}</span>
-            </div>
+            </Msg>
           </div>
         ))}
         <div ref={end} />
