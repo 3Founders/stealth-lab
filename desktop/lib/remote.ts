@@ -160,9 +160,12 @@ const touch = (sessionID: string) => { if (state.__kellRemote) state.__kellRemot
 async function loop() {
   for (;;) {
     const token = remoteOn() ? await webToken() : null
-    if (!token) { await sleep(15_000); continue }
+    // Say why nothing happens: without the rooms' sign-in the desktop shows offline in the rooms (a stale "fetch failed"
+    // used to stay here instead, 2026-11-15).
+    if (!token) { remember(remoteOn() ? "not signed in to the rooms: open the Rooms tab to sign in again" : "off"); await sleep(15_000); continue }
     try {
       const j = await api(token, "GET", `/v1/desktop/next?device_id=${encodeURIComponent(deviceId())}&name=${encodeURIComponent(os.hostname())}&kinds=ask,history`, undefined, 40_000)
+      remember("")
       if (j?.ask) {
         state.__kellRemote!.busy = true
         try { await ((j.ask as Ask).kind === "history" ? sendHistory(token, j.ask as Ask) : runAsk(token, j.ask as Ask)) }
