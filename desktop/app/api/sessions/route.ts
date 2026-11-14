@@ -65,6 +65,9 @@ export async function GET(req: Request) {
     // The engine gives at most 200 messages a call: the newest 200, put back in order (a long session shows its latest part).
     const out = await client.message.list({ sessionID: id as any, limit: 200, order: "desc" })
     const lines: Line[] = []
+    // The model the chat last ran on, so a reopened chat's agents panel can say what the main agent is, instead of a bare
+    // "this chat" (2026-11-14: the panel said "No delegated agent" next to a subagent that had just run).
+    let model: string | null = null
     // The subagents this session ran (the engine's own `subagent` tool). The chat history keeps text, so the agents
     // panel would be empty after a restart without this: the tool calls are in the engine's own record (2026-11-14).
     const subagents: { id: string; title: string; state: "running" | "done" | "failed"; brief?: string; result?: string; at?: number }[] = []
@@ -74,6 +77,7 @@ export async function GET(req: Request) {
         if (String(m.text || "").trim()) lines.push({ who: "user", text: String(m.text), at })
       } else if (m.type === "assistant") {
         const content = Array.isArray(m.content) ? m.content : []
+        if (typeof m.model?.id === "string" && m.model.id) model = String(m.model.id)
         // The subagent tool calls first: a step that only called one has no text, and it still belongs in the panel.
         for (const c of content) {
           if (c?.type !== "tool" || !/^(subagent|task)$/i.test(String(c.name || ""))) continue
@@ -100,7 +104,7 @@ export async function GET(req: Request) {
         else lines.push({ who: "assistant", text, at })
       }
     }
-    return Response.json({ lines, subagents })
+    return Response.json({ lines, subagents, model })
   } catch (err: any) {
     return Response.json({ error: String(err?.message || err), sessions: [], lines: [] }, { status: 502 })
   }

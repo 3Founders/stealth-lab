@@ -442,7 +442,7 @@ export default function Home() {
   const menuRef = useRef<(what: string) => void>(() => {})
   menuRef.current = (what) => {
     if (what === "open-folder" && !busy && !opening) void (async () => { const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); setSideView("project"); void openProject(d) } })()
-    if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); loadChanges(null) }
+    if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); loadChanges(null) }
   }
   useEffect(() => desktop()?.onMenu?.((w) => menuRef.current(w)), [])
   // Follow the window's maximize state: our button, a double-click on the title bar, or Windows itself all keep the
@@ -475,6 +475,9 @@ export default function Home() {
   // The call ids already known to be subagents: the tool's name comes on input.started, and the later events for the same
   // call may carry only its id (so the panel must not depend on the name arriving twice).
   const subagentIds = useRef<Set<string>>(new Set())
+  // The model this chat last ran on, from its own history (app/api/sessions). The main agent row says it, so a reopened
+  // chat does not read as "no agent" (2026-11-14).
+  const [sessionModel, setSessionModel] = useState<string | null>(null)
   const [ledger, setLedger] = useState<LedgerRow[]>([])
   const [sessionID, setSessionID] = useState<string | null>(null)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
@@ -638,6 +641,10 @@ export default function Home() {
   const [delegateNote, setDelegateNote] = useState("")
   const [delegateStatus, setDelegateStatus] = useState("")
   const [delegateBusy, setDelegateBusy] = useState(false)
+  // The two right-panel folds that start open are controlled: without this, a poll or any other re-render re-applies the
+  // `open` attribute and pops the section back open right after the person closes it.
+  const [delegateOpen, setDelegateOpen] = useState(true)
+  const [changesOpen, setChangesOpen] = useState(true)
   // The procedure graph's glass effect: on unless the machine asks for less transparency, and the person can switch it
   // off (persisted). The graph is one blurred layer behind the cards, not one per card (see ProcedureGraph).
   const [glassGraph, setGlassGraph] = useState(true)
@@ -817,7 +824,7 @@ export default function Home() {
   // A past session: its conversation back on screen, and the next message continues it.
   const openSession = async (id: string) => {
     if (busy || id === sessionID) return
-    setQueued([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
+    setQueued([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
     setSessionID(id); setLines([])
     void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: id }) }).catch(() => undefined)
     try {
@@ -832,8 +839,10 @@ export default function Home() {
         try {
           const s = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`)).json()
           if (Array.isArray(s.subagents)) setSubagents(s.subagents)
+          if (typeof s.model === "string") setSessionModel(s.model)
         } catch { /* the panel is an addition; the chat still opens */ }
       }
+      if (typeof j.model === "string") setSessionModel(j.model)
     } catch { setLines([{ who: "assistant", text: "kell could not read this session.", at: Date.now() }]) }
     loadChanges(id)
   }
@@ -920,7 +929,7 @@ export default function Home() {
     setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
     if (j.up) remember(dir)
     if (j.up) {
-      setQueued([]); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null)
+      setQueued([]); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null)
       // The folder (and the chat to reopen, when the app is restoring the last one) is kept in the app's store.
       void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir, sessionID: session ?? null }) }).catch(() => undefined)
     }
@@ -1200,7 +1209,7 @@ export default function Home() {
     if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
     else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
-    setSubagents([]); subagentIds.current.clear()                                        // the agents panel is this turn's workers
+    setSubagents([]); subagentIds.current.clear(); setSessionModel(null)                                        // the agents panel is this turn's workers
     if (again === undefined) { setText(""); setAttachments([]); histPos.current = null }   // sending it again keeps what you were typing
     setBusy(true); busyRef.current = true
     setStopNote("")
@@ -1821,7 +1830,7 @@ export default function Home() {
     run()
   }
   const commands = [
-    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
+    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
     { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); setSideView("project"); void openProject(d) } }) } },
     { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
     { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
@@ -2109,7 +2118,7 @@ export default function Home() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg><h2>Sessions</h2>{sessions.length > 0 && <span className="dk-count">{sessions.length}</span>}
                 </button>
                 <button type="button" className="dk-icon dk-icon-sm" aria-label="New session" title="New session" disabled={busy}
-                  onClick={() => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setLedger([]); loadChanges(null) }}>
+                  onClick={() => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); loadChanges(null) }}>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                 </button>
               </div>
@@ -2759,19 +2768,23 @@ export default function Home() {
           <div className="dk-agents" role="tablist" aria-label="Agents">
             <button type="button" role="tab" className="dk-agent" aria-selected={agentView === "main"} onClick={() => setAgentView("main")}>
               <span className="dk-agent-dot" aria-hidden="true" />
-              <span><b>Main agent</b><small>this chat</small></span>
+              {/* The chat's own model, from this turn's steps or the chat's history: the panel should say what the main
+                  agent is, not a bare "this chat" (2026-11-14). */}
+              <span><b>Main agent</b><small>{ledger.length ? ledger[ledger.length - 1].model || "this chat" : sessionModel || "this chat"}</small></span>
             </button>
             {delegation?.model ? (
               <button type="button" role="tab" className="dk-agent" aria-selected={agentView === "delegated"} onClick={() => setAgentView("delegated")}>
                 <span className="dk-agent-dot" data-rung={delegation.rung || "cheap"} aria-hidden="true" />
                 <span><b>{delegation.model.id}</b><small>delegated{delegation.rung ? ` · ${delegation.rung}` : ""}</small></span>
               </button>
-            ) : (
+            ) : subagents.length === 0 && !busy ? (
+              // Nothing has run in this chat yet: say so. With a subagent or a turn in flight there is something, and a
+              // "No delegated agent" row beside it only contradicted the panel.
               <div className="dk-agent dk-agent-empty">
                 <span className="dk-agent-dot" aria-hidden="true" />
                 <span><b>No delegated agent</b><small>send a task</small></span>
               </div>
-            )}
+            ) : null}
             {subagents.map((s) => (
               // A subagent the engine ran for this turn: its one-line task and live state, and its own view on click.
               <button key={s.id} type="button" role="tab" className="dk-agent" aria-selected={agentView === `sub:${s.id}`}
@@ -2817,7 +2830,8 @@ export default function Home() {
             </section>
           )}
           {/* The delegated model: what the router matched, which model runs the turn and why, and the scoped side call. */}
-          <details className="dk-fold dk-delegate" open>
+          <details className="dk-fold dk-delegate" open={delegateOpen}
+            onToggle={(e) => setDelegateOpen(e.currentTarget.open)}>
             <summary className="dk-panel-head">
               <h2>Delegated{delegation?.model ? ` · ${delegation.model.id}` : ""}</h2>
               {delegation?.model && (
@@ -2863,7 +2877,8 @@ export default function Home() {
               </div>
             )}
           </details>
-          <details className="dk-fold" open>
+          <details className="dk-fold" open={changesOpen}
+            onToggle={(e) => setChangesOpen(e.currentTarget.open)}>
           <summary className="dk-panel-head">
             <h2>Changed by kell{files.length ? ` · ${files.length}` : ""}</h2>
           </summary>
