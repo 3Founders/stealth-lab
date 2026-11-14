@@ -763,6 +763,18 @@ export default function Home() {
     loadChanges(id)
   }
 
+  // Fork: a new session with this chat up to `upTo` (or all of it), opened at once; the original is left as it was.
+  const fork = async (upTo?: { who: string; text: string; at?: number }) => {
+    if (!sessionID || busy) return
+    try {
+      const r = await fetch("/api/fork", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID, upTo }) })
+      const j = await r.json()
+      if (!r.ok || !j.sessionID) { appendNote(`fork: ${j.error || "did not work"}`); return }
+      void loadSessions()
+      await openSession(j.sessionID)
+    } catch (err: any) { appendNote(`fork: ${String(err?.message || err)}`) }
+  }
+
   const sessionRow = (x: { id: string; title: string; updated: number }) => (
     <button type="button" key={x.id} className="dk-sess-row" data-here={x.id === sessionID || undefined} title={x.title || "Untitled session"}
       disabled={busy} onClick={() => void openSession(x.id)}>
@@ -1623,6 +1635,7 @@ export default function Home() {
     { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); void openProject(d) } }) } },
     { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
     { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
+    { id: "fork", title: "Fork this session", hint: "a new session with this whole chat; the original stays as it is", run: () => void fork() },
     { id: "left", title: "Show or hide the project sidebar", run: () => toggleSidebar("left") },
     { id: "right", title: "Show or hide the changes panel", run: () => toggleSidebar("right") },
     { id: "stop", title: "Stop kell", hint: "end the running turn; nothing is undone", run: () => void stop() },
@@ -2113,7 +2126,8 @@ export default function Home() {
                           {mine && l.files?.length ? attachmentChips(l.files) : null}
                           {l.text && !live ? (
                             <MessageActions copyText={l.text} retryText={mine ? l.text : lastUserBefore(i)}
-                              onCopy={copyText} onRetry={(t) => void send(t)} retryLabel={mine ? "Send this again" : "Ask again"} />
+                              onCopy={copyText} onRetry={(t) => void send(t)} retryLabel={mine ? "Send this again" : "Ask again"}
+                              onFork={sessionID && !busy ? () => void fork({ who: l.who, text: l.text, at: l.at }) : undefined} />
                           ) : null}
                         </div>
                       </div>

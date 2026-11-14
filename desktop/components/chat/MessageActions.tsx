@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { AlertIcon, CheckIcon, CopyIcon, RetryIcon } from "@/components/chat/icons";
+import { AlertIcon, CheckIcon, CopyIcon, ForkIcon, RetryIcon } from "@/components/chat/icons";
 
 /** How long the tick (or the alert) stays before the copy icon comes back. */
 export const COPY_HOLD_MS = 1600;
@@ -15,7 +15,9 @@ export const COPY_HOLD_MS = 1600;
  * icons cross-fade in place (instantly with reduced motion), and a visually hidden status announces the result to screen readers. Nothing
  * is posted into the room on success; the owner's onCopy reports failure by returning false.
  */
-export default function MessageActions({ copyText, retryText, onCopy, onRetry, retryLabel = "Ask again", holdMs = COPY_HOLD_MS }: {
+export default function MessageActions({ copyText, retryText, onCopy, onRetry, onFork, retryLabel = "Ask again", holdMs = COPY_HOLD_MS }: {
+  /** Forks the session at this message; without it no fork button is drawn. */
+  onFork?: () => void;
   /** How long the tick or alert stays (a test shortens it). */
   holdMs?: number;
   /** The text Copy takes. */
@@ -49,6 +51,10 @@ export default function MessageActions({ copyText, retryText, onCopy, onRetry, r
       <span className="visually-hidden" role="status" aria-live="polite">{state === "copied" ? "Copied" : state === "failed" ? "Copying failed" : ""}</span>
       {retryText !== undefined && retryText !== "" && onRetry && (
         <button type="button" className="dg-act" aria-label={retryLabel} onClick={() => onRetry(retryText)}><RetryIcon /></button>
+      )}
+      {onFork && (
+        <button type="button" className="dg-act" aria-label="Fork from here" title="Fork from here: a new session with the chat up to this message"
+          onClick={onFork}><ForkIcon /></button>
       )}
     </span>
   );
