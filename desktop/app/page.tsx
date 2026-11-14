@@ -602,6 +602,13 @@ export default function Home() {
   const [delegateStatus, setDelegateStatus] = useState("")
   const [delegateBusy, setDelegateBusy] = useState(false)
   const [settings, setSettings] = useState<Settings | null>(null)
+  // The rooms can call this desktop's sessions (lib/remote.ts); on by default, switched in the Account popover.
+  const [remoteOn, setRemoteOnState] = useState(true)
+  useEffect(() => { fetch("/api/remote").then((r) => r.json()).then((j) => setRemoteOnState(j.on !== false)).catch(() => undefined) }, [])
+  const setRemote = async (on: boolean) => {
+    try { const j = await (await fetch("/api/remote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ on }) })).json(); setRemoteOnState(j.on !== false) }
+    catch { /* unchanged */ }
+  }
   const [consoleNote, setConsoleNote] = useState("")
   const [signinNote, setSigninNote] = useState("")
   // The coding lane, or the team rooms (the website's chat in a view over the placeholder below; electron/rooms.ts).
@@ -1936,6 +1943,9 @@ export default function Home() {
                   <p className="dk-note">Models: {[settings.models.cheap, settings.models.strong].filter(Boolean).map((m) => String(m).split("/").pop()).join(", ")}</p>
                 )}
                 {!settings.engine.exe && <p className="dk-err">The coding engine is missing: run `kell setup --client opencode`.</p>}
+                <label className="dk-note" title="Your sessions show in the rooms (title and folder name only). You, and teammates you allowed in the rooms, can ask them from there.">
+                  <input type="checkbox" checked={remoteOn} onChange={(e) => void setRemote(e.target.checked)} /> Let my rooms call this desktop
+                </label>
               </div>
             )}
             <div className="dk-iconrow">

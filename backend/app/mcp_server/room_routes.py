@@ -54,7 +54,10 @@ def _int(value: Optional[str], default: int = 0) -> int:
 
 
 def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
-    """Attach the routes to the MCP server's custom-route table."""
+    """Attach the routes to the MCP server's custom-route table (and the desktop sessions' routes, which share the gate)."""
+    from app.mcp_server import desktop_routes
+
+    desktop_routes.register(server, gate, pool_getter)
 
     async def body_of(request: Request) -> dict[str, Any]:
         try:

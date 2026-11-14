@@ -1506,3 +1506,35 @@ span.dg-replyq { cursor: default; }
 .dg-set-instr textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--paper); color: var(--ink); resize: vertical; }
 /* phones: the sidebar button is its icon alone, so the header stays on one line */
 @media (max-width: 480px) { .dg-menu > span:last-child { display: none; } }
+
+/* Desktop sessions panel (components/chat/DesktopPanel.tsx): the kell desktop app's sessions, driven from the rooms. */
+.dg-dk-title { font-size: 15px; padding-left: 4px; }
+.dg-dk-body { overflow-y: auto; padding: 4px 14px 18px; display: flex; flex-direction: column; gap: 14px; }
+.dg-dk-sec h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); margin: 6px 0 8px; }
+.dg-dk-dim { color: var(--text-2); font-size: 12.5px; }
+.dg-dk-error { color: #b42318; font-size: 13px; margin: 0; }
+.dg-dk-foot { margin-top: 4px; }
+.dg-dk-card { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; background: var(--surface); }
+.dg-dk-card[data-tone="warn"] { border-color: var(--yellow); box-shadow: inset 3px 0 0 var(--yellow); }
+.dg-dk-card p { margin: 0 0 8px; font-size: 13.5px; overflow-wrap: anywhere; }
+.dg-dk-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.dg-dk-device { margin-bottom: 10px; }
+.dg-dk-devhead { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; margin-bottom: 4px; }
+.dg-dk-devhead .dg-dk-dim { font-weight: 400; }
+.dg-dk-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--grey); flex: none; }
+.dg-dk-dot[data-on] { background: #12b76a; }
+.dg-dk-sess { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+.dg-dk-sess:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+.dg-dk-sess .nm { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.dg-dk-grant { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: 13.5px; }
+.dg-dk-grant > span { min-width: 90px; }
+.dg-dk-grant input, .dg-dk-grant select { font: inherit; font-size: 13px; min-height: 32px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.dg-dk-grant input { flex: 1; min-width: 110px; }
+.dg-dk-session { display: flex; flex-direction: column; gap: 10px; min-height: 100%; }
+.dg-dk-shead { display: flex; flex-direction: column; gap: 2px; }
+.dg-dk-thread { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.dg-dk-q { align-self: flex-end; max-width: 90%; padding: 8px 11px; border-radius: 12px; background: var(--soft); font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dg-dk-a { font-size: 13.5px; display: flex; flex-direction: column; gap: 4px; }
+.dg-dk-a .dg-dk-dim { display: flex; align-items: center; gap: 8px; }
+.dg-dk-compose { position: sticky; bottom: 0; display: flex; gap: 6px; align-items: flex-end; padding-top: 6px; background: var(--paper); }
+.dg-dk-compose textarea { flex: 1; min-height: 40px; max-height: 160px; resize: vertical; font: inherit; font-size: 13.5px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); color: var(--ink); }

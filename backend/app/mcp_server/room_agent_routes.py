@@ -167,6 +167,45 @@ def _one_per_link(tools: list[dict[str, str]]) -> list[dict[str, str]]:
     return [t for t in tools if t.get("link") and not (t["link"] in seen or seen.add(t["link"]))]
 
 
+async def _hand_to_desktop(request: Request, pool: Any, subject: str, room_id: str, text: str, recent_rows: list[dict[str, Any]],
+                           post_handle: str, *, their_sub: str | None, call: Any) -> "Response | str | None":
+    """The answer when @kell hands the message to a desktop session: a Response (a short note posted in the room; the desktop posts the
+    answer later as @<owner>/desktop). A string: the session it is meant for is on a desktop that is offline, for kell's own answer to say
+    so. None: the message is not for a desktop session. Never raises: any trouble here means kell answers as usual."""
+    from app.services import desktop_remote as dr
+
+    try:
+        recent = [f"{(e.get('sender') or {}).get('handle') or 'person'}: {e.get('body') or ''}" for e in recent_rows if e.get("kind") == "msg"]
+        match = await dr.route(pool, subject, str(room_id), text, recent, call, only_owner=their_sub)
+        if match is None:
+            return None
+        whose = "your" if match["owner"] == subject else f"{match['owner_name']}'s"
+        where = f"{whose} desktop session “{match['title'] or 'untitled'}”" + (f" ({match['project']})" if match["project"] else "")
+        try:
+            ask = await dr.create_ask(pool, subject, match["device_id"], match["session_id"], text, str(room_id))
+        except dr.DesktopOffline:
+            return (f"This message looks meant for {where}, but that desktop is offline right now. Say so in one short sentence first, "
+                    "then help as well as you can without it.")
+        except dr.DesktopError as exc:
+            log.info("room agent: desktop hand-off refused: %s", exc)
+            return None
+        note = (f"Handed to {where}. It needs {match['owner_name']}'s approval first; the answer will appear here."
+                if ask["status"] == "needs_approval" else f"Handed to {where}. The answer will appear here.")
+        appended = await rm.append_events(pool, subject, room_id, rm.agent_events(post_handle, note))
+        event = appended["accepted"][0] if appended["accepted"] else None
+    except Exception:  # noqa: BLE001
+        log.warning("room agent: desktop hand-off failed; kell answers itself", exc_info=True)
+        return None
+    payload = {"posted": True, "text": note, "tools": [], "event": event, "consent": [], "sign_in": [],
+               "memory": {"used": [], "remembered": []}, "desktop_ask": {"id": ask["id"], "status": ask["status"]}}
+    if "text/event-stream" in (request.headers.get("accept") or ""):
+        async def frames() -> AsyncIterator[str]:
+            yield _sse({"done": True, **payload})
+        return StreamingResponse(frames(), media_type="text/event-stream",
+                                 headers={**cors_headers(request), "Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+    return _json(request, payload)
+
+
 def _sse(obj: Any) -> str:
     return f"data: {json.dumps(obj, default=str)}\n\n"
 
@@ -455,6 +494,17 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             oldest_seen = int(recent_rows[0]["seq"]) if recent_rows else 1
         except rm.RoomError as exc:
             return _error(request, str(exc), exc.status)
+        # A message meant for a desktop session (the person's own, or a teammate's who granted them access and is in this room) is handed to it:
+        # the desktop runs it and posts the answer here (services/desktop_remote.py). Not for a canvas edit or a temporary chat.
+        if raw_name == "kell" and not cv:
+            handed = await _hand_to_desktop(request, pool, subject, room_id, text, recent_rows, post_handle,
+                                            their_sub=mem_sub if remote_owner else None,
+                                            call=(lambda prompt: call_cheap(request.headers.get("authorization", ""), subject, prompt))
+                                            if call_cheap else None)
+            if isinstance(handed, Response):
+                return handed
+            if handed:                                    # meant for a desktop that is offline: kell answers and says so
+                instructions = (instructions + "\n\n" if instructions else "") + handed
         # The files attached to this message or the few before it: their text as information, their pictures for the model to look at.
         images: list[dict[str, str]] = []
         try:

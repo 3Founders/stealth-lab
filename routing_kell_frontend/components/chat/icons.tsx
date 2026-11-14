@@ -23,6 +23,16 @@ export function CanvasIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+/** A laptop: the room header's "Desktop sessions" button (the kell desktop app's sessions). */
+export function DesktopIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <rect x="4" y="5" width="16" height="11" rx="1.5" />
+      <path d="M2 19h20" />
+    </svg>
+  );
+}
+
 /** The settings gear: the chat menu's button. */
 export function SettingsIcon({ size = 20 }: { size?: number }) {
   return (

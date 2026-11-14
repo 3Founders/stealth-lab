@@ -3,6 +3,8 @@
 // would be orphaned and keep their memory until reboot. Poll the parent and take the engine down with us.
 export function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return
+  // the rooms can call this desktop's sessions (lib/remote.ts); it waits quietly until someone is signed in to the rooms
+  void import("./lib/remote").then((m) => m.startRemote()).catch((err) => console.error("remote sessions did not start:", err))
   const parent = Number(process.env.KELL_PARENT_PID || 0)
   if (!parent) return
   const g = globalThis as typeof globalThis & { __kellParentWatch?: unknown; __kellEngineState?: { child?: { kill(): void } } }

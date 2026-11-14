@@ -43,7 +43,8 @@ import { groupMessages, initials, routeMessage } from "@/lib/chat/ui";
 import { getAccessToken, signOut } from "@/lib/session";
 import PersonAvatar from "@/components/chat/PersonAvatar";
 import ProfileWidget from "@/components/chat/ProfileWidget";
-import { PanelCloseIcon, RemoveIcon, CanvasIcon } from "@/components/chat/icons";
+import { PanelCloseIcon, RemoveIcon, CanvasIcon, DesktopIcon } from "@/components/chat/icons";
+import { desktopApi } from "@/lib/chat/desktop-api";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import type { SectionId } from "@/components/chat/SettingsDialog";
 import { getToolPrefs, setToolPrefs } from "@/lib/chat/tool-prefs";
@@ -62,6 +63,7 @@ const ManageRooms = dynamic(() => import("@/components/chat/ManageRooms"), { ssr
 const SettingsDialog = dynamic(() => import("@/components/chat/SettingsDialog"), { ssr: false });
 const AddAgentDialog = dynamic(() => import("@/components/chat/AddAgentDialog"), { ssr: false });
 const DocPanel = dynamic(() => import("@/components/chat/DocPanel"), { ssr: false });
+const DesktopPanel = dynamic(() => import("@/components/chat/DesktopPanel"), { ssr: false });
 const CanvasPanel = dynamic(() => import("@/components/chat/CanvasPanel"), { ssr: false });
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
@@ -133,6 +135,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const rapi = useMemo(() => roomsApi({ token: getAccessToken }), []);
   const mapi = useMemo(() => memoryApi({ token: getAccessToken }), []);
   const dapi = useMemo(() => docsApi({ token: getAccessToken }), []);
+  const kapi = useMemo(() => desktopApi({ token: getAccessToken }), []);
   const engineRef = useRef<SyncEngine | null>(null);
   const [sync, setSync] = useState<SyncState>({ status: "idle", pending: 0, lastSyncAt: null, error: null });
   const [info, setInfo] = useState<RoomsChange["info"]>({});
@@ -1026,6 +1029,18 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const canvasesRef = useRef<Canvas[]>([]);
   canvasesRef.current = canvases;
   const [canvasOpen, setCanvasOpen] = useState(false);
+  // "Desktop sessions": the kell desktop app's sessions, driven from here (components/chat/DesktopPanel.tsx). It shares the right-hand
+  // panel with the canvas, so opening one closes the other. The dot is what waits on you (approvals, permissions).
+  const [desktopOpen, setDesktopOpen] = useState(false);
+  const [desktopPending, setDesktopPending] = useState(0);
+  useEffect(() => { if (canvasOpen) setDesktopOpen(false); }, [canvasOpen]);
+  useEffect(() => { if (desktopOpen) setCanvasOpen(false); }, [desktopOpen]);
+  useEffect(() => {
+    const check = () => void kapi.overview().then((o) => setDesktopPending(o.pending.length)).catch(() => undefined);
+    check();
+    const t = window.setInterval(check, 60_000);
+    return () => window.clearInterval(t);
+  }, [kapi]);
   const [canvasId, setCanvasId] = useState<string | null>(null);
   const canvasContextRef = useRef<{ title: string; kind: string; text: string } | null>(null);
   const selectionRef = useRef("");                      // the part of the canvas highlighted when "Ask kell to edit" was pressed, for the next ask only
@@ -1534,6 +1549,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       {canvasOpen && (info[room]?.id && !tempRef.current.has(room)
         ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} socket={{ token: getAccessToken }} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t, sel) => { selectionRef.current = sel ?? ""; setDraft((d) => ({ text: t, n: d.n + 1 })); }} onQuick={(t) => void submit(t)} />
         : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />)}
+      {desktopOpen && <DesktopPanel open={desktopOpen} onClose={() => setDesktopOpen(false)} api={kapi} onPending={setDesktopPending} />}
       {searchOpen && <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />}
       {manageOpen && (
         <ManageRooms
@@ -1556,6 +1572,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           <button type="button" className="dg-canvas-btn" aria-pressed={canvasOpen} aria-label={canvasOpen ? "Close the canvas" : "Open the canvas"} title="Canvas" onClick={() => setCanvasOpen((o) => !o)}>
             <CanvasIcon size={18} />
             {(info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length) > 0 && <span className="dg-canvas-dot" aria-hidden="true" />}
+          </button>
+          <button type="button" className="dg-canvas-btn" aria-pressed={desktopOpen} aria-label={desktopOpen ? "Close desktop sessions" : "My desktop sessions"} title="My desktop sessions" onClick={() => setDesktopOpen((o) => !o)}>
+            <DesktopIcon size={18} />
+            {desktopPending > 0 && <span className="dg-canvas-dot" aria-hidden="true" />}
           </button>
           <ThemeToggle className="dg-theme" />
         </header>
