@@ -183,27 +183,8 @@ async def _sync(pool: Any, e: ToolEmbedder, say: Callable[[str], None]) -> bool:
     write = await asyncio.to_thread(lambda: [c for c in cards if stored.get(c.id) != card_hash(c)])
     for i in range(0, len(write), UPSERT_BATCH):
         part = write[i:i + UPSERT_BATCH]
-        payload = await asyncio.to_thread(_payload, part)
         async with pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO tool_cards (id, source, name, title, description, server, goals, how, url, expansion,
-                                        tools, tools_text, extra, text_hash, card_hash, search_tsv, updated_at)
-                SELECT u.id, u.source, u.name, u.title, u.description, u.server,
-                       ARRAY(SELECT jsonb_array_elements_text(u.goals)), u.how, u.url, u.expansion,
-                       ARRAY(SELECT jsonb_array_elements_text(u.tools)), u.tools_text, u.extra, u.text_hash, u.card_hash,
-                       to_tsvector('english', u.body), now()
-                FROM jsonb_to_recordset($1::text::jsonb) AS u(id text, source text, name text, title text, description text,
-                     server text, goals jsonb, how text, url text, expansion text, tools jsonb, tools_text text,
-                     extra jsonb, text_hash text, card_hash text, body text)
-                ON CONFLICT (id) DO UPDATE SET
-                    source = EXCLUDED.source, name = EXCLUDED.name, title = EXCLUDED.title,
-                    description = EXCLUDED.description, server = EXCLUDED.server, goals = EXCLUDED.goals,
-                    how = EXCLUDED.how, url = EXCLUDED.url, expansion = EXCLUDED.expansion, tools = EXCLUDED.tools,
-                    tools_text = EXCLUDED.tools_text, extra = EXCLUDED.extra, search_tsv = EXCLUDED.search_tsv,
-                    embedding = CASE WHEN tool_cards.text_hash = EXCLUDED.text_hash THEN tool_cards.embedding END,
-                    embedding_model = CASE WHEN tool_cards.text_hash = EXCLUDED.text_hash THEN tool_cards.embedding_model END,
-                    text_hash = EXCLUDED.text_hash, card_hash = EXCLUDED.card_hash, updated_at = now()
-            """, payload)
+            await upsert_cards(conn, part)
     if write:
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM tool_card_vectors v USING tool_cards t WHERE v.id = t.id AND t.embedding IS NULL")
@@ -226,6 +207,30 @@ async def _sync(pool: Any, e: ToolEmbedder, say: Callable[[str], None]) -> bool:
     registry_vectors.cache_clear()
     _INDEXES.clear()
     return done
+
+
+async def upsert_cards(conn: Any, cards: Sequence[ToolCard]) -> None:
+    """Write cards to tool_cards (insert or update; the embedding is kept when the embedded text is the same)."""
+    payload = await asyncio.to_thread(_payload, cards)
+    await conn.execute("""
+        INSERT INTO tool_cards (id, source, name, title, description, server, goals, how, url, expansion,
+                                tools, tools_text, extra, text_hash, card_hash, search_tsv, updated_at)
+        SELECT u.id, u.source, u.name, u.title, u.description, u.server,
+               ARRAY(SELECT jsonb_array_elements_text(u.goals)), u.how, u.url, u.expansion,
+               ARRAY(SELECT jsonb_array_elements_text(u.tools)), u.tools_text, u.extra, u.text_hash, u.card_hash,
+               to_tsvector('english', u.body), now()
+        FROM jsonb_to_recordset($1::text::jsonb) AS u(id text, source text, name text, title text, description text,
+             server text, goals jsonb, how text, url text, expansion text, tools jsonb, tools_text text,
+             extra jsonb, text_hash text, card_hash text, body text)
+        ON CONFLICT (id) DO UPDATE SET
+            source = EXCLUDED.source, name = EXCLUDED.name, title = EXCLUDED.title,
+            description = EXCLUDED.description, server = EXCLUDED.server, goals = EXCLUDED.goals,
+            how = EXCLUDED.how, url = EXCLUDED.url, expansion = EXCLUDED.expansion, tools = EXCLUDED.tools,
+            tools_text = EXCLUDED.tools_text, extra = EXCLUDED.extra, search_tsv = EXCLUDED.search_tsv,
+            embedding = CASE WHEN tool_cards.text_hash = EXCLUDED.text_hash THEN tool_cards.embedding END,
+            embedding_model = CASE WHEN tool_cards.text_hash = EXCLUDED.text_hash THEN tool_cards.embedding_model END,
+            text_hash = EXCLUDED.text_hash, card_hash = EXCLUDED.card_hash, updated_at = now()
+    """, payload)
 
 
 def _payload(part: Sequence[ToolCard]) -> str:

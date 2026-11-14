@@ -1870,6 +1870,15 @@ async def _gateway_sign_in(owner: str | None, server_name: str, url: str, challe
 
 
 async def _gateway_tools(server_name: str) -> str:
+    adapter = _tool_providers.adapter_only(server_name)
+    if adapter is not None:
+        why = _tool_providers.refusal(adapter)
+        return json.dumps({"server": adapter.SERVERS[0], "risk": adapter.RISK,
+                           "tools": [{"name": t["name"], "description": t["description"],
+                                      "input_schema": t["inputSchema"]} for t in adapter.list_tools()],
+                           **({"usable": False, "why": why} if why else {}),
+                           "how": f'use_tool(server="{adapter.SERVERS[0]}", name=<tool>, arguments={{...}}, cert=<the '
+                                  "task's intent certificate>, task_id=<its task id>) -- public source only"})
     if server_name in _gateway.BUILTIN:
         if not _gateway.builtin_available(server_name):
             return f"REFUSED: {server_name} is not available on this deployment"
@@ -1981,6 +1990,9 @@ async def _gateway_call(ctx: Context, server_name: str, tool: str, arguments: di
     ))
     if decision.effect != "allow":
         return await done(f"refused:gate:{decision.reason}", f"REFUSED: {decision.reason}")
+    adapter = _tool_providers.adapter_only(server_name)
+    if adapter is not None:
+        return await _adapter_call(adapter, server_name, tool, arguments, data_class, owner, done)
 
     try:
         allow = await _allow_signin(owner)
@@ -2086,6 +2098,29 @@ async def _gateway_call(ctx: Context, server_name: str, tool: str, arguments: di
     if not images:
         return head
     return [head, *[_Image(data=b, format=fmt if fmt in ("png", "jpeg", "gif", "webp") else "png") for b, fmt in images]]
+
+
+async def _adapter_call(adapter: Any, server_name: str, tool: str, arguments: dict, data_class: str, owner: str,
+                        done) -> Any:
+    """A provider adapter that is its own server (Hinoki), after the gate allowed the call: kell's key, public source
+    only, the secret scan and the rate limits, then the adapter. Its answer is third-party data."""
+    why = _tool_providers.refusal(adapter)
+    if why:
+        return await done("refused:adapter", f"REFUSED: {why}")
+    if str(data_class).upper() != "PUBLIC_SOURCE":
+        return await done("refused:data_class", f"REFUSED: only public source (data_class PUBLIC_SOURCE) goes to "
+                                                 f"{adapter.SERVERS[0]}")
+    found = _gateway.scan_arguments(arguments)
+    if found:
+        return await done("refused:secret", f"REFUSED: the arguments look like they hold a secret ({found}); remove it")
+    if not _gateway.allow_rate(f"user:{owner}", _gateway.USER_PER_HOUR, 3600):
+        return await done("refused:rate_user", "REFUSED: too many gateway calls this hour; try again later")
+    if not _gateway.allow_rate(f"server:{server_name}", _gateway.SERVER_PER_MIN, 60):
+        return await done("refused:rate_server", f"REFUSED: {server_name} is busy through kell; try again in a minute")
+    result = await adapter.call(tool, dict(arguments or {}))
+    if not result.get("ok"):
+        return await done(str(result.get("status") or "failed"), f"FAILED: {adapter.SERVERS[0]}: {result.get('text')}")
+    return await done("ok", str(result["text"]), bytes_out=len(str(result["text"]).encode("utf-8")))
 
 
 async def _builtin_call(server_name: str, tool: str, arguments: dict, data_class: str, owner: str, done) -> Any:
@@ -3818,6 +3853,7 @@ def _installed_list(installed: list[Any] | None) -> list[dict[str, Any]]:
 
 
 from app.tool_routing import gateway as _gateway  # noqa: E402
+from app import tool_providers as _tool_providers  # noqa: E402
 
 
 _PREFLIGHT: dict[str, tuple[float, Any]] = {}          # connector url -> (when checked, True / False / "signin")
