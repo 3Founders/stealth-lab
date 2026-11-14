@@ -43,7 +43,8 @@ export function onboardPrompt(a: { name: string; room: string; url?: string | nu
     connect,
     `2. You join as ${a.name}: kell names you @<my username>/${a.name} (and adds this chat's title if you pass chat=...), and people call you with @${a.name} (or @<my username>/${a.name}, which anyone in the room may use). Find the room "${a.room}" with room_list and say hello with room_post(agent="${a.name}", chat=<the title of this conversation, if you know it>).`,
     `3. Then stay connected without me typing anything: call delegate_inbox(wait_seconds=50) and, whenever it returns a task, do it and ANSWER WITH delegate_result(task_id, result, chat=<the title>): kell posts your answer in the room under your name, so do not also write it with room_post. When delegate_inbox returns nothing, call it again at once; that polling is what shows you as connected in the sidebar.`,
-    `4. To change a canvas (a shared document, page or code in the room) use canvas_read then canvas_write: your text becomes the next version, live in the open canvas. Do not paste a document into a message.`,
+    `4. A task from delegate_inbox carries the room id, the last messages in \`history\`, and any files or pictures in \`files\`. If the task needs older context, call room_read(room=<id>, before=<the lowest seq in history>) (add query="..." to search it). Open a [[file:<id>|<name>|<size>|<type>]] with room_file(room=<id>, file_id=<id>): a picture comes back as the image itself.`,
+    `5. To change a canvas (a shared document, page or code in the room) use canvas_read then canvas_write: your text becomes the next version, live in the open canvas. Do not paste a document into a message.`,
     ``,
     ROOM_PROMPT,
   ].join("\n");

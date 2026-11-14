@@ -66,7 +66,8 @@ export interface RouteDecision {
 
 /**
  * Who a message without an @name goes to. `follow` is the agent that spoke last in the room ("kell", a connected agent's name, or a local
- * agent's @handle): a reply with no @ continues that conversation, so nobody types @kell or @claude-code before every answer.
+ * agent's @handle). Only kell continues automatically: tagging any other agent (a local one, or a connector's
+ * username/agentname) addresses that one message, not every later untagged line in the room (2026-11-14).
  */
 export function routeMessage(line: string, opts: { local: string[]; relay: string[]; people: string[]; follow?: string | null; remoteKells?: string[] }): RouteDecision {
   const handles = mentionsIn(line).map((h) => h.toLowerCase());
@@ -76,14 +77,14 @@ export function routeMessage(line: string, opts: { local: string[]; relay: strin
   const people = new Set(opts.people.map((h) => h.replace(/^@/, "").toLowerCase()));
   const anyAt = handles.length > 0 || /(^|\s)@[a-z0-9]/i.test(line);
   const follow = (opts.follow ?? "").replace(/^@/, "").toLowerCase();
-  const sticky = !anyAt && follow !== "";
-  const toRelay = sticky && relay.has(follow) ? [follow] : names.filter((n) => relay.has(n));
-  const localMentions = sticky && local.has(`@${follow}`) && follow !== "kell" ? [`@${follow}`] : handles.filter((h) => local.has(h));
+  const followKell = !anyAt && follow === "kell";
+  const toRelay = names.filter((n) => relay.has(n));
+  const localMentions = handles.filter((h) => local.has(h));
   const remote = new Set((opts.remoteKells ?? []).map((h) => h.replace(/^@/, "").toLowerCase()));
   const remoteKells = handles.filter((h) => remote.has(h.replace(/^@/, "")));
   const unknown = names.filter((n) => n !== "kell" && !local.has(`@${n}`) && !relay.has(n) && !people.has(n) && !remote.has(n));
   const defaultToKell = !anyAt && opts.people.length === 0;
-  const asksKell = defaultToKell || handles.includes("@kell") || (sticky && follow === "kell");
+  const asksKell = defaultToKell || handles.includes("@kell") || followKell;
   return { toRelay, localMentions, unknown, asksKell, defaultToKell, remoteKells };
 }
 

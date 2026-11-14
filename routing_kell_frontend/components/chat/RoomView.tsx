@@ -1464,17 +1464,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     setReplyingTo(null);
     setEditing(null);
     const ask = reply ? withReplyContext(line, reply.sender.handle === HUMAN.handle ? null : nameOf(reply.sender.handle), reply.payload.text) : line;
-    // The agent that spoke last, if the last message in the room was an agent's: an answer with no @name continues with it.
+    // Only kell continues on an untagged line. A tagged connector (username/agentname) or in-tab agent answers that one
+    // message; the next untagged line goes back to the room's default assistant (2026-11-14).
     const lastLine = [...lines].reverse().find((l) => l.kind === "msg");
     const lastFrom = lastLine && lastLine.kind === "msg" && lastLine.m.sender.type !== "human" ? lastLine.m.sender.handle : "";
-    const [fromOwner, fromTool] = lastFrom.replace(/^@/, "").split("/");           // "@alice/claude/Q4 plan" -> alice, claude
-    const follow = !lastFrom ? null
-      : lastFrom === "@kell" ? "kell"
-      : agents.includes(lastFrom) ? lastFrom
-      : (() => {
-          const a = relayAgents.find((x) => x.name.toLowerCase() === (fromTool ?? fromOwner ?? "").toLowerCase() && (!fromTool || x.mine !== false || (x.owner ?? "").toLowerCase() === fromOwner.toLowerCase()));
-          return a ? relayKey(a) : null;
-        })();
+    const follow = lastFrom === "@kell" ? "kell" : null;
     // what can be called: your own agents by name (@claude), everyone's by owner/name (@alice/claude)
     const relayNames = relayAgents.flatMap((a) => (a.owner ? [relayKey(a), `${a.owner}/${a.name}`.toLowerCase()] : [relayKey(a)]));
     const route = routeMessage(line, { local: agents, relay: relayNames, people: peopleHandles, follow, remoteKells: peerKells });
@@ -1544,7 +1538,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ul className="dg-rooms">
           {roomList.rooms.map((r) => (
             <li key={r}>
-              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}><span aria-hidden="true">#</span>{tempRef.current.has(r) ? "Temporary" : cap(r.slice(1))}{tempRef.current.has(r) && <span className="dg-badge">not saved</span>}{r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}</button>
+              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}>{tempRef.current.has(r) ? "Temporary" : cap(r.slice(1))}{tempRef.current.has(r) && <span className="dg-badge">not saved</span>}{r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}</button>
             </li>
           ))}
         </ul>
@@ -1555,7 +1549,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             if ("error" in made) { setNewRoomError(made.error); return; }
             setNewRoom(null); setNewRoomError(""); setMenuOpen(false);
           }}>
-            <span aria-hidden="true">#</span>
             <input autoFocus aria-label="New room name" maxLength={30} value={newRoom} onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => { setNewRoom(e.target.value); setNewRoomError(""); }}
               onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setNewRoom(null); setNewRoomError(""); } }} />

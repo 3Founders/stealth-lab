@@ -3,10 +3,14 @@ import { routeMessage } from "@/lib/chat/ui";
 
 const base = { local: [], relay: ["claude-code"], people: ["@asha"] };
 
-describe("an answer with no @name continues with the agent that spoke last", () => {
-  it("goes to the connected agent that just spoke", () => {
+describe("only kell continues with the agent that spoke last", () => {
+  it("does not stay with a connected agent after its answer", () => {
     const r = routeMessage("yes, go ahead", { ...base, follow: "claude-code" });
-    expect(r.toRelay).toEqual(["claude-code"]);
+    expect(r.toRelay).toEqual([]);
+    expect(r.asksKell).toBe(false);                                  // the room has another person: the line is just a room message
+    const solo = routeMessage("yes, go ahead", { local: [], relay: ["claude-code"], people: [], follow: "claude-code" });
+    expect(solo.toRelay).toEqual([]);
+    expect(solo.asksKell).toBe(true);                                // a solo room falls back to kell
   });
   it("goes to kell when kell spoke last, even with other people in the room", () => {
     expect(routeMessage("and the second one?", { ...base, follow: "kell" }).asksKell).toBe(true);

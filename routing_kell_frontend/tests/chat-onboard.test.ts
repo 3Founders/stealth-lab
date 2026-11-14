@@ -16,6 +16,8 @@ describe("Connect agent", () => {
     const t = onboardPrompt({ name: "agent-ab12", room: "#general", url: URL });
     expect(t).toContain(`claude mcp add --transport http kell ${URL}`);
     expect(t).toContain("delegate_inbox(wait_seconds=50)");
+    expect(t).toContain("room_read(room=<id>, before=");
+    expect(t).toContain("room_file(room=<id>");
     expect(t).toContain('room_post(agent="agent-ab12"');
     expect(t).toContain("#general");
     expect(t).toContain("@agent-ab12");

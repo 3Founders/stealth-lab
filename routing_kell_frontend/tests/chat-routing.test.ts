@@ -48,6 +48,29 @@ describe("room message routing", () => {
   });
 });
 
+describe("an untagged line after an agent", () => {
+  it("does not stay with a connector agent (username/agentname)", () => {
+    const solo = routeMessage("and then?", { local: [], relay: ["alice/claude"], people: [], follow: "alice/claude" });
+    expect(solo.toRelay).toEqual([]);
+    expect(solo.asksKell).toBe(true);
+    const shared = routeMessage("and then?", { local: [], relay: ["alice/claude"], people: ["@alice"], follow: "alice/claude" });
+    expect(shared.toRelay).toEqual([]);
+    expect(shared.asksKell).toBe(false);
+  });
+
+  it("does not stay with an in-tab agent", () => {
+    const d = routeMessage("and then?", { local: ["@reviewer"], relay: [], people: [], follow: "@reviewer" });
+    expect(d.localMentions).toEqual([]);
+    expect(d.asksKell).toBe(true);
+  });
+
+  it("still continues with kell, the room's default assistant", () => {
+    const d = routeMessage("and then?", { local: [], relay: [], people: ["@alice"], follow: "kell" });
+    expect(d.asksKell).toBe(true);
+    expect(d.defaultToKell).toBe(false);
+  });
+});
+
 describe("another person's kell (@anuj/kell)", () => {
   const opts = { local: [], relay: [], people: ["@anuj"], remoteKells: ["@anuj/kell"] };
   it("is answered by that person's kell, not refused as unknown and not handed to your own @kell", () => {
