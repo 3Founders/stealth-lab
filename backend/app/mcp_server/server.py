@@ -5357,22 +5357,47 @@ async def submit_goal(ctx: Context, goal: str = "", steps: list[dict] | None = N
 
 @server.tool()
 @_activity.traced
-async def run_way(ctx: Context, submission_id: str = "", input: str = "", run_id: str = "", done: bool = False,
-                  note: str = "") -> str:
+async def run_way(ctx: Context, way_id: str = "", input: str = "", run_id: str = "", output: str | None = None,
+                  failed: str = "", done: bool = False, note: str = "", cancel: bool = False,
+                  submission_id: str = "") -> str:
     """
-    Run an approved Way from submit_goal. run_way(submission_id, input) starts it: automated steps run, and at a step a
-    person must do the run pauses (status "waiting_human", "waiting_on" says what to do). When the person has done it,
-    run_way(run_id, done=true, note="what they did or found") continues. run_way(run_id) alone: the run's state.
+    Run a Way find_ways returned (or one from submit_goal), one step at a time, each step's output fed to the next.
+
+    run_way(way_id=<the Way's procedure_id>, input=<the task>) loads it. First tell the person the reply's `notice`
+    word for word ("kell will autonomously handle it, ..." or "This will require your inputs ..."). Then:
+      status "waiting_session": do `your_turn.do` yourself (its `earlier` holds what the steps before produced), then
+        run_way(run_id, output=<the result, in full>), or run_way(run_id, failed=<why>) if it cannot be done.
+      status "waiting_human": show the person `waiting_on`; when they have done it,
+        run_way(run_id, done=true, note=<what they did or found>).
+      status "done": `result` is the last step's output. "failed": `error` says why; ask before trying another Way.
+    kell runs scripts and plain fetches itself. run_way(run_id) alone: the run's state; cancel=true stops it.
     """
+    from app.execution import way_runs as _way_runs
     from app.submissions import api as _sub_api
 
-    if run_id and done:
-        return await _submission_call(ctx, lambda p, o: _sub_api.finish_step(p, o, run_id, note))
     if run_id:
-        return await _submission_call(ctx, lambda p, o: _sub_api.get_run(p, o, run_id))
-    if not submission_id:
-        return "REFUSED: pass submission_id to start a run, or run_id to continue one"
-    return await _submission_call(ctx, lambda p, o: _sub_api.start_run(p, o, submission_id, input))
+        async def on_run(pool, owner):
+            try:
+                if done or cancel or failed or output is not None:
+                    return await _way_runs.report(pool, run_id, owner_id=owner, output=output, failed=failed,
+                                                  done=done, note=note, cancel=cancel)
+                return await _way_runs.get(pool, run_id, owner_id=owner)
+            except LookupError:                       # a run started by the older submission runner
+                if done:
+                    return await _sub_api.finish_step(pool, owner, run_id, note)
+                return await _sub_api.get_run(pool, owner, run_id)
+        return await _submission_call(ctx, on_run)
+    if submission_id and not way_id:
+        async def parent(pool, owner):
+            pid = await pool.fetchval("SELECT parent_procedure_id::text FROM goal_submissions WHERE id::text = $1",
+                                      submission_id)
+            if not pid:
+                raise _way_runs.RunError("that submission has no approved Way yet")
+            return await _way_runs.start(pool, pid, owner_id=owner, input=input)
+        return await _submission_call(ctx, parent)
+    if not way_id:
+        return "REFUSED: pass way_id to start a run, or run_id to continue one"
+    return await _submission_call(ctx, lambda p, o: _way_runs.start(p, way_id, owner_id=o, input=input))
 
 
 # ---------------------------------------------------------------------------
