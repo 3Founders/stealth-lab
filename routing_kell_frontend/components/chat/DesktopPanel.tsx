@@ -49,18 +49,15 @@ export default function DesktopPanel({ open, onClose, api, onPending }: {
 
   return (
     <PanelShell open={open} label="Desktop sessions">
-      <div className="dg-canvas-head">
-        <div className="dg-canvas-headrow">
-          {picked
-            ? <button type="button" className="dg-cv-chip" onClick={() => setPicked(null)}>← All sessions</button>
-            : <b className="dg-dk-title">Desktop sessions</b>}
-        </div>
+      <div className="dg-dk-head">
+        {picked && <button type="button" className="dg-cv-chip dg-cv-big" onClick={() => setPicked(null)}>← All sessions</button>}
+        <span className="dg-dk-title">{picked ? "" : "Desktop sessions"}</span>
         <button type="button" className="dg-cv-close" aria-label="Close" onClick={onClose}>
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" width="14" height="14" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
         </button>
       </div>
       <div className="dg-canvas-body dg-dk-body">
-        {error && <p className="dg-dk-error" role="alert">{error}</p>}
+        {error && <p className="dg-doc-err" role="alert">{error}</p>}
         {picked
           ? <SessionView api={api} session={picked} mine={!ov || ov.mine.some((s) => s.session_id === picked.session_id && s.device_id === picked.device_id)} />
           : <Overview ov={ov} grants={grants} api={api} onPick={setPicked} reload={load} />}
@@ -72,7 +69,7 @@ export default function DesktopPanel({ open, onClose, api, onPending }: {
 function Overview({ ov, grants, api, onPick, reload }: {
   ov: DesktopOverview | null; grants: Grants | null; api: DesktopApi; onPick: (s: DesktopSession) => void; reload: () => Promise<void>;
 }) {
-  if (!ov) return <p className="dg-dk-dim">Loading…</p>;
+  if (!ov) return <p className="small dim">Loading…</p>;
   const act = async (f: () => Promise<unknown>) => { try { await f(); } finally { await reload(); } };
   return (
     <>
@@ -108,12 +105,19 @@ function Overview({ ov, grants, api, onPick, reload }: {
       <section className="dg-dk-sec" aria-label="My sessions">
         <h3>My sessions</h3>
         {ov.devices.length === 0 && (
-          <p className="dg-dk-dim">No desktop yet. Install the <a href="/download">kell desktop app</a> and sign in to the rooms there; its sessions show up here.</p>
+          <div className="dg-dk-empty">
+            <p><b>No desktop yet.</b></p>
+            <p className="small dim">Open the kell desktop app and sign in to the rooms there: its sessions show up here.</p>
+            <a className="btn-line dg-mini-btn" href="/download">Get the desktop app</a>
+          </div>
         )}
         {ov.devices.map((d) => (
           <div key={d.id} className="dg-dk-device">
-            <div className="dg-dk-devhead"><span className="dg-dk-dot" data-on={d.online || undefined} aria-hidden="true" />{d.name || "Desktop"}
-              <span className="dg-dk-dim">{d.online ? "online" : `offline · seen ${ago(d.last_seen)}`}</span></div>
+            <div className="dg-dk-devhead">
+              <span className="dg-dot" data-a={d.online ? undefined : "idle"} aria-hidden="true" />
+              <b>{d.name || "Desktop"}</b>
+              <small>{d.online ? "Online" : `Offline · seen ${ago(d.last_seen)}`}</small>
+            </div>
             {ov.mine.filter((s) => s.device_id === d.id).map((s) => <SessionRow key={s.session_id} s={s} onPick={onPick} />)}
           </div>
         ))}
@@ -122,13 +126,15 @@ function Overview({ ov, grants, api, onPick, reload }: {
       {ov.shared.length > 0 && (
         <section className="dg-dk-sec" aria-label="Shared with you">
           <h3>Shared with you</h3>
-          {ov.shared.map((s) => <SessionRow key={`${s.device_id}/${s.session_id}`} s={s} onPick={onPick}
-            who={grants?.received.find((g) => g.sub === s.owner)?.username} />)}
+          <div className="dg-dk-shared">
+            {ov.shared.map((s) => <SessionRow key={`${s.device_id}/${s.session_id}`} s={s} onPick={onPick}
+              who={grants?.received.find((g) => g.sub === s.owner)?.username} />)}
+          </div>
         </section>
       )}
 
       <Access grants={grants} api={api} reload={reload} />
-      <p className="dg-dk-dim dg-dk-foot">In a room, just write <code>@kell …</code>: when it is about work in one of these sessions, kell hands it to that session and the answer appears in the room.</p>
+      <p className="dg-dk-foot">In a room, just write <code>@kell …</code>: when it is about work in one of these sessions, kell hands it to that session and the answer appears in the room.</p>
     </>
   );
 }
@@ -136,8 +142,8 @@ function Overview({ ov, grants, api, onPick, reload }: {
 function SessionRow({ s, onPick, who }: { s: DesktopSession; onPick: (s: DesktopSession) => void; who?: string }) {
   return (
     <button type="button" className="dg-dk-sess" onClick={() => onPick(s)} title={s.summary || s.title}>
-      <span className="nm">{s.title || "Untitled session"}</span>
-      <span className="dg-dk-dim">{[who ? `@${who}` : "", s.project, ago(s.updated_at), s.online ? "" : "offline"].filter(Boolean).join(" · ")}</span>
+      <b>{s.title || "Untitled session"}</b>
+      <small>{[who ? `@${who}` : "", s.project, ago(s.updated_at), s.online ? "" : "offline"].filter(Boolean).join(" · ")}</small>
     </button>
   );
 }
@@ -156,16 +162,16 @@ function Access({ grants, api, reload }: { grants: Grants | null; api: DesktopAp
   return (
     <section className="dg-dk-sec" aria-label="Who can call my desktop">
       <h3>Who can call my desktop</h3>
-      <p className="dg-dk-dim">They can ask your sessions from a room you are both in. A teammate's ask runs in a copy of the session, never in yours.</p>
-      {(grants?.given ?? []).map((g) => (
+      <p className="dg-dk-lead">They can ask your sessions from a room you are both in. A teammate's ask runs in a copy of the session, never in yours.</p>
+      {(grants?.given ?? []).length > 0 && <div className="dg-dk-grants">{(grants?.given ?? []).map((g) => (
         <div key={g.sub} className="dg-dk-grant">
-          <span>@{g.username}</span>
+          <b>@{g.username}</b>
           <select aria-label={`What @${g.username} may do`} value={g.level} onChange={(e) => void api.grant(g.username, e.target.value as GrantLevel).then(reload)}>
             {(Object.keys(LEVEL_LABEL) as GrantLevel[]).map((l) => <option key={l} value={l}>{LEVEL_LABEL[l]}</option>)}
           </select>
-          <button type="button" className="dg-cv-chip" onClick={() => void api.revoke(g.sub).then(reload)}>Remove</button>
+          <button type="button" className="dg-cv-chip dg-cv-big" onClick={() => void api.revoke(g.sub).then(reload)}>Remove</button>
         </div>
-      ))}
+      ))}</div>}
       <form className="dg-dk-grant" onSubmit={(e) => void add(e)}>
         <input aria-label="Username" placeholder="username" value={user} onChange={(e) => setUser(e.target.value)} />
         <select aria-label="What they may do" value={level} onChange={(e) => setLevel(e.target.value as GrantLevel)}>
@@ -173,7 +179,7 @@ function Access({ grants, api, reload }: { grants: Grants | null; api: DesktopAp
         </select>
         <button type="submit" className="btn-ink dg-mini-btn" disabled={!user.trim()}><span>Allow</span></button>
       </form>
-      {note && <p className="dg-dk-error" role="alert">{note}</p>}
+      {note && <p className="dg-doc-err" role="alert">{note}</p>}
     </section>
   );
 }
@@ -211,25 +217,25 @@ function SessionView({ api, session, mine }: { api: DesktopApi; session: Desktop
   return (
     <div className="dg-dk-session">
       <div className="dg-dk-shead">
-        <b>{session.title || "Untitled session"}</b>
-        <span className="dg-dk-dim">{[session.project, session.device, session.online ? "online" : "offline"].filter(Boolean).join(" · ")}</span>
-        {!mine && <span className="dg-dk-dim">A teammate's session: your asks run in a copy of it, with the access they gave you.</span>}
+        <h3>{session.title || "Untitled session"}</h3>
+        <small>{[session.project, session.device, session.online ? "online" : "offline"].filter(Boolean).join(" · ")}</small>
+        {!mine && <p className="dg-dk-lead">A teammate's session: your asks run in a copy of it, with the access they gave you.</p>}
       </div>
       <div className="dg-dk-thread">
-        {asks.length === 0 && <p className="dg-dk-dim">Nothing asked from here yet. What you write runs in this session on {mine ? "your" : "their"} desktop{mine ? ", as if you typed it there" : ""}.</p>}
+        {asks.length === 0 && <p className="dg-dk-lead">Nothing asked from here yet. What you write runs in this session on {mine ? "your" : "their"} desktop{mine ? ", as if you typed it there" : ""}.</p>}
         {asks.map((a) => (
           <div key={a.id} className="dg-dk-turn">
             <div className="dg-dk-q">{a.text}</div>
             <div className="dg-dk-a">
               {a.answer ? <Markdown text={a.answer} /> : null}
-              <span className="dg-dk-dim" data-status={a.status}>{a.status === "failed" ? `failed: ${a.error}` : STATUS[a.status]}
-                {isActive(a) && <button type="button" className="dg-cv-chip" onClick={() => void api.cancel(a.id).then(load)}>Stop</button>}</span>
+              <span className="dg-dk-status" data-status={a.status}>{a.status === "failed" ? `Failed: ${a.error}` : STATUS[a.status]}
+                {isActive(a) && <button type="button" className="dg-cv-chip dg-cv-big" onClick={() => void api.cancel(a.id).then(load)}>Stop</button>}</span>
             </div>
           </div>
         ))}
         <div ref={end} />
       </div>
-      {error && <p className="dg-dk-error" role="alert">{error}</p>}
+      {error && <p className="dg-doc-err" role="alert">{error}</p>}
       <form className="dg-dk-compose" onSubmit={(e) => void send(e)}>
         <textarea aria-label="Ask this session" placeholder={session.online ? "Ask this session…" : "This desktop is offline"} value={text}
           disabled={!session.online} onChange={(e) => setText(e.target.value)}
