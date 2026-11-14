@@ -29,7 +29,7 @@ import { assistantIdentityFor } from "@/lib/chat/adapters/assistant";
 import { mentionsIn, parseCommand, recipientsFor, toMcpPayload } from "@/lib/chat/adapters/mcp";
 import { describeBacking, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
-import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask, relayKey, ownerBadge } from "@/lib/chat/relay-client";
+import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask, relayKey } from "@/lib/chat/relay-client";
 import { DEFAULT_ROOM, freeRoomName, newRoomName, readAgents, readInstructions, readPresets, readRooms, withoutRoom, writeAgents, writeInstructions, writePresets, writeRooms, type RoomList } from "@/lib/chat/rooms";
 import { RoomsApiError, roomsApi, toolLabel, type RoomMember, type ToolSignIn } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
@@ -1573,7 +1573,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ul className="dg-members">
           <li className="dg-agentrow">
             <span className="dg-dot" data-a={kellBusy[room] ? "processing" : "online"} aria-hidden="true" />
-            <KellMark size={16} /><span className="dg-handle">Kell</span><span className="dg-badge">default</span>
+            <KellMark size={16} /><span className="dg-handle">Kell</span>
             {kellBusy[room] && <span className="dg-state" data-a="processing">working</span>}
           </li>
           {agents.map((h) => {
@@ -1583,7 +1583,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 <span className="dg-dot" data-a={a} aria-hidden="true" />
                 <KellMark size={16} /><span className="dg-handle">{nameOf(h)}</span>
                 <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${nameOf(h)} from the room`} title={`Remove ${nameOf(h)}`}><RemoveIcon /></button>
-                <span className="dg-badge">kell</span>
                 {a === "processing" && <span className="dg-state" data-a={a}>working</span>}
               </li>
             );
@@ -1596,7 +1595,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 <span className="dg-dot" data-a={on ? "online" : "idle"} aria-hidden="true" />
                 <span className="dg-handle" title={`Call it with @${a.mine === false ? full : a.name}`}>{full}</span>
                 {a.mine !== false && <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${full}`} title={`Remove ${full}`}><RemoveIcon /></button>}
-                <span className="dg-badge" data-kind={a.mine === false ? "tab" : undefined} title={a.mine === false ? `${full} belongs to ${a.owner_name || a.owner || "someone else"}` : undefined}>{a.mine === false ? ownerBadge(a) : "yours"}</span>
                 <span className="dg-state" data-a={on ? "online" : "idle"} title={on ? "It checked in during the last minute." : "Not connected. Ask it to check its kell inbox (delegate_inbox) and keep checking."}>{on ? "connected" : "not connected"}</span>
               </li>
             );

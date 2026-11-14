@@ -1448,13 +1448,12 @@ span.dg-replyq { cursor: default; }
   .dg-shell[data-panel="closed"] .dg-side { opacity: 0; transform: none; }
 }
 
-/* ===== agent rows: name, then the minus, then the badge (default, yours, kell) and the state (connected) ===== */
+/* ===== agent rows: name, then the minus, then the state (connected) ===== */
 .dg-members li.dg-agentrow { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding-right: 8px; }
 .dg-members li.dg-agentrow .dg-handle { flex: 0 1 auto; min-width: 0; }
 .dg-members li.dg-agentrow .dg-remove { position: static; flex: none; min-width: 24px; min-height: 24px; margin-left: 2px; }
-.dg-members li.dg-agentrow .dg-badge { flex: none; }
 .dg-members li.dg-agentrow .dg-state { flex: 1 0 100%; padding-left: 18px; }
-.dg-members li.dg-agentrow[data-a="online"] .dg-badge + .dg-state { color: #1a9d5a; }
+.dg-members li.dg-agentrow[data-a="online"] .dg-state { color: #1a9d5a; }
 
 /* ===== Stop: big, lower left, just above the prompt box, for whatever is running ===== */
 .dg-typing { justify-content: flex-start; }
