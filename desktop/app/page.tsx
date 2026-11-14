@@ -14,7 +14,10 @@ import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
 import { applyFont, readFont, saveFont } from "@/lib/font"
 import type { ToolApproval } from "@/lib/tools"
-import type { Delegation } from "@/lib/delegate"
+import type { Delegation, WayOption } from "@/lib/plan"
+import { planFromOption } from "@/lib/plan"
+import ProcedureGraph from "@/components/ProcedureGraph"
+import ProcedurePicker from "@/components/ProcedurePicker"
 
 // The Electron preload's bridge (electron/preload.ts). Absent in a plain browser (`next dev`): sign-in links then open a tab
 // and the rooms are a link to the website's chat.
@@ -595,6 +598,10 @@ export default function Home() {
   const [delegation, setDelegation] = useState<Delegation | null>(null)
   const planRef = useRef<Delegation | null>(null)
   const planSeq = useRef(0)
+  // The Ways the router offered for the message waiting on the person's choice. The turn does not run until one is
+  // picked (or the person chooses to run without a Way).
+  const [delegateOptions, setDelegateOptions] = useState<WayOption[]>([])
+  const [pendingTurn, setPendingTurn] = useState<{ text: string; files: Attachment[]; asGoal: boolean; goal: Delegation["goal"] } | null>(null)
   const [delegateAsk, setDelegateAsk] = useState("")
   const [delegateAnswer, setDelegateAnswer] = useState("")
   // Every direct answer the delegated agent has given in this session, for the agent view in the middle.
@@ -605,6 +612,25 @@ export default function Home() {
   const [delegateNote, setDelegateNote] = useState("")
   const [delegateStatus, setDelegateStatus] = useState("")
   const [delegateBusy, setDelegateBusy] = useState(false)
+  // The procedure graph's glass effect: on unless the machine asks for less transparency, and the person can switch it
+  // off (persisted). The graph is one blurred layer behind the cards, not one per card (see ProcedureGraph).
+  const [glassGraph, setGlassGraph] = useState(true)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("kell.procedure.glass")
+      if (saved === "on" || saved === "off") { setGlassGraph(saved === "on"); return }
+    } catch { /* storage can be blocked; the default stands */ }
+    const less = window.matchMedia?.("(prefers-reduced-transparency: reduce)").matches
+      || window.matchMedia?.("(prefers-contrast: more)").matches
+    setGlassGraph(!less)
+  }, [])
+  const toggleGlassGraph = useCallback(() => {
+    setGlassGraph((on) => {
+      const next = !on
+      try { localStorage.setItem("kell.procedure.glass", next ? "on" : "off") } catch { /* the state still changes */ }
+      return next
+    })
+  }, [])
   // Opening or starting a chat always returns the middle column to the session itself.
   useEffect(() => { setAgentView("main") }, [sessionID])
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -1040,13 +1066,13 @@ export default function Home() {
     return () => document.removeEventListener("keydown", key)
   }, [btw])
 
-  // Route the task and pick the model for this turn. The route streams its progress, so the panel shows "asking the
-  // router", then the Goal/Way, then the model, instead of going silent. A message waits at most 2.2 s for the plan; a
-  // late plan still fills the panel (the route caches it, so a repeat is instant).
-  const planFor = async (text: string): Promise<Delegation | null> => {
+  // Ask the router for the task's Goal and the Ways it offers. The route streams its progress, so the panel shows
+  // "asking the router" instead of going silent. Nothing runs yet: the person picks a Way from the cards (or chooses to
+  // run without one), and only then does the turn start.
+  const planFor = async (text: string): Promise<{ goal: Delegation["goal"]; options: WayOption[] } | null> => {
     const seq = ++planSeq.current
-    let settle: (p: Delegation | null) => void = () => undefined
-    const planP = new Promise<Delegation | null>((ok) => { settle = ok })
+    let settle: (p: { goal: Delegation["goal"]; options: WayOption[] } | null) => void = () => undefined
+    const planP = new Promise<{ goal: Delegation["goal"]; options: WayOption[] } | null>((ok) => { settle = ok })
     void (async () => {
       try {
         const r = await fetch("/api/delegate", {
@@ -1057,7 +1083,8 @@ export default function Home() {
         if (!r.ok || !r.body) { settle(null); return }
         const reader = r.body.getReader()
         const dec = new TextDecoder()
-        let buf = "", plan: Delegation | null = null
+        let buf = ""
+        let routed: { goal: Delegation["goal"]; options: WayOption[] } | null = null
         for (;;) {
           const { value, done } = await reader.read()
           if (done) break
@@ -1070,19 +1097,25 @@ export default function Home() {
             try { ev = JSON.parse(part.slice(6)) } catch { continue }
             if (ev.type === "status" && seq === planSeq.current) setDelegateStatus(String(ev.text || ""))
             else if (ev.type === "plan" && ev.plan) {
-              plan = ev.plan as Delegation
-              if (seq === planSeq.current) { planRef.current = plan; setDelegation(plan); setDelegateNote("") }
-              settle(plan)
+              routed = { goal: ev.plan.goal ?? null, options: Array.isArray(ev.options) ? ev.options as WayOption[] : [] }
+              if (seq === planSeq.current) {
+                planRef.current = ev.plan as Delegation
+                setDelegation(null)                    // nothing is applied until the person picks
+                setDelegateOptions(routed.options)
+                setDelegateNote("")
+              }
+              settle(routed)
             } else if (ev.type === "error" && seq === planSeq.current) {
               setDelegateNote(String(ev.error || "the router did not answer"))
             }
           }
         }
-        settle(plan)
+        settle(routed)
       } catch { settle(null) }
       finally { if (seq === planSeq.current) setDelegateStatus("") }
     })()
-    return await Promise.race([planP, new Promise<null>((ok) => setTimeout(() => ok(null), 2200))])
+    // The router can take ~20 s cold; the turn is waiting on the choice anyway, so give it the full window.
+    return await Promise.race([planP, new Promise<null>((ok) => setTimeout(() => ok(null), 25_000))])
   }
 
   const send = async (again?: string, filesOverride?: Attachment[], asGoal = false) => {
@@ -1098,8 +1131,8 @@ export default function Home() {
       return
     }
     const sent = body
-    // The router starts now and the message waits at most 2.2 s for it: the turn runs on the model the procedure needs.
-    const planP = planFor(sent)
+    // The router starts now; the message waits for the person to choose one of the Ways it finds.
+    const routedP = planFor(sent)
     if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
     else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
@@ -1108,7 +1141,20 @@ export default function Home() {
     setStopNote("")
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
     setCards([]); setCardsNote(""); loadTools(sent || outgoing.map((f) => f.name).join(" "))
-    const plan = await planP
+    const routed = await routedP
+    if (routed?.options.length) {
+      // Nothing runs yet: the panel shows the Ways as cards, and the person picks one (or runs without one).
+      setPendingTurn({ text: sent, files: outgoing, asGoal, goal: routed.goal })
+      setBusy(false); busyRef.current = false
+      setDelegateStatus(`${routed.options.length} ${routed.options.length === 1 ? "Way" : "Ways"} found — choose one in the right panel`)
+      return
+    }
+    await runTurn(sent, outgoing, null)
+  }
+
+  // Run one turn on the chosen Way (or on the engine's default when plan is null). The user's line is already in the
+  // chat; this owns the stream and the post-turn refresh.
+  const runTurn = async (sent: string, outgoing: Attachment[], plan: Delegation | null) => {
     if (plan) { setDelegateAnswer(""); setDelegateErr("") }
     const payload = { sessionID, directory, text: sent, model: plan?.model ?? undefined, plan: plan ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })
@@ -1184,7 +1230,7 @@ export default function Home() {
       }
     }
     // A turn that ends with nothing said is never silent: say so (2026-11-06: a failed model call showed an empty turn).
-    setLines((l) => l.slice(before + 1).some((x) => x.who === "assistant" || x.who === "signin" || x.who === "permission" || x.who === "plan") ? l
+    setLines((l) => l.slice(before).some((x) => x.who === "assistant" || x.who === "signin" || x.who === "permission" || x.who === "plan") ? l
       : [...l, { who: "assistant", text: ended ? "kell got no answer from the model for this. Try again, or check Settings > Models."
                                                : "The connection to the engine ended before an answer came. Try again.", at: Date.now() }])
     setBusy(false)
@@ -1197,6 +1243,38 @@ export default function Home() {
     for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (!busyRef.current) loadChanges(sid) }, ms)
     loadSessions()
     setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
+    setDelegateStatus("")
+  }
+
+  // The person picked one of the Ways: build its plan (model rung, brief) and run the waiting turn.
+  const applyOption = (option: WayOption) => {
+    const pending = pendingTurn
+    if (!pending) return
+    const plan = planFromOption(pending.text, settings?.models || {}, pending.goal, option)
+    planRef.current = plan
+    setDelegation(plan)
+    setDelegateOptions([])
+    setPendingTurn(null)
+    setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
+    setBusy(true); busyRef.current = true
+    setDelegateStatus(`Working with ${plan.model?.id || "the engine's default"}…`)
+    void runTurn(pending.text, pending.files, plan)
+  }
+
+  // "Run without a Way": the turn still runs, on the model the ladder would pick for the task, with no procedure
+  // contract. Nothing is hidden: the panel says no Way was applied.
+  const runWithoutWay = () => {
+    const pending = pendingTurn
+    if (!pending) return
+    const plan = planFromOption(pending.text, settings?.models || {}, pending.goal, null)
+    planRef.current = plan
+    setDelegation(plan)
+    setDelegateOptions([])
+    setPendingTurn(null)
+    setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
+    setBusy(true); busyRef.current = true
+    setDelegateStatus("Running without a Way — the engine's model does the work")
+    void runTurn(pending.text, pending.files, plan)
   }
 
   // Ask the delegated model directly, with the scoped brief only (app/api/delegate/ask): no files, no shell, no history.
@@ -2369,6 +2447,16 @@ export default function Home() {
               ))}
             </div>
           )}
+          {pendingTurn && delegateOptions.length > 0 && (
+            // The message is waiting on a choice; the cards are in the right panel, and this brings it back if closed.
+            <div className="dk-choose" role="status">
+              <div>
+                <b>Choose a procedure</b>
+                <p>{delegateOptions.length} {delegateOptions.length === 1 ? "Way" : "Ways"} found for this task. Pick one in the right panel; the turn runs on the model it needs.</p>
+              </div>
+              <button type="button" className="btn-line dg-mini" onClick={() => showSidebar("right")}>Open the panel</button>
+            </div>
+          )}
           {delegateStatus && (
             // The delegated worker reporting in, in the chat: visible even when the right panel is closed.
             <div className="dk-delegate-live" role="status" aria-live="polite">
@@ -2544,29 +2632,15 @@ export default function Home() {
                 {delegateStatus || `Working with ${delegation?.model?.id}…`}
               </p>
             )}
-            {!delegation && <p className="dk-note">Send a task: kell routes it to a Goal and a Way, then runs the turn on the model that procedure needs.</p>}
+            {!delegation && delegateOptions.length === 0 && <p className="dk-note">Send a task: kell searches its Ways and shows them here; you pick the one to apply.</p>}
             {!delegation && delegateNote && <p className="dk-err">{delegateNote}</p>}
-            {delegation && (
+            {delegateOptions.length > 0 && (
+              <ProcedurePicker goal={pendingTurn?.goal ?? null} options={delegateOptions} glass={glassGraph}
+                onToggleGlass={toggleGlassGraph} onPick={applyOption} onSkip={runWithoutWay} />
+            )}
+            {delegateOptions.length === 0 && delegation && (
               <div className="dk-delegate-body">
-                <div className="dk-delegate-row">
-                  <span>Goal</span>
-                  <b title={delegation.goal?.name}>{delegation.goal?.name || "no Goal matched"}</b>
-                </div>
-                <div className="dk-delegate-row">
-                  <span>Way</span>
-                  <b title={delegation.way?.name}>{delegation.way?.name || "none bound yet"}</b>
-                  {delegation.way && <i>{delegation.way.approval}</i>}
-                </div>
-                <div className="dk-delegate-row">
-                  <span>Tool</span>
-                  <b title={delegation.tool?.server || delegation.tool?.name}>{delegation.tool?.name || "none bound"}</b>
-                  {delegation.tool?.server && <i>{delegation.tool.server.replace(/^https?:\/\//, "").split("/")[0]}</i>}
-                </div>
-                <div className="dk-delegate-row">
-                  <span>Model</span>
-                  <b>{delegation.model?.id || "the engine's default"}</b>
-                  {delegation.rung && <i data-rung={delegation.rung}>{delegation.rung}</i>}
-                </div>
+                <ProcedureGraph plan={delegation} glass={glassGraph} onToggleGlass={toggleGlassGraph} />
                 <p className="dk-note">{delegation.why}</p>
                 <details className="dk-brief">
                   <summary>What it may see</summary>

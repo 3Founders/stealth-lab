@@ -262,6 +262,14 @@
 .dk-delegate-live { display: flex; align-items: center; gap: 6px; margin: 0 4px 6px; font-size: 12px; color: var(--grey);
   animation: dk-delegate-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
 .dk-delegate-live .dg-pulse { flex: none; }
+/* The turn is waiting for the person to choose one of the router's Ways. */
+.dk-choose { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 4px 8px; padding: 9px 11px;
+  border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface);
+  animation: dk-delegate-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
+.dk-choose b { font-weight: 500; font-size: 12.5px; }
+.dk-choose p { margin: 2px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--grey); }
+.dk-choose button { flex: none; }
+@media (prefers-reduced-motion: reduce) { .dk-choose { animation: none !important; } }
 @media (prefers-reduced-motion: reduce) { .dk-delegate-live { animation: none !important; } }
 
 /* The chip in the chat: the model this turn runs on; it opens the panel. Same press recipe as the other icon buttons.
@@ -277,6 +285,134 @@
 .dk-delegate-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--cobalt); }
 .dk-delegate-dot[data-rung="strong"] { background: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .dk-delegate-body, .dk-delegate-chip { animation: none !important; transition: none !important; } }
+
+/* The procedure graph: Goal -> Way -> steps. One rail, HTML cards, no graph library (a Way has <20 steps; SVG is
+   retained-mode and a canvas engine is overkill). The glass is ONE blurred layer behind the cards, not a
+   backdrop-filter per card: every blurred element re-samples its backdrop, and the practical budget is 2-3 per
+   viewport (glassmorphism performance research, 2026). Solid is the default; glass is progressive enhancement. */
+.dk-proc { position: relative; margin: 2px 6px 6px; }
+.dk-proc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dk-proc-head h2 { margin: 0 0 4px; }
+.dk-proc-toggle { flex: none; }
+.dk-proc-toggle[aria-pressed="true"] { color: var(--ink); border-color: var(--rule-strong); background: var(--soft, rgba(0,0,0,.05)); }
+.dk-proc-graph { position: relative; isolation: isolate; border-radius: 14px; padding: 10px 10px 8px; overflow: hidden; }
+.dk-proc-aurora { position: absolute; inset: -28%; z-index: 0; pointer-events: none; opacity: 0;
+  background:
+    radial-gradient(circle at 18% 0%, color-mix(in oklab, var(--cobalt) 30%, rgba(0,0,0,0)), rgba(0,0,0,0) 62%),
+    radial-gradient(circle at 92% 100%, color-mix(in oklab, var(--ink) 14%, rgba(0,0,0,0)), rgba(0,0,0,0) 58%);
+  filter: blur(18px); transition: opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
+.dk-proc-graph::before { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit;
+  background: var(--surface); border: 1px solid var(--rule);
+  box-shadow: 0 1px 0 rgba(255,255,255,.45) inset, 0 10px 28px rgba(0,0,0,.06); }
+.dk-proc[data-glass="on"] .dk-proc-aurora { opacity: .55; }
+.dk-proc[data-glass="on"] .dk-proc-graph::before {
+  background: linear-gradient(145deg, color-mix(in oklab, var(--paper) 62%, rgba(0,0,0,0)), color-mix(in oklab, var(--paper) 40%, rgba(0,0,0,0)));
+  border-color: color-mix(in oklab, var(--ink) 14%, rgba(0,0,0,0));
+  -webkit-backdrop-filter: blur(14px) saturate(1.15); backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: 0 1px 0 rgba(255,255,255,.55) inset, 0 12px 32px rgba(15,23,42,.10); }
+.dk-proc-node, .dk-proc-link, .dk-proc-steps, .dk-proc-foot { position: relative; z-index: 2; }
+.dk-proc-node { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 7px 9px; border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--ink) 10%, rgba(0,0,0,0));
+  background: color-mix(in oklab, var(--surface) 84%, rgba(0,0,0,0)); }
+.dk-proc[data-glass="on"] .dk-proc-node { background: color-mix(in oklab, var(--surface) 68%, rgba(0,0,0,0));
+  border-color: color-mix(in oklab, var(--paper) 55%, rgba(0,0,0,0));
+  box-shadow: 0 1px 0 rgba(255,255,255,.4) inset; }
+.dk-proc-label { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
+.dk-proc-node b { font-weight: 500; font-size: 12.5px; line-height: 1.3; overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.dk-proc-goal b { font-size: 13px; }
+.dk-proc-goal small { font-size: 10px; color: var(--grey); font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; }
+.dk-proc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.dk-proc-tags i { font-style: normal; font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 999px;
+  color: var(--grey); border: 1px solid var(--rule); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-proc-tags i[data-approval="approved"], .dk-proc-tags i[data-approval="ai_approved"],
+.dk-proc-tags i[data-approval="verified"] { color: var(--ink); border-color: var(--rule-strong); }
+.dk-proc-tags i[data-kind="tool"] { color: var(--cobalt); border-color: color-mix(in oklab, var(--cobalt) 40%, rgba(0,0,0,0)); }
+.dk-proc-link { display: block; width: 1px; height: 10px; margin: 2px 0 2px 13px; background: var(--rule-strong); }
+.dk-proc-steps { list-style: none; margin: 4px 0 0; padding: 0 0 0 13px; display: flex; flex-direction: column; gap: 4px; }
+.dk-proc-steps::before { content: ""; position: absolute; left: 3px; top: -2px; bottom: 8px; width: 1px;
+  background: linear-gradient(var(--rule-strong), var(--rule)); }
+.dk-proc-step { position: relative; display: flex; gap: 0; align-items: stretch; }
+.dk-proc-dot { position: absolute; left: -13px; top: 13px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--surface); border: 1.5px solid var(--rule-strong); z-index: 3; }
+.dk-proc-dot[data-kind="tool"] { border-color: var(--cobalt); background: var(--cobalt); }
+.dk-proc-dot[data-kind="human"], .dk-proc-dot[data-kind="person"] { border-color: var(--ink); }
+.dk-proc-step .dk-proc-node { flex: 1; display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 6px; padding: 6px 8px; }
+.dk-proc-order { grid-row: 1 / span 2; font-size: 10px; color: var(--grey); font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; padding-top: 2px; }
+.dk-proc-step .dk-proc-node b { grid-column: 2; }
+.dk-proc-step .dk-proc-tags { grid-column: 2; }
+.dk-proc-foot { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.dk-proc-chip { font-size: 10px; color: var(--grey); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 7px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* No glass when the person turned it off, the OS asks for less transparency, or the browser cannot blur. */
+.dk-proc[data-glass="off"] .dk-proc-graph::before,
+.dk-proc[data-glass="off"] .dk-proc-node { background: var(--surface); }
+.dk-proc[data-glass="off"] .dk-proc-graph::before { border-color: var(--rule); box-shadow: 0 10px 28px rgba(0,0,0,.06); }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .dk-proc .dk-proc-aurora { opacity: 0 !important; }
+  .dk-proc .dk-proc-graph::before { background: var(--surface) !important; -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important; border-color: var(--rule-strong) !important; }
+  .dk-proc .dk-proc-node { background: var(--surface) !important; border-color: var(--rule-strong) !important; }
+}
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .dk-proc[data-glass="on"] .dk-proc-graph::before { -webkit-backdrop-filter: none; backdrop-filter: none;
+    background: var(--surface); }
+  .dk-proc[data-glass="on"] .dk-proc-aurora { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dk-proc-aurora, .dk-proc-node, .dk-proc-graph { animation: none !important; transition: none !important; }
+}
+
+/* The procedure picker: the router's Ways as App-Store-like cards (tile, title, one line, metadata, action). The
+   whole card is the target; "Best fit" is a text badge, never only a colour. Same glass layer as the graph. */
+.dk-pick-sub { margin: 0 0 6px; font-size: 11.5px; line-height: 1.45; color: var(--grey); }
+.dk-pick-sub b { font-weight: 500; color: var(--ink); }
+.dk-pick-graph { padding: 8px; }
+.dk-pick-list { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 6px; }
+.dk-pick-card { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 9px;
+  align-items: center; width: 100%; padding: 8px; border-radius: 12px; cursor: pointer; text-align: left; font: inherit; color: var(--ink);
+  border: 1px solid color-mix(in oklab, var(--ink) 10%, rgba(0,0,0,0));
+  background: color-mix(in oklab, var(--surface) 84%, rgba(0,0,0,0));
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), box-shadow var(--dg-micro-d, 160ms) var(--dg-micro, ease);
+  animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
+.dk-proc[data-glass="on"] .dk-pick-card { background: color-mix(in oklab, var(--surface) 66%, rgba(0,0,0,0));
+  border-color: color-mix(in oklab, var(--paper) 55%, rgba(0,0,0,0)); box-shadow: 0 1px 0 rgba(255,255,255,.4) inset; }
+.dk-pick-card:hover { transform: translateY(-1px); border-color: var(--rule-strong);
+  box-shadow: 0 8px 22px rgba(0,0,0,.10); }
+.dk-pick-card:active { transform: scale(.99); }
+.dk-pick-card:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dk-pick-icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: #fff;
+  background: linear-gradient(145deg, color-mix(in oklab, var(--cobalt) 80%, #000), color-mix(in oklab, var(--ink) 70%, var(--cobalt)));
+  box-shadow: 0 4px 12px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.35) inset; }
+.dk-pick-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dk-pick-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.dk-pick-title b { font-weight: 500; font-size: 12.5px; line-height: 1.3; overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.dk-pick-best { flex: none; font-size: 9px; letter-spacing: .06em; text-transform: uppercase; background: var(--yellow);
+  color: #171717; border-radius: 3px; padding: 2px 5px 1px; }
+.dk-pick-why { font-size: 11.5px; line-height: 1.35; color: var(--grey); overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.dk-pick-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.dk-pick-meta i { font-style: normal; font-size: 9.5px; line-height: 15px; padding: 0 5px; border-radius: 999px;
+  color: var(--grey); border: 1px solid var(--rule); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-pick-meta i[data-approval="approved"], .dk-pick-meta i[data-approval="ai_approved"],
+.dk-pick-meta i[data-approval="verified"] { color: var(--ink); border-color: var(--rule-strong); }
+.dk-pick-meta i.dk-pick-tool { color: var(--cobalt); border-color: color-mix(in oklab, var(--cobalt) 40%, rgba(0,0,0,0)); }
+.dk-pick-meta i.dk-pick-id { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; }
+.dk-pick-cta { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 4px 4px 4px 10px; border-radius: 8px;
+  background: var(--ink); color: var(--paper); font-size: 11px; white-space: nowrap; }
+.dk-pick-cta .sq { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; background: var(--yellow);
+  color: #171717; transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
+.dk-pick-card:hover .dk-pick-cta .sq, .dk-pick-card:focus-visible .dk-pick-cta .sq { transform: translate(2px, -2px); }
+.dk-pick-skip { position: relative; z-index: 2; justify-self: start; margin: 8px 2px 0; padding: 0; border: 0; background: none;
+  font: inherit; font-size: 11.5px; color: var(--grey); text-decoration: underline; cursor: pointer; }
+.dk-pick-skip:hover { color: var(--ink); }
+.dk-pick-skip:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .dk-pick .dk-pick-card { background: var(--surface) !important; border-color: var(--rule-strong) !important; }
+}
+@media (prefers-reduced-motion: reduce) { .dk-pick-card { animation: none !important; transition: none !important; } }
 
 /* The right panel's Agents list: the session itself and the model the router delegated this turn to. Selecting one
    swaps the middle column (main chat vs that agent's own output). */

@@ -7,7 +7,7 @@
 //
 // The models come from the page (app/api/settings): a route may not ask the engine for its ladder on every keystroke.
 import { NextResponse } from "next/server"
-import { planFromRoute, routeTask, type Delegation, type Routed } from "@/lib/delegate"
+import { planFromRoute, routeTask, type Delegation, type Routed, type WayOption } from "@/lib/delegate"
 
 export const dynamic = "force-dynamic"
 
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic"
 // is a pure read of the task and the model ladder, so caching it cannot go stale in a way that matters.
 const CACHE_TTL_MS = 5 * 60_000
 const CACHE_MAX = 64
-const cache = new Map<string, { at: number; plan: Delegation }>()
+const cache = new Map<string, { at: number; plan: Delegation; options: WayOption[] }>()
 
 /** The app's model ladder: what the page sent, else this server's own Settings answer (the gateway list can arrive late). */
 async function ladder(req: Request, given: any): Promise<Record<string, string | null>> {
@@ -28,20 +28,23 @@ async function ladder(req: Request, given: any): Promise<Record<string, string |
 
 const cached = (key: string) => {
   const hit = cache.get(key)
-  return hit && Date.now() - hit.at < CACHE_TTL_MS ? hit.plan : null
+  return hit && Date.now() - hit.at < CACHE_TTL_MS ? hit : null
 }
 
-const remember = (key: string, plan: Delegation) => {
+const remember = (key: string, plan: Delegation, options: WayOption[]) => {
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string)
-  cache.set(key, { at: Date.now(), plan })
+  cache.set(key, { at: Date.now(), plan, options })
 }
 
-/** One line for the panel: the Goal, the Way and the tool in the router's own words. */
+/** One line for the panel: the Goal and how many Ways the router offered. */
 function goalLine(routed: Routed): string {
+  const first = routed.options[0]
   const bits = [
     routed.goal ? `Goal: ${routed.goal.name}` : "no Goal matched",
-    routed.way ? `Way: ${routed.way.name} [${routed.way.approval}]` : null,
-    routed.tool ? `Tool: ${routed.tool.name}` : null,
+    routed.options.length
+      ? `${routed.options.length} ${routed.options.length === 1 ? "Way" : "Ways"} offered`
+      : "no Way offered",
+    first ? `first: ${first.name} [${first.approval}]` : null,
   ].filter(Boolean)
   return bits.join(" · ")
 }
@@ -65,11 +68,12 @@ export async function POST(req: Request) {
     const models = await ladder(req, given)
     const key = `${text}\u0000${JSON.stringify(models)}`
     const hit = cached(key)
-    if (hit) return NextResponse.json(hit)
+    if (hit) return NextResponse.json({ ...hit.plan, options: hit.options })
     try {
-      const plan = planFromRoute(text, models, await routeTask(text, timeoutMs))
-      remember(key, plan)
-      return NextResponse.json(plan)
+      const routed = await routeTask(text, timeoutMs)
+      const plan = planFromRoute(text, models, routed)
+      remember(key, plan, routed.options)
+      return NextResponse.json({ ...plan, options: routed.options })
     } catch (err: any) {
       return NextResponse.json({ error: String(err?.message || err) }, { status: err?.status || 502 })
     }
@@ -88,18 +92,18 @@ export async function POST(req: Request) {
         const hit = cached(key)
         if (hit) {
           status("cached", "Using the plan from a moment ago")
-          send({ type: "plan", plan: hit })
+          send({ type: "plan", plan: hit.plan, options: hit.options })
           send({ type: "done" })
           return
         }
         status("routing", "Asking kell's router (find_ways)…")
         const routed = await routeTask(text, timeoutMs)
-        status("goal", goalLine(routed), { goal: routed.goal, way: routed.way, tool: routed.tool })
+        status("goal", goalLine(routed), { goal: routed.goal, options: routed.options })
         const plan = planFromRoute(text, models, routed)
         status("model", plan.model ? `Model: ${plan.model.id} (${plan.rung}) — ${plan.why}` : `Model: the engine's default — ${plan.why}`,
                { model: plan.model, rung: plan.rung })
-        remember(key, plan)
-        send({ type: "plan", plan })
+        remember(key, plan, routed.options)
+        send({ type: "plan", plan, options: routed.options })
         send({ type: "done" })
       } catch (err: any) {
         send({ type: "error", error: String(err?.message || err).replace(/Bearer\s+\S+/gi, "Bearer …").slice(0, 300) })

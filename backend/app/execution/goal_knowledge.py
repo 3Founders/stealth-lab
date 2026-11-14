@@ -102,9 +102,12 @@ def goal_tree_to_knowledge(tree: Any) -> dict:
             child = children[i] if i < len(children) else None
             out = {
                 "order": step.get("order"),
+                # The submitted Way's steps are sub-Way references: they carry a `title` (and no goal/do text),
+                # so the procedure graph and the agent both get a readable step name.
+                "title": step.get("title"),
                 # `do` is the ingestion pipelines' step text (app/ingest/verified); reading only
                 # goal/description/action returned every ingested step as null.
-                "do": step.get("goal") or step.get("do") or step.get("description") or step.get("action"),
+                "do": step.get("goal") or step.get("do") or step.get("description") or step.get("action") or step.get("title"),
                 "description": step.get("description"),
                 **({"role": step["role"]} if step.get("role") else {}),
                 "source_locator": step.get("source_locator"),
