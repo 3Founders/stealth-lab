@@ -33,7 +33,8 @@ Mentions: `@web-chat` and `@alice/web-chat` both address the agent named `web-ch
 Agent { id, name, kind, handle: "@name", created_at, last_seen|null, online: bool, revoked: bool }
         online = polled delegate_inbox within the last 60 s
 Task  { id, agent_id, room, from, text, locators: [], depth, status, created_at, claimed_at|null, finished_at|null,
-        result|null, check|null }
+        result|null, check|null, room_id|null, posted,
+        history?: [{seq, from, text}], files?: [{id, name, mime}] }   # on a claimed task in a server room
         status: needs_approval | queued | claimed | done | failed | cancelled
 ```
 
@@ -51,7 +52,9 @@ Use `fetch()` and read `response.body`; a browser `EventSource` cannot send the 
 
 MCP tools on the same server, for the person's own agent in their own session, signed in through the connector:
 
-- `delegate_inbox(agent)`: takes the next queued task for that agent (marks the agent online), says how many are waiting and how many await the owner's approval. Found with `discover_tools(need="check my kell inbox")`.
+- `delegate_inbox(agent)`: takes the next queued task for that agent (marks the agent online), says how many are waiting and how many await the owner's approval. A task in a server room also carries `room_id`, the last 20 messages in `history`, and any files or pictures in `files`; pictures are returned as MCP image content too. Older context is one `room_read` away.
+- `room_read(room, after=0, before=0, limit=100, query="")`: reads forward from `after`, or older messages before `before` (the lowest seq in `history`) and searches them with `query`.
+- `room_file(room, file_id)`: opens a `[[file:<id>|<name>|<size>|<type>]]` from a message; a picture comes back as the image itself.
 - `delegate_result(task_id, result, ok=true, check=null)`: posts the outcome once, only for a task that was taken.
 
 Verified live through a signed-in claude.ai connector: `delegate_inbox(agent="web-chat")` with no such agent returns "no agent named 'web-chat' on your account; add it on the Delegator page first".

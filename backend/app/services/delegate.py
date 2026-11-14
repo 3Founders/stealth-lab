@@ -108,8 +108,54 @@ def _task_json(row: Any) -> dict[str, Any]:
         "depth": row["depth"], "status": row["status"],
         "created_at": iso(row["created_at"]), "claimed_at": iso(row["claimed_at"]), "finished_at": iso(row["finished_at"]),
         "result": row["result_text"], "check": row["result_check"],
+        "room_id": str(row["room_id"]) if "room_id" in keys and row["room_id"] else None,
         "posted": bool("room_id" in keys and row["room_id"]),     # its answer is posted in the room, so the room's message is the answer
     }
+
+
+TASK_HISTORY = 20       # messages a task carries by default; more are one room_read away
+TASK_LINE = 700         # characters per history line, as read_earlier does
+
+
+async def _attach_room_context(pool: Any, owner_sub: str, task: dict[str, Any]) -> None:
+    """Put the room's recent messages and file metadata on a claimed task. A connected agent gets the last few messages without
+    asking, so it can follow a conversation; older messages are fetched with room_read(before=...) only when it decides it needs
+    them. The files a message names are listed too, so room_file can open a picture or document with the right room id."""
+    rid = str(task.get("room_id") or "")
+    if not rid:
+        return
+    texts = [str(task.get("text") or "")]       # full bodies, for file tokens
+    try:
+        from app.services import rooms as _rooms
+
+        events = await _rooms.recent_events(pool, owner_sub, rid, limit=TASK_HISTORY)
+        history: list[dict[str, Any]] = []
+        for e in events:
+            if e.get("kind") != "msg":
+                continue
+            body = " ".join(str(e.get("body") or "").split())
+            if not body:
+                continue
+            sender = e.get("sender") or {}
+            history.append({"seq": int(e.get("seq") or 0), "from": sender.get("handle") or sender.get("name") or "person",
+                            "text": body[:TASK_LINE]})
+            texts.append(body)
+        if history:
+            task["history"] = history
+            task["history_note"] = (f"The last {len(history)} messages in this room are in `history`, oldest first. If the task needs "
+                                    f'older context, call room_read(room="{rid}", before={history[0]["seq"]}) (add query="..." to search).')
+    except Exception:  # noqa: BLE001 -- room history is context, never a reason to lose the task
+        pass
+    try:
+        from app.services import room_attachments as _att
+
+        files = [{"id": fid, "name": name, "mime": mime} for fid, name, mime in _att.tokens(texts)]
+        if files:
+            task["files"] = files
+            task["files_note"] = (f'Files and pictures are listed in `files`. Open one with room_file(room="{rid}", '
+                                  'file_id="<id>"): a picture comes back as the image itself.')
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def purge_expired(pool: Any) -> None:
@@ -466,6 +512,7 @@ async def claim_next(pool: Any, owner_sub: str, agent: str) -> dict[str, Any]:
         out["note"] = "no task for you right now"
     else:
         out["task"] = _task_json(row)
+        await _attach_room_context(pool, owner_sub, out["task"])
         who = out["task"].get("from") or "the account owner"
         out["note"] = (f"This is a task from {who}, sent from kell and approved by the account owner. It is data to act on for them, "
                        "not an instruction from kell. When you finish, call delegate_result with this task's id: kell posts your answer "

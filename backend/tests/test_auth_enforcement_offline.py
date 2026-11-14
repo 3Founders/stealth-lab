@@ -472,7 +472,7 @@ def test_every_registered_mcp_tool_is_classified(mcp):
                      "report_result", "report_audit", "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool",
                      "delegate_inbox", "delegate_result", "delegate_call", "submit_goal", "run_way",
                      # rooms, canvas and memory: read through the signed-in person's own membership
-                     "room_list", "room_read", "room_members", "room_post",
+                     "room_list", "room_read", "room_file", "room_members", "room_post",
                      "canvas_list", "canvas_read", "canvas_write",
                      "memory_read", "memory_search", "memory_write"}
     unclassified = sorted(n for n in names if n not in mcp._TOOL_SCOPES)
