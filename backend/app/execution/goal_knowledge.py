@@ -84,6 +84,7 @@ def goal_tree_to_knowledge(tree: Any) -> dict:
             "name": proc.get("name"), "version": proc.get("version"),
             "what_it_does": proc.get("description") or proc.get("goal"),
             "verification_state": proc.get("verification_state"),
+            "approval_status": proc.get("approval_status"),
             "preconditions": proc.get("preconditions") or [],
             "goal_check": node.verification_requirement or None,
             "why_chosen": node.rationale,
