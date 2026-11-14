@@ -466,6 +466,8 @@ async def resolve_goal(
                 # instruction it can carry out, not a dead end.
                 "goal": proc.get("goal"), "description": proc.get("display_description"),
                 "verification_state": proc.get("verification_state"),
+                # The review tier travels with the Way: a client shows "approved" beside "candidate" (2026-11-14).
+                "approval_status": proc.get("approval_status"),
                 "tested_by_source": bool(proc.get("tested_by_source")),
                 "preconditions": proc.get("preconditions") or [],
                 "steps": sorted(proc.get("steps") or [], key=lambda s: s.get("order", 0) if isinstance(s, dict) else 0),
