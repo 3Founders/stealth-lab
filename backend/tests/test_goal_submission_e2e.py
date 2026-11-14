@@ -143,7 +143,7 @@ async def test_submit_review_fix_and_run(pool, fakes):
     assert run["status"] == "done"
     assert [o["actor"] for o in run["outputs"]] == ["human", "ai"]
     assert "2212.09748" in run["outputs"][1]["output"]                         # the person's note reached step 2
-    with pytest.raises(runs.RunError, match="not waiting"):
+    with pytest.raises(runs.RunError, match="already done"):
         await api.finish_step(pool, owner, run["id"], "again")
 
 

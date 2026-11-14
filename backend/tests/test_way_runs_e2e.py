@@ -139,7 +139,7 @@ async def test_a_human_step_pauses_and_kell_runs_scripts_and_plain_fetches_itsel
     assert [s["by"] for s in run["steps"]] == ["you", "kell", "kell", "your session"]
     run = await way_runs.report(pool, run["run_id"], owner_id=OWNER, done=True, note="LINK1 LINK2")
     assert run["status"] == "waiting_session" and run["your_turn"]["step"] == 4
-    assert [o["actor"] for o in run["outputs"]] == ["a person", "kell", "kell"]
+    assert [o["actor"] for o in run["outputs"]] == ["human", "ai", "ai"]
     assert run["outputs"][1]["output"] == "PAGE OF https://arxiv.org/list/cs.LG/recent"
     assert "LINK1 LINK2" in fakes["stdin"][0] and "PAGE OF" in fakes["stdin"][0]   # the script saw the run so far
     assert "LINES: 42" in run["your_turn"]["earlier"]

@@ -731,7 +731,7 @@ _V1_ANNOTATIONS: dict[str, dict] = {
     "submit_goal": {"title": "Submit a goal and its steps", "read_only_hint": False, "destructive_hint": False,
                     "idempotent_hint": False, "open_world_hint": True},
     # fetches websites and calls a model; pauses for the person at a human step
-    "run_way": {"title": "Run a submitted way", "read_only_hint": False, "destructive_hint": False,
+    "run_way": {"title": "Run a Way step by step", "read_only_hint": False, "destructive_hint": False,
                 "idempotent_hint": False, "open_world_hint": True},
 }
 
@@ -5424,13 +5424,8 @@ async def run_way(ctx: Context, way_id: str = "", input: str = "", run_id: str =
                 return await _sub_api.get_run(pool, owner, run_id)
         return await _submission_call(ctx, on_run)
     if submission_id and not way_id:
-        async def parent(pool, owner):
-            pid = await pool.fetchval("SELECT parent_procedure_id::text FROM goal_submissions WHERE id::text = $1",
-                                      submission_id)
-            if not pid:
-                raise _way_runs.RunError("that submission has no approved Way yet")
-            return await _way_runs.start(pool, pid, owner_id=owner, input=input)
-        return await _submission_call(ctx, parent)
+        return await _submission_call(ctx, lambda p, o: _sub_api.start_run(p, o, submission_id, input,
+                                                                            mode="session"))
     if not way_id:
         return "REFUSED: pass way_id to start a run, or run_id to continue one"
     return await _submission_call(ctx, lambda p, o: _way_runs.start(p, way_id, owner_id=o, input=input))

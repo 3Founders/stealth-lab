@@ -86,16 +86,37 @@ async def mine(pool: Any, owner_id: str) -> list[dict]:
     return await store.list_for_owner(pool, owner_id)
 
 
-async def start_run(pool: Any, owner_id: str, submission_id: str, input: str = "") -> dict:
-    return await runs.start(pool, submission_id, owner_id=owner_id, input=input)
+async def start_run(pool: Any, owner_id: str, submission_id: str, input: str = "", mode: str = "headless") -> dict:
+    """Run a submission's approved Way on the Way executor (app/execution/way_runs.py). "headless" (the website: no
+    session to hand steps to) has kell do every automated step; the MCP tool runs it in "session" mode."""
+    from app.execution import way_runs
+
+    row = await pool.fetchrow("SELECT status, parent_procedure_id::text AS parent FROM goal_submissions "
+                              "WHERE id::text = $1", submission_id)
+    if row is None:
+        raise runs.RunError("no submission with that id")
+    if row["status"] not in ("ai_approved", "approved") or not row["parent"]:
+        raise runs.RunError(f"this Way is {row['status'].replace('_', ' ')}; only an approved Way runs")
+    return await way_runs.start(pool, row["parent"], owner_id=owner_id, input=input, mode=mode)
 
 
 async def finish_step(pool: Any, owner_id: str, run_id: str, note: str = "") -> dict:
-    return await runs.finish_human_step(pool, run_id, owner_id=owner_id, note=note)
+    """The person did what the run waits on. A run started before the Way executor continues on the older runner."""
+    from app.execution import way_runs
+
+    try:
+        return await way_runs.report(pool, run_id, owner_id=owner_id, done=True, note=note)
+    except LookupError:
+        return await runs.finish_human_step(pool, run_id, owner_id=owner_id, note=note)
 
 
 async def get_run(pool: Any, owner_id: str, run_id: str) -> dict:
-    return await runs.get(pool, run_id, owner_id=owner_id)
+    from app.execution import way_runs
+
+    try:
+        return await way_runs.get(pool, run_id, owner_id=owner_id)
+    except LookupError:
+        return await runs.get(pool, run_id, owner_id=owner_id)
 
 
 ERRORS = (intake.SubmissionError, runs.RunError, LookupError)
