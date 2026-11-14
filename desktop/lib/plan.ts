@@ -11,6 +11,8 @@ export type DelegationStep = {
   server?: string
   note?: string
   sourceId?: string
+  /** Where the step's tool lives: the server's own endpoint (an MCP URL) or how to reach it. From find_ways. */
+  locator?: { kind?: string; server?: string; url?: string }
 }
 export type Delegation = {
   task: string
@@ -92,6 +94,13 @@ export function stepsOf(way: any): DelegationStep[] {
       kind,
       ...(b ? { tool: String(b.tool || b.name || ""), server: String(b.server_url || b.server || "") } : {}),
       ...(step?.note ? { note: String(step.note) } : {}),
+      ...(step?.locator && typeof step.locator === "object"
+        ? { locator: {
+              ...(step.locator.kind ? { kind: String(step.locator.kind) } : {}),
+              ...(step.locator.server ? { server: String(step.locator.server) } : {}),
+              ...(step.locator.url ? { url: String(step.locator.url) } : {}),
+            } }
+        : {}),
       ...(step?.source_locator?.source_id ? { sourceId: String(step.source_locator.source_id) } : {}),
     }
   })

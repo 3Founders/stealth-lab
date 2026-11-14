@@ -81,6 +81,18 @@ Warm cost is ~3-6 ms for `/v1/goals/rank`; a cold build is ~1 s, and `refresh_no
   The name must look like that agent and the description must say it is a coding agent/CLI: "Eclipse Codex" (banking
   regulation) and "journald cursor" are kept.
 
+**The model: Goal -> ranked Ways -> step bindings** (2026-11-14):
+
+- a Goal's `procedures` are its written Ways, in rank order (verified first, then successes, then `goal_score`, then
+  newest); each entry now carries `rank`;
+- a Goal's `tools` are the cards **bound in those Ways' steps**, not the separate `tool_card_goals` mapping. A Goal
+  with no written Way offers no tool in `find_ways`; a tool nobody's Way binds is found with `discover_tools`;
+- a tool step carries `locator`: the server's own endpoint (an MCP URL such as `https://mcp.exa.ai/mcp`). A server that
+  needs a sign-in mints the person's link when the tool is first used, and `use_tool` returns it;
+- the web-search Goal is the first curated example: `Search the web with Exa`, one step bound to `ai.exa/exa` with
+  locator `https://mcp.exa.ai/mcp` (`source_key = curated:exa-web-search`). It is the only Way and the only tool that
+  Goal returns.
+
 `route_goal` (used by `/v1/goals/route`) tries the catalog first and only falls back to the DB legs
 (`_exact` + `_k000_full_text`) when the catalog itself failed. The global search group is a second opinion only when
 `GOAL_SEARCH_GROUP=on` (or the catalog is unavailable), because that check was a round trip on the hot path.

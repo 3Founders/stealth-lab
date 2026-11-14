@@ -220,8 +220,9 @@ async def _ways(pool: Any, hits: Sequence[dict[str, Any]]) -> dict[str, list[Way
                        pr.approval_status,
                        pr.availability::text AS availability,
                        COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                                            'card_id', pc.card_id, 'name', tc.name,
+                                            'card_id', pc.card_id, 'name', tc.name, 'title', tc.title,
                                             'server', tc.server, 'step_order', pc.step_order,
+                                            'connector_url', tc.extra->>'connector_url',
                                             'score', pc.score)
                                         ORDER BY pc.step_order, pc.score DESC, pc.card_id)
                                  FROM procedure_tool_cards pc
@@ -752,9 +753,31 @@ async def route_goal(
                 ways[h["goal_id"]] = [WayHit(**w) for w in catalog.ways.get(h["goal_id"], [])]
         else:
             ways = await _ways(pool, ranked)
-    tools = await _tools(pool, [h["goal_id"] for h in ranked], owner_id=owner_id,
-                         request_id=request_id, query=text,
-                         query_hits=(await query_task) if query_task is not None else None) if include_tools else {}
+    tools: dict[str, list[ToolHit]] = {}
+    if include_tools and not include_ways:
+        # A caller that asked for tools only (no Ways): the tool search is the answer.
+        tools = await _tools(pool, [h["goal_id"] for h in ranked], owner_id=owner_id,
+                             request_id=request_id, query=text,
+                             query_hits=(await query_task) if query_task is not None else None)
+    elif include_tools:
+        # A Goal's tools are the ones its Ways bind in their steps (Goal -> ranked Ways -> step binding). The separate
+        # goal->tool mapping (tool_card_goals) is not read here any more: a Goal with no written Way offers no tool
+        # (2026-11-14). A tool that a Way does not bind is found by discover_tools, where it belongs.
+        for goal_id, ws in ways.items():
+            seen: set[str] = set()
+            out: list[ToolHit] = []
+            for w in ws:
+                for c in (w.cards or []):
+                    cid = str(c.get("card_id") or "")
+                    if not cid or cid in seen:
+                        continue
+                    seen.add(cid)
+                    out.append(ToolHit(card_id=cid, name=str(c.get("name") or ""), server=str(c.get("server") or ""),
+                                       title=str(c.get("title") or ""), description="", source="registry",
+                                       score=float(c.get("score") or 0.0), pinned=False))
+            tools[goal_id] = out[:MAX_TOOLS_PER_GOAL]
+        if query_task is not None:
+            await query_task                  # fills the tool-search cache for route_api's no-Goal fallback
 
     # Ways are the real procedures only. The router used to build a one-step "Way" out of each ranked tool card here
     # (procedure_id "tool:<card>"), so the Way list was really the tool list: a Goal with no procedure showed a wall of

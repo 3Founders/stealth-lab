@@ -3514,26 +3514,60 @@ async def _with_routes(reply: str, triaged: Any, query: str, installed: list[Any
     if not isinstance(body, dict):
         return reply
     if triaged.tool:
-        try:
-            ext = await _external_tools(query, triaged.tool, installed, 8)
-        except Exception:  # noqa: BLE001 -- the knowledge goes back without tools
-            ext = None
-        if ext and ext.get("tools"):
+        # The tools a Goal offers are the ones its Ways bind in their steps (Goal -> ranked Ways -> step locator).
+        # The tool search is the fallback for a Goal with no written Way (2026-11-14).
+        bound: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for p in body.get("procedures") or []:
+            for s in (p.get("steps") or []):
+                b = s.get("binding") if isinstance(s, dict) else None
+                if not isinstance(b, dict):
+                    continue
+                server = str(b.get("server") or b.get("server_url") or "")
+                name = str(b.get("tool") or server)
+                key = f"{server}\u0000{name}"
+                if not name or key in seen:
+                    continue
+                seen.add(key)
+                loc = s.get("locator") if isinstance(s.get("locator"), dict) else {}
+                url = str(loc.get("url") or b.get("server_url") or "")
+                bound.append({
+                    "name": name, "server": server, "source": "registry",
+                    "summary": str(s.get("do") or s.get("title") or "")[:240],
+                    **({"connector_url": url} if url.startswith("http") else {}),
+                    "via_kell": True,
+                })
+        ext = None
+        if not bound:
+            try:
+                ext = await _external_tools(query, triaged.tool, installed, 8)
+            except Exception:  # noqa: BLE001 -- the knowledge goes back without tools
+                ext = None
+        if bound or (ext and ext.get("tools")):
             # yours first, then what a chat can add (a connector URL), then package-only servers (Claude Code only), each
             # group in the ranker's order: on claude.ai a small remote tool was offered while the better ones were
             # packages it cannot add (2026-10-31)
             group = lambda t: (0 if t.get("source") == "installed" else 1 if t.get("via_kell")
                                else 2 if t.get("connector_url") else 3)
-            ext["tools"] = sorted(ext["tools"], key=group)[:4]
-            body["tools"] = {**ext, "next": (
-                "Use one you have (source installed) if it fits. One marked via_kell you can use right now without "
-                "installing anything: discover_tools(server=...) for its tools, then use_tool(server=..., name=..., "
-                "arguments=...); the first call may return a link for the user to allow it -- show them the link and "
-                "try again when they say done. For any other, do the task as well as you can without it and offer to "
-                "add it: connector_url in a chat (Settings -> Connectors -> Add custom connector), install in Claude "
-                "Code. Never run an install yourself. When the task is done, call "
-                "report_tools(used=[the URLs or packages of the tools you called], outcome=pass|fail|unknown, "
-                f"tool_goal=\"{triaged.tool}\").")}
+            if ext:
+                ext["tools"] = sorted(ext["tools"], key=group)[:4]
+                body["tools"] = {**ext, "next": (
+                    "Use one you have (source installed) if it fits. One marked via_kell you can use right now without "
+                    "installing anything: discover_tools(server=...) for its tools, then use_tool(server=..., name=..., "
+                    "arguments=...); the first call may return a link for the user to allow it -- show them the link and "
+                    "try again when they say done. For any other, do the task as well as you can without it and offer to "
+                    "add it: connector_url in a chat (Settings -> Connectors -> Add custom connector), install in Claude "
+                    "Code. Never run an install yourself. When the task is done, call "
+                    "report_tools(used=[the URLs or packages of the tools you called], outcome=pass|fail|unknown, "
+                    f"tool_goal=\"{triaged.tool}\").")}
+            else:
+                body["tools"] = {"tools": sorted(bound, key=group)[:4], "goal": triaged.tool, "next": (
+                    "These are the tools the Goal's Ways use, with the endpoint each one lives at (connector_url). "
+                    "Run one through kell: discover_tools(server=...) for its tools, then use_tool(server=..., name=..., "
+                    "arguments=...); the first call may return a link for the user to allow it -- show them the link and "
+                    "try again when they say done. When the task is done, call "
+                    "report_tools(used=[the URLs or packages of the tools you called], outcome=pass|fail|unknown, "
+                    f"tool_goal=\"{triaged.tool}\").")}
     elif triaged.kind in _DELEGATE_KINDS and triaged.work in (None, "answer"):
         body["delegate"] = {
             "why": "a general question a cheap model answers well; it saves the user's usage",

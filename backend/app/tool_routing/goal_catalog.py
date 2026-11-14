@@ -278,8 +278,9 @@ async def _load_ways(pool: Any) -> dict[str, list[dict[str, Any]]]:
             SELECT r.id::text AS id, r.achieves_goal_id::text AS goal_id, r.name, r.steps,
                    r.preconditions, r.verification_state, r.approval_status, r.availability,
                    COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                                        'card_id', pc.card_id, 'name', tc.name,
+                                        'card_id', pc.card_id, 'name', tc.name, 'title', tc.title,
                                         'server', tc.server, 'step_order', pc.step_order,
+                                        'connector_url', tc.extra->>'connector_url',
                                         'score', pc.score)
                                     ORDER BY pc.step_order, pc.score DESC, pc.card_id)
                              FROM procedure_tool_cards pc

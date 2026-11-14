@@ -92,7 +92,7 @@ export default function ProcedureGraph({ plan, glass, onToggleGlass }: {
                     <b title={titles[s.order] || s.title}>{titles[s.order] || s.title}</b>
                     <span className="dk-proc-tags">
                       <i data-kind={s.kind}>{KIND[s.kind] || s.kind}</i>
-                      {s.tool && <i className="dk-proc-tool" title={s.server || s.tool}>{s.tool}</i>}
+                      {s.tool && <i className="dk-proc-tool" title={s.locator?.url || s.server || s.tool}>{s.tool}</i>}
                     </span>
                   </div>
                 </li>

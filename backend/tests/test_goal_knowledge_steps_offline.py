@@ -31,3 +31,22 @@ def test_older_step_shapes_are_unchanged():
                   {"order": 1, "action": "Run build"}])
     assert [s["do"] for s in out] == ["Install deps", "Run build"]
     assert out[0]["check"] == "npm ls exits 0" and "role" not in out[0]
+
+
+def test_a_tool_step_carries_its_locator_and_the_way_its_rank():
+    # The web-search Goal's Way: one step, bound to Exa, with the server's own endpoint (2026-11-14).
+    loc = {"kind": "mcp", "server": "ai.exa/exa", "url": "https://mcp.exa.ai/mcp"}
+    tree = gk.goal_tree_to_knowledge(_tree([{
+        "order": 1, "title": "Search the web with Exa",
+        "binding": {"kind": "tool", "tool": "web_search_exa", "server_url": "https://mcp.exa.ai/mcp", "locator": loc},
+    }]))
+    proc = tree["procedures"][0]
+    assert proc["rank"] == 1
+    assert proc["steps"][0]["kind"] == "action"
+    assert proc["steps"][0]["locator"] == loc
+
+
+def test_a_binding_without_an_explicit_locator_uses_its_server_url():
+    out = _steps([{"order": 0, "binding": {"kind": "tool", "tool": "t", "server_url": "https://x.example/mcp"}}])
+    assert out[0]["locator"]["url"] == "https://x.example/mcp"
+    assert out[0]["locator"]["kind"] == "tool"

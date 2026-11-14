@@ -79,6 +79,7 @@ def goal_tree_to_knowledge(tree: Any) -> dict:
         proc = node.procedure
         steps = [s for s in (proc.get("steps") or []) if isinstance(s, dict)]
         entry = {
+            "rank": len(procedures) + 1,
             "goal_id": node.goal_id, "goal_name": node.goal_name, "depth": node.depth, "parent": parent,
             "procedure_id": proc.get("procedure_id"), "version_id": proc.get("id"),
             "name": proc.get("name"), "version": proc.get("version"),
@@ -118,6 +119,18 @@ def goal_tree_to_knowledge(tree: Any) -> dict:
             }
             if step.get("binding"):
                 out["kind"] = "action"
+                # Where the step's tool lives: the server's own endpoint (an MCP URL such as https://mcp.exa.ai/mcp),
+                # so a client can offer it without searching again. A server that needs a sign-in gets the link when it
+                # is first used; the binding names the server (2026-11-14).
+                b = step.get("binding") or {}
+                loc = b.get("locator") if isinstance(b.get("locator"), dict) else None
+                if loc:
+                    out["locator"] = loc
+                elif isinstance(b.get("server_url"), str) and b["server_url"]:
+                    out["locator"] = {"kind": str(b.get("kind") or "tool"), "server": b.get("server") or b.get("server_url"),
+                                      "url": b["server_url"]}
+                elif b.get("server"):
+                    out["locator"] = {"kind": str(b.get("kind") or "tool"), "server": b["server"]}
             elif child is not None and child.chosen == "procedure":
                 out["kind"], out["subgoal_id"] = "subgoal", child.goal_id
                 later.append((child, {"goal_id": node.goal_id, "step_order": step.get("order")}))
