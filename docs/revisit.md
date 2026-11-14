@@ -216,3 +216,12 @@ Today nobody outside can download or use the app. In this order:
   wait for a person to confirm.
 - **Untracked files in the main tree were not committed**: `.scratch/`, `.stealth/`, research notes, PDFs and the
   `prod_frontend/` additions. They are not part of this change; `.scratch/_walletdsn.txt` must never be committed.
+
+## 2026-11-14, dropped from the goal_router.md goal (owner)
+
+- **First live Hinoki call.** P1-09 is built and its checks pass on a scratch database; no call has gone to Hinoki.
+  Needs the owner's consent (code is sent to an outside service) and `HINOKI_API_KEY` on the server.
+- **Hinoki's card on production.** `scripts/register_hinoki_card.py` against production, then refresh the security
+  and `security_pentest` rankings. Do it with the live call.
+- **Desktop release v0.1.9.** Ships fork, the desktop worker for rooms (lib/remote.ts) and the Submit a Way / My
+  desktop sessions commands. Each release needs the owner's go.

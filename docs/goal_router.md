@@ -1,6 +1,6 @@
 # Goal-first routing: phases, sub-milestones, and file ownership
 
-Status: active plan, 2026-11-11. Phase 1 is complete (P1-09 built 2026-11-14, not yet called live); Phase 2 is
+Status: active plan, 2026-11-11. Phase 1 is complete (P1-09 built 2026-11-14; its live call is out of scope by the owner's decision, docs/revisit.md); Phase 2 is
 complete; Phase 3 is complete (P3-01…P3-07).
 This document is the map. The GitHub issue is the lock (see [Claiming](#claiming-a-sub-milestone)).
 Current state and open review findings: [handoff_goal_router_2026-11-11.md](handoff_goal_router_2026-11-11.md).
@@ -108,7 +108,7 @@ credits and pricing are scoped in Phase 3 but ship after the gate and the compar
 | Outcome recording | partial | `tool_observations` (db/162), `store.record_outcome` |
 | Exa | **adapter built (P1-08)**, card + mapping | `registry:ai.exa/exa`, goal `web`, kell's key |
 | OSV | **keyless, policy + pin (db/198)** | `registry:io.github.cyanheads/osv-advisory-mcp-server`, CVE subgoal, `osv_query_package` |
-| Hinoki | **built (P1-09), not called live yet** | `https://inference.hinoki.security/v1`, model `hinoki-offensive` (#26), assumed OpenAI-compatible. An LLM, not a scanner: the adapter fetches the public repository from GitHub (or takes a diff) and asks the model for findings. Card `kell:hinoki` (`scripts/register_hinoki_card.py`). The first live call waits for the owner's consent |
+| Hinoki | **built (P1-09), not called live yet** | `https://inference.hinoki.security/v1`, model `hinoki-offensive` (#26), assumed OpenAI-compatible. An LLM, not a scanner: the adapter fetches the public repository from GitHub (or takes a diff) and asks the model for findings. Card `kell:hinoki` (`scripts/register_hinoki_card.py`). The first live call is out of this plan (owner, 2026-11-14): see docs/revisit.md |
 | Policy / intent / signed audit | **built (P1-05/06/07)** | `tool_policies`, `intent_certificates`, `tool_call_audit` |
 | Gate core | **built (P1-04)** | `gate.py`, `TOOL_GATE=off / shadow / enforce`, wired in `_gateway_call`/`use_tool` |
 | Approvals | **built (P1-11)** | `tool_approvals` (db/196), `approvals.py`, `scripts/approve_tool.py`, `/v1/tools/approvals` |
@@ -1146,7 +1146,7 @@ Update only your own row. `—` means unclaimed.
 | P1-06 | Intent certificates | opencode | done | this commit |
 | P1-07 | Signed audit | opencode | done | this commit |
 | P1-08 | Exa adapter | anuj-claude | done | #27 |
-| P1-09 | Hinoki adapter | - | built 2026-11-14 against a fake Hinoki; manual checks pass on the scratch DB (Hinoki 2nd in the top tools; `--call` without a certificate: deny cert:required). Manual pins now keep a place in their Goal's list (goal_router._keep_pins), and the card is pinned to the security Goal and `security_pentest`. No live call yet (needs the owner's consent and HINOKI_API_KEY) | #26 |
+| P1-09 | Hinoki adapter | - | built 2026-11-14 against a fake Hinoki; manual checks pass on the scratch DB (Hinoki 2nd in the top tools; `--call` without a certificate: deny cert:required). Manual pins now keep a place in their Goal's list (goal_router._keep_pins), and the card is pinned to the security Goal and `security_pentest`. Done for this plan; the live call, the production card registration and the desktop release are out of scope (owner, 2026-11-14; docs/revisit.md) | #26 |
 | P1-10 | Run recording | anuj-claude | done | #25 |
 | P1-11 | Approval surface | opencode | done | this commit |
 | P2-01 | Corpus and contracts | anuj-claude | done | #30 |
