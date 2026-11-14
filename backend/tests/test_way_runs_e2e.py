@@ -100,6 +100,15 @@ def test_every_stored_step_shape_maps_to_a_kind():
     assert (pinned["model"], pinned["strict"]) == ("gemini-3-pro", True)
 
 
+def test_a_catalog_tool_way_names_its_server_and_its_tool():
+    step = {"goal": "Use scan_woo_store_readiness on xyz.utilityhouse/agentready-woo", "order": 0,
+            "binding": {"kind": "tool", "tool": "scan_woo_store_readiness", "server_url": "https://app.x/mcp"}}
+    loc = way_runs.plan_step(step)["locator"]
+    assert (loc["server"], loc["tool"]) == ("xyz.utilityhouse/agentready-woo", "scan_woo_store_readiness")
+    assert loc["value"] == "xyz.utilityhouse/agentready-woo/scan_woo_store_readiness"   # runs.tool_candidates splits it
+    assert way_runs.plan_step({"binding": {"kind": "tool", "tool": "exa"}})["locator"] == {"type": "tool", "value": "exa"}
+
+
 def test_the_notice_says_whether_the_person_is_needed():
     assert way_runs.notice([{"kind": "prompt"}, {"kind": "script"}]) == way_runs.AUTONOMOUS
     assert way_runs.notice([{"kind": "prompt"}, {"kind": "human"}]) == way_runs.NEEDS_YOU

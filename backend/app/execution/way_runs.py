@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Any, Optional
 
@@ -83,6 +84,23 @@ def _text(*values: Any) -> str:
     return next((str(v).strip() for v in values if isinstance(v, str) and v.strip()), "")
 
 
+ON_SERVER = re.compile(r"\bon ([A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)")
+
+
+def tool_locator(step: dict, b: dict, loc: dict) -> dict:
+    """A tool step's server and tool, kept apart. A submitted step names one string (a kell builtin, a server, or
+    "<server>/<tool>"); a catalog Way's binding names the tool and the server's URL, and the step's goal names the
+    server's registry name ("Use <tool> on <server>"), which is what discover_tools and use_tool take."""
+    tool = _text(b.get("tool"), b.get("name"))
+    server = _text(b.get("server") if not str(b.get("server") or "").startswith(("http://", "https://")) else "")
+    if not server and (m := ON_SERVER.search(_text(step.get("goal"), step.get("title")))):
+        server = m.group(1)
+    server = server or _text(b.get("server_url"), b.get("server"))
+    if server and tool:
+        return {"type": "tool", "value": f"{server}/{tool}", "server": server, "tool": tool}
+    return {"type": "tool", "value": _text(tool, server, loc.get("value"))}
+
+
 def plan_step(step: dict) -> dict:
     """One stored Way step -> {kind, title, prompt, description, locator, model, strict}."""
     b = step.get("binding") or {}
@@ -100,8 +118,8 @@ def plan_step(step: dict) -> dict:
         out.update(kind="script", locator={"type": "script",
                                            "value": _text((b.get("locator") or {}).get("uri"), b.get("command"),
                                                           loc.get("value"))})
-    elif b.get("kind") == "tool" or loc.get("type") == "tool":
-        out.update(kind="tool", locator={"type": "tool", "value": _text(b.get("tool"), loc.get("value"))})
+    elif b.get("kind") in ("tool", "mcp") or loc.get("type") == "tool":
+        out.update(kind="tool", locator=tool_locator(step, b, loc))
     elif b.get("kind") == "http_api" or loc.get("type") in ("url", "file"):
         kind = "file" if loc.get("type") == "file" else "url"
         out.update(kind="fetch", locator={"type": kind, "value": _text(b.get("endpoint"), loc.get("value"))})
@@ -255,9 +273,12 @@ async def your_turn(step: dict, run: dict) -> dict:
     if ctx:
         turn["earlier"] = ctx
     if step["kind"] == "tool":
-        tool = step["locator"]["value"]
-        turn["do"] = (f"Call the tool {tool} through kell: discover_tools(server=\"{tool}\") to see its tools and "
-                      f"input schemas, then use_tool(...) with the arguments this step needs"
+        loc = step["locator"]
+        server, name = loc.get("server") or loc["value"], loc.get("tool")
+        call = (f'use_tool(server="{server}", name="{name}", arguments={{...}})' if name else "use_tool(...)")
+        turn["do"] = (f"Call {'the tool ' + name + ' of ' if name else 'the tool '}{server} through kell: "
+                      f'discover_tools(server="{server}") to see its tools and input schemas, then {call} with '
+                      f"the arguments this step needs"
                       + (f": {step['prompt']}" if step["prompt"] else f" ({step['title']})")
                       + ". Report the tool's answer as the output. If the tool cannot do it, report failed=<why>; do "
                         "not do the work another way. " + SIDE_EFFECTS)
