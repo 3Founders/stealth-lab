@@ -105,7 +105,9 @@ def find(**kw):
 def test_default_is_the_full_reply_plus_the_untrusted_content_notice(tool):
     body = json.loads(find())
     notice = body.pop("content_trust")
+    run = body.pop("run")                        # a reply that chose a Way says how to run it (way_runs.with_run)
     assert body == json.loads(_reply()) and "untrusted data" in notice
+    assert run["call"]["tool"] == "run_way" and run["call"]["arguments"]["way_id"] == body["procedures"][0]["procedure_id"]
 
 
 def test_the_notice_is_only_on_replies_that_carry_contributed_text():

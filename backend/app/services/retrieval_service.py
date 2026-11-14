@@ -59,6 +59,32 @@ from app.services.shards import ShardPools, hydrate_rows, pools_for, search_pool
 
 log = logging.getLogger(__name__)
 
+
+EMBED_LOG_EVERY_S = 60.0
+_embed_failures: dict[tuple[str, str], list[float]] = {}   # (where, error type) -> [last logged at, held back since]
+
+
+def _embedding_failed(where: str, exc: BaseException, embedder: Any = None) -> None:
+    """A query embedding failed and search falls back to lexical candidates: say why in the log. The degrade reason in
+    the reply never names the error, so an exhausted provider account (OpenRouter's 402, 2026-11-12) went unseen for
+    days. One line per minute per (where, error type), with how many repeats were held back since."""
+    key = (where, type(exc).__name__)
+    now = time.monotonic()
+    last = _embed_failures.get(key)
+    if last is not None and now - last[0] < EMBED_LOG_EVERY_S:
+        last[1] += 1
+        return
+    held = int(last[1]) if last else 0
+    _embed_failures[key] = [now, 0]
+    model = ""
+    try:
+        model = embedder.embedding_model_id() if embedder is not None else ""
+    except Exception:  # noqa: BLE001 -- the log line must not fail
+        pass
+    log.warning("embedding failed in %s (%s): %s: %s -- lexical candidates only%s", where, model or "unknown model",
+                type(exc).__name__, str(exc)[:300],
+                f" ({held} more since the last line)" if held else "")
+
 MODE_JEV, MODE_MODEL, MODE_CANDIDATES = "jev", "model", "candidates_only"
 
 
@@ -534,7 +560,8 @@ async def search_goals(
             model = embedder.embedding_model_id()
             meta.embedding_model = model
             ctx.query_embedding, ctx.embedding_model = emb, model
-        except Exception:  # noqa: BLE001 -- FTS-only, flagged
+        except Exception as exc:  # noqa: BLE001 -- FTS-only, flagged
+            _embedding_failed("goal search", exc, embedder)
             meta.degrade("embedding provider unavailable: lexical candidates only")
         meta.latency_ms["embed"] = (time.monotonic() - t0) * 1000
         _stages.add("embed", meta.latency_ms["embed"])
@@ -1188,7 +1215,8 @@ async def retrieve_procedures(
         try:
             emb = await embedder.embed_one(ctx.query, input_type="query")
             model = embedder.embedding_model_id()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _embedding_failed("procedure search", exc, embedder)
             meta.degrade("embedding provider unavailable: lexical procedure candidates only")
     t0 = time.monotonic()
     with _tel.span("retrieval.procedure_search", kind="RETRIEVER", on_error=_tel.FailureCode.RETRIEVAL_ERROR) as sp:
