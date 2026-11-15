@@ -1,9 +1,12 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   runnable, STATUS_LABEL, type Run, type RunRow, type StepIn, type Submission, type SubmissionRow, type SubmissionsApi,
 } from "@/lib/submissions-api";
 import "./submit.css";
+
+// The step-swap animation only exists in a browser; useLayoutEffect warns during the server render, so the server takes useEffect.
+const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 /**
  * Submit a Way (docs/goal_submission.md): the goal, then its steps in order, each done by a person or automated. The mode it is filed
@@ -13,7 +16,13 @@ import "./submit.css";
  */
 type View = { kind: "new" } | { kind: "list" } | { kind: "one"; id: string } | { kind: "runs" } | { kind: "run"; id: string };
 
-const blank = (kind: StepIn["kind"] = "automated"): StepIn => ({ kind, title: "", description: "", prompt: "", locator: "" });
+/** A step in the form, with a key of its own so React can move the card itself when ↑/↓ swap two steps (and animate it). The key is
+ *  local: cleanStep drops it before anything is sent. */
+type DraftStep = StepIn & { id: string };
+
+let seq = 0;
+const newStepId = () => `step-${Date.now().toString(36)}-${++seq}`;
+const blank = (kind: StepIn["kind"] = "automated"): DraftStep => ({ id: newStepId(), kind, title: "", description: "", prompt: "", locator: "" });
 const DRAFT_KEY = "kell:submit-draft";
 
 export default function SubmitWay({ api, compact = false, initial }: { api: SubmissionsApi; compact?: boolean; initial?: string }) {
@@ -39,16 +48,23 @@ export default function SubmitWay({ api, compact = false, initial }: { api: Subm
 function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => void }) {
   const [goal, setGoal] = useState("");
   const [description, setDescription] = useState("");
-  const [steps, setSteps] = useState<StepIn[]>([blank("human"), blank()]);
+  const [steps, setSteps] = useState<DraftStep[]>(() => [blank("human"), blank()]);
   const [mode, setMode] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const listRef = useRef<HTMLOListElement>(null);
+  // The tops of the cards just before a ↑/↓ swap, by step id. After the render moves the cards, the layout effect plays each one from its
+  // old place to its new one (a FLIP), so the two steps visibly trade places instead of the text changing in place.
+  const pendingFlip = useRef<Map<string, number> | null>(null);
 
   // a draft survives a reload (this device only)
   useEffect(() => {
     try {
       const d = JSON.parse(window.localStorage.getItem(DRAFT_KEY) || "null");
-      if (d && typeof d.goal === "string" && Array.isArray(d.steps) && d.steps.length) { setGoal(d.goal); setDescription(d.description || ""); setSteps(d.steps); }
+      if (d && typeof d.goal === "string" && Array.isArray(d.steps) && d.steps.length) {
+        setGoal(d.goal); setDescription(d.description || "");
+        setSteps((d.steps as StepIn[]).map((s) => ({ ...s, id: newStepId() })));
+      }
     } catch { /* storage blocked */ }
   }, []);
   useEffect(() => {
@@ -65,12 +81,41 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
     return () => window.clearTimeout(t);
   }, [api, goal, description, JSON.stringify(usable)]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const put = (i: number, s: StepIn) => setSteps((all) => all.map((x, j) => (j === i ? s : x)));
-  const move = (i: number, by: number) => setSteps((all) => {
+  const put = (i: number, s: StepIn) => setSteps((all) => all.map((x, j) => (j === i ? { ...s, id: x.id } : x)));
+  const move = (i: number, by: number) => {
     const j = i + by;
-    if (j < 0 || j >= all.length) return all;
-    const next = [...all]; [next[i], next[j]] = [next[j], next[i]]; return next;
-  });
+    if (j < 0 || j >= steps.length) return;
+    const list = listRef.current;
+    if (list) {
+      const tops = new Map<string, number>();
+      steps.forEach((s, k) => {
+        const el = list.children[k] as HTMLElement | undefined;
+        if (el) tops.set(s.id, el.offsetTop);
+      });
+      pendingFlip.current = tops;
+    }
+    setSteps((all) => { const next = [...all]; [next[i], next[j]] = [next[j], next[i]]; return next; });
+  };
+  // FLIP: after the swap has moved the two cards, start each at its old top and let the card's own transition carry it to the new one.
+  useIsoLayoutEffect(() => {
+    const tops = pendingFlip.current;
+    if (!tops) return;
+    pendingFlip.current = null;
+    const list = listRef.current;
+    if (!list) return;
+    steps.forEach((s, k) => {
+      const el = list.children[k] as HTMLElement | undefined;
+      const before = tops.get(s.id);
+      if (!el || before === undefined) return;
+      const dy = before - el.offsetTop;
+      if (!dy) return;
+      el.style.transition = "none";
+      el.style.transform = `translateY(${dy}px)`;
+      void el.offsetHeight;
+      el.style.transition = "";
+      el.style.transform = "";
+    });
+  }, [steps]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,9 +142,9 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
         <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="One or two sentences" />
       </label>
 
-      <ol className="sw-steps">
+      <ol className="sw-steps" ref={listRef}>
         {steps.map((s, i) => (
-          <li key={i} className="sw-step">
+          <li key={s.id} className="sw-step">
             <StepEditor step={s} n={i + 1} onChange={(x) => put(i, x)} />
             <div className="sw-step-tools">
               <button type="button" aria-label={`Move step ${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
@@ -114,10 +159,10 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
         <button type="button" className="btn-line sw-btn" onClick={() => setSteps((all) => [...all, blank()])}>+ An automated step</button>
       </div>
 
-      {mode && <p className="sw-mode" role="status">{mode}</p>}
-      {error && <p className="sw-error" role="alert">{error}</p>}
+      {mode && <p className="sw-mode" role="status" key={mode}>{mode}</p>}
+      {error && <p className="sw-error" role="alert" key={error}>{error}</p>}
       <div className="sw-row">
-        <button type="submit" className="btn-ink sw-btn" disabled={sending}><span>{sending ? "Submitting… kell is reviewing each step" : "Submit for review"}</span></button>
+        <button type="submit" className="btn-ink sw-btn" disabled={sending} data-busy={sending || undefined}><span>{sending ? "Submitting… kell is reviewing each step" : "Submit for review"}</span></button>
       </div>
       <p className="sw-dim">Each step becomes its own reusable goal. kell's AI reviewer checks every step; approved steps go into search marked “AI approved”, and a rejected step comes back with the reason so you fix just that one.</p>
     </form>
@@ -183,7 +228,7 @@ function Mine({ api, onOpen }: { api: SubmissionsApi; onOpen: (id: string) => vo
         <li key={r.id}>
           <button type="button" onClick={() => onOpen(r.id)}>
             <span className="sw-name">{r.goal_name}</span>
-            <span className="sw-pill" data-status={r.status}>{STATUS_LABEL[r.status]}</span>
+            <span className="sw-pill" data-status={r.status} key={r.status}>{STATUS_LABEL[r.status]}</span>
             <span className="sw-dim">{r.steps} step{r.steps === 1 ? "" : "s"}{r.rejected ? ` · ${r.rejected} to fix` : ""} · {new Date(r.created_at).toLocaleDateString()}</span>
           </button>
         </li>
@@ -225,7 +270,7 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
     <div className="sw-one">
       <div className="sw-one-head">
         <h3>{sub.goal_name}</h3>
-        <span className="sw-pill" data-status={sub.status}>{STATUS_LABEL[sub.status]}</span>
+        <span className="sw-pill" data-status={sub.status} key={sub.status}>{STATUS_LABEL[sub.status]}</span>
         <span className="sw-dim">{sub.mode_label}</span>
       </div>
       {sub.description && <p className="sw-dim">{sub.description}</p>}
@@ -235,7 +280,7 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
             <div className="sw-step-body">
               <div className="sw-step-head">
                 <b>Step {s.order}: {s.title}</b>
-                <span className="sw-pill" data-status={s.status}>{STATUS_LABEL[s.status]}</span>
+                <span className="sw-pill" data-status={s.status} key={s.status}>{STATUS_LABEL[s.status]}</span>
               </div>
               <p className="sw-dim">{s.kind === "human" ? `A person: ${s.description}` : s.prompt}</p>
               {s.kind !== "human" && s.locator?.value && <LocatorLine locator={s.locator} />}
@@ -246,7 +291,7 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
                   <StepEditor step={fixing.step} n={s.order} onChange={(x) => setFixing({ order: s.order, step: x })} />
                   {s.status !== "rejected" && <p className="sw-dim">kell reviews the change; once it passes, the Way gets its next version and runs use it.</p>}
                   <div className="sw-row">
-                    <button type="button" className="btn-ink sw-btn" disabled={busy} onClick={() => void fix()}><span>{busy ? "Reviewing…" : "Send the fix"}</span></button>
+                    <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={() => void fix()}><span>{busy ? "Reviewing…" : "Send the fix"}</span></button>
                     <button type="button" className="btn-line sw-btn" onClick={() => setFixing(null)}>Cancel</button>
                   </div>
                 </div>
@@ -259,7 +304,7 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
           </li>
         ))}
       </ol>
-      {error && <p className="sw-error" role="alert">{error}</p>}
+      {error && <p className="sw-error" role="alert" key={error}>{error}</p>}
       {runnable(sub) && <RunBox api={api} id={sub.id} />}
     </div>
   );
@@ -297,12 +342,12 @@ function RunBox({ api, id }: { api: SubmissionsApi; id: string }) {
       {!run || run.status === "done" || run.status === "failed" ? (
         <div className="sw-row">
           <input aria-label="What to run it on" value={input} onChange={(e) => setInput(e.target.value)} placeholder="What to run it on (optional), e.g. diffusion transformers" />
-          <button type="button" className="btn-ink sw-btn" disabled={busy} onClick={() => void go(() => api.run(id, input))}><span>{busy ? "Running…" : run ? "Run again" : "Run"}</span></button>
+          <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={() => void go(() => api.run(id, input))}><span>{busy ? "Running…" : run ? "Run again" : "Run"}</span></button>
         </div>
       ) : null}
       {run && <RunOut run={run} note={note} setNote={setNote} busy={busy}
         onDone={() => void go(async () => { const r = await api.done(run.id, note); setNote(""); return r; })} />}
-      {error && <p className="sw-error" role="alert">{error}</p>}
+      {error && <p className="sw-error" role="alert" key={error}>{error}</p>}
     </section>
   );
 }
@@ -326,7 +371,7 @@ function RunOut({ run, note, setNote, busy, onDone }: {
             ? <p>Sign in to the tool first: <a href={run.waiting_on.link} target="_blank" rel="noopener noreferrer">open the sign-in</a>, then mark it done.</p>
             : <p>{run.waiting_on.description}</p>}
           <textarea rows={2} aria-label="What you did or found" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What you did or found (passed to the next steps)" />
-          <button type="button" className="btn-ink sw-btn" disabled={busy} onClick={onDone}><span>{busy ? "Continuing…" : "Done, continue"}</span></button>
+          <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={onDone}><span>{busy ? "Continuing…" : "Done, continue"}</span></button>
         </div>
       )}
       {run.status === "waiting_session" && (
@@ -402,7 +447,7 @@ function OneRun({ api, id, onBack }: { api: SubmissionsApi; id: string; onBack: 
       {!run && !error && <p className="sw-dim">Loading…</p>}
       {run && <RunOut run={run} note={note} setNote={setNote} busy={busy}
         onDone={() => void go(async () => { const r = await api.done(run.id, note); setNote(""); return r; })} />}
-      {error && <p className="sw-error" role="alert">{error}</p>}
+      {error && <p className="sw-error" role="alert" key={error}>{error}</p>}
     </section>
   );
 }
