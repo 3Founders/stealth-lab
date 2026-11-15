@@ -225,3 +225,12 @@ Today nobody outside can download or use the app. In this order:
   and `security_pentest` rankings. Do it with the live call.
 - **Desktop release v0.1.9.** Ships fork, the desktop worker for rooms (lib/remote.ts) and the Submit a Way / My
   desktop sessions commands. Each release needs the owner's go.
+
+## 2026-11-15, submissions
+
+- **Rejection email is not set up.** A rejected step's reason shows only on the page and in the API reply; no email
+  goes out, because production has no Resend key or sending address. The Submit a Way form (website `/submit`, the
+  rooms panel, the desktop) still says the reason comes back "by email too". Needs: a Resend account and a verified
+  sender domain, then `RESEND_API_KEY` (and the sender) on the Railway `kell-mcp` service (a secret write: Anuj or
+  Chaitanya). Until then, drop "(by email too)" from `routing_kell_frontend/components/submit/SubmitWay.tsx`.
+  Detail: [goal_submission.md](goal_submission.md).
