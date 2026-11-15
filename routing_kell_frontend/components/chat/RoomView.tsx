@@ -407,6 +407,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
    *  A task is routed first: when the Goal catalog offers a Way, the chat shows the cards and nothing runs until one is picked. */
   const askKell = useCallback(async (r: string, text: string, who: string = "@kell", opts?: { skipRoute?: boolean }) => {
     if (pausedRef.current) { note("Agents are paused. Resume them from the menu to get an answer.", r); return; }
+    const key = `${r}|${who}`;
+    if (askingKell.current.has(key)) {                 // still answering: keep what was sent and ask once it has finished
+      queues.current = enqueue(queues.current, key, text);
+      setQueueView(queues.current);
+      return;
+    }
     const temp = tempRef.current.has(r);
     const known = () => engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
     // The choice, before the agent starts: the same catalog answer the desktop's picker reads. A message with no Way (or
@@ -422,12 +428,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           }
         } catch { /* best effort: the agent answers as before */ }
       }
-    }
-    const key = `${r}|${who}`;
-    if (askingKell.current.has(key)) {                 // still answering: keep what was sent and ask once it has finished
-      queues.current = enqueue(queues.current, key, text);
-      setQueueView(queues.current);
-      return;
     }
     askingKell.current.add(key);
     if (who === "@kell") setKellBusy((p) => ({ ...p, [r]: true }));
