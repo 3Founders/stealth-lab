@@ -141,16 +141,15 @@ async def submit(pool: Any, owner_id: str, sub: Submission) -> dict:
 
 
 async def replace_step(pool: Any, submission_id: str, owner_id: str, order: int, step: Step) -> dict:
-    """The submitter fixes one step: its old Way is retired, a new one written, and the step goes back to review.
-    Steps already approved are left alone."""
+    """The submitter changes one step, rejected or approved: its old Way is retired, a new one written, and the step
+    goes back to review. The other steps are left alone. The whole Way gets its new version when the review passes
+    (review.settle), or leaves retrieval if it fails."""
     row = await pool.fetchrow(
         """SELECT s.id, s.status, s.procedure_row_id::text AS procedure_row_id, s.revision, s.goal_id::text AS goal_id
            FROM goal_submission_steps s JOIN goal_submissions g ON g.id = s.submission_id
            WHERE s.submission_id = $1::uuid AND s.step_order = $2 AND g.owner_id = $3""", submission_id, order, owner_id)
     if row is None:
         raise SubmissionError(f"no step {order} in a submission of yours with that id")
-    if row["status"] in ("ai_approved", "approved"):
-        raise SubmissionError(f"step {order} is already approved; only a rejected or waiting step can be changed")
     step.order = order
     way = await write_step_way(pool, submission_id, step, owner_id=owner_id)
     async with pool.acquire() as conn, conn.transaction():

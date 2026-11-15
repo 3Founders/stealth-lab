@@ -304,11 +304,8 @@ async def _steps(pool: Any, submission_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def _write_parent(pool: Any, sub: dict, steps: list[dict]) -> Optional[str]:
-    """Every step passed: the submission's goal gets the whole Way, its steps pointing at the child Ways."""
-    from app.services.goals import normalize_goal_name
-    from app.services.procedures import capture_procedure
-
+async def _refs(pool: Any, sub: dict, steps: list[dict]) -> list[dict]:
+    """The whole Way's steps: each points at its step's own Way."""
     refs = []
     for s in steps:
         row = await pool.fetchrow("SELECT procedure_id, version FROM procedures WHERE id = $1::uuid", s["procedure_row_id"])
@@ -316,6 +313,35 @@ async def _write_parent(pool: Any, sub: dict, steps: list[dict]) -> Optional[str
                      "subprocedure_ref": {"procedure_id": str(row["procedure_id"]), "version": int(row["version"])},
                      "source_locator": {"source_id": f"goal_submission:{sub['id']}", "anchor": f"step-{s['order']}",
                                         "granularity": "section"}})
+    return refs
+
+
+def _same_steps(old: Any, new: list[dict]) -> bool:
+    old = json.loads(old) if isinstance(old, str) else (old or [])
+    key = lambda steps: [(s.get("title"), s.get("actor"), s.get("subprocedure_ref")) for s in steps]  # noqa: E731
+    return key(old) == key(new)
+
+
+async def _new_version(pool: Any, sub: dict, steps: list[dict], parent: str, status: str) -> str:
+    """An approved step was changed and passed review again: the whole Way gets its next version (same procedure_id,
+    so links and rankings stay), pointing at the step's new Way. Nothing changed: the same row."""
+    from app.services.procedures import supersede_procedure
+
+    refs = await _refs(pool, sub, steps)
+    if _same_steps(await pool.fetchval("SELECT steps FROM procedures WHERE id = $1::uuid", parent), refs):
+        return parent
+    out = await supersede_procedure(
+        pool, prior_row_id=parent, superseded_by="goal_submission", reason="a step of the submission was changed",
+        changed_fields={"steps": refs, "approval_status": "approved" if status == "approved" else "ai_approved"})
+    return str(out["id"]) if out else parent
+
+
+async def _write_parent(pool: Any, sub: dict, steps: list[dict]) -> Optional[str]:
+    """Every step passed: the submission's goal gets the whole Way, its steps pointing at the child Ways."""
+    from app.services.goals import normalize_goal_name
+    from app.services.procedures import capture_procedure
+
+    refs = await _refs(pool, sub, steps)
     goal = {"id": sub["goal_id"], "canonical_name": sub["goal_name"],
             "home_shard_id": await pool.fetchval("SELECT home_shard_id FROM goals WHERE id = $1::uuid", sub["goal_id"])}
     mode = store._judge_mode()
@@ -357,8 +383,14 @@ async def settle(pool: Any, submission_id: str, *, notify: bool = True) -> dict:
         parent = await _write_parent(pool, sub, steps)
         if status == "approved":
             await pool.execute("UPDATE procedures SET approval_status = 'approved' WHERE id = $1::uuid", parent)
-    elif status == "approved" and parent:
-        await pool.execute("UPDATE procedures SET approval_status = 'approved' WHERE id = $1::uuid", parent)
+    elif status in ("ai_approved", "approved") and parent:
+        parent = await _new_version(pool, sub, steps, parent, status)      # a changed step: the Way's next version
+        if status == "approved":
+            await pool.execute("UPDATE procedures SET approval_status = 'approved' WHERE id = $1::uuid", parent)
+    elif status == "needs_changes" and parent:           # a changed step failed review: the Way no longer stands
+        await pool.execute("UPDATE procedures SET availability = 'quarantined', t_invalid = now() "
+                           "WHERE id = $1::uuid", parent)
+        parent = None
     await pool.execute("UPDATE goal_submissions SET status = $2, parent_procedure_id = $3::uuid, updated_at = now() "
                        "WHERE id = $1::uuid", submission_id, status, parent)
     emailed = False

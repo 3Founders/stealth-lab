@@ -5502,7 +5502,8 @@ async def submit_goal(ctx: Context, goal: str = "", steps: list[dict] | None = N
     Ways go into kell's rankings marked "AI approved", a rejected step comes back with its reason (and by email).
 
     submission_id alone: that submission's state, step by step. submission_id + fix_step=<n> + step={...}: replace a
-    rejected step and review it again (approved steps stay). No arguments: your submissions.
+    step, rejected or approved, and review it again (the other steps stay); once it passes, the whole Way gets its next
+    version. No arguments: your submissions.
     """
     from app.submissions import api as _sub_api
 

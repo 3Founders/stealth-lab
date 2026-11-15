@@ -166,6 +166,40 @@ async def test_a_person_rejecting_a_step_takes_the_way_out_of_retrieval(pool, fa
 
 
 @pytest.mark.asyncio
+async def test_changing_an_approved_step_gives_the_way_its_next_version(pool, fakes):
+    owner = f"test-{uuid.uuid4().hex[:8]}"
+    out = await api.submit(pool, owner, {"goal": f"survey papers {uuid.uuid4().hex[:6]}", "steps": [
+        {"prompt": "Search for papers on the topic", "locator": "https://api.openalex.org/works"},
+        {"prompt": "Summarise each paper in two lines"}]})
+    assert out["status"] == "ai_approved"
+    v1 = out["parent_procedure_id"]
+    old_step = out["steps"][0]["procedure_row_id"]
+    v1_row = await pool.fetchrow("SELECT procedure_id::text AS pid, version FROM procedures WHERE id = $1::uuid", v1)
+
+    fixed = await api.fix_step(pool, owner, out["id"], 1, {"prompt": "Search OpenAlex with the topic as the query"})
+    assert fixed["status"] == "ai_approved" and fixed["steps"][0]["revision"] == 2
+    assert fixed["steps"][0]["locator"] is None
+    v2 = fixed["parent_procedure_id"]
+    assert v2 != v1
+    v2_row = await pool.fetchrow("SELECT procedure_id::text AS pid, version, approval_status, steps "
+                                 "FROM procedures WHERE id = $1::uuid", v2)
+    assert (v2_row["pid"], v2_row["version"]) == (v1_row["pid"], v1_row["version"] + 1)   # same Way, next version
+    assert v2_row["approval_status"] == "ai_approved"
+    assert await _retrievable(pool, v2)
+    assert not await _retrievable(pool, v1) and not await _retrievable(pool, old_step)
+    new_step = await pool.fetchrow("SELECT procedure_id::text AS pid, version FROM procedures WHERE id = $1::uuid",
+                                   fixed["steps"][0]["procedure_row_id"])
+    assert v2_row["steps"][0]["subprocedure_ref"] == {"procedure_id": new_step["pid"], "version": new_step["version"]}
+    run = await api.start_run(pool, owner, out["id"], "LLM judges")       # the new version runs
+    assert run["status"] == "done"
+
+    # a change that fails review takes the whole Way out of retrieval until it is fixed
+    bad = await api.fix_step(pool, owner, out["id"], 2, {"prompt": "VAGUE summarise"})
+    assert bad["status"] == "needs_changes" and bad["parent_procedure_id"] is None
+    assert not await _retrievable(pool, v2)
+
+
+@pytest.mark.asyncio
 async def test_reviewer_down_decides_nothing(pool, fakes, monkeypatch):
     async def down(*a, **k):
         raise RuntimeError("no reviewer model answered")

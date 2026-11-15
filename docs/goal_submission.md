@@ -21,7 +21,9 @@ by a **person** ("search 'xyz' on abc.com and copy the top 5 links") or **automa
 script / website / file / tool, or both). Every step is also stored as **its own goal with its own one-step Way**, so
 kell grows granular, reusable pieces. An AI reviewer approves or rejects **each step**; approved Ways enter retrieval
 and the rankings marked **"AI approved"**; a rejected step is emailed back to the submitter with the reason, and they
-fix just that step.
+fix just that step. A submitter can also change an approved step: it is reviewed again, and when it passes the whole
+Way gets its next version (same procedure id, so links and rankings stay); if it fails, the Way leaves retrieval until
+the step is fixed.
 
 ## What a person submits
 
