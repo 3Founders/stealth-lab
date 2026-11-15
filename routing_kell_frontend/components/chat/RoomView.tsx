@@ -990,8 +990,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                       </span>
                       {i === 0 && l.ways.length > 1 ? <span className="dg-way-best">Best fit</span> : null}
                       {picked ? (
-                        <span className="dg-way-actions" role="status" aria-live="polite">
-                          <span className="dg-way-run">
+                        <span className="dg-way-actions">
+                          <span className="dg-way-run" role="status" aria-live="polite">
                             {st.error ? "Stopped"
                               : st.done ? "Done"
                                 : st.waiting ? "Waiting for you"
