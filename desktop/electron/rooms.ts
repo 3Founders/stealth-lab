@@ -99,6 +99,13 @@ function ensureView(win: BrowserWindow): WebContentsView {
   })
   wc.on("did-navigate", (_e, url) => { if (url.startsWith("http") && !staysInView(url)) void wc.loadURL(`${SITE}/chat`) })
   wc.on("devtools-opened", () => wc.closeDevTools())
+  // A load that fails (no network after the computer slept, a dropped connection) leaves the view on Chromium's error page
+  // for good: the Rooms tab then said "Checking your sign-in…" forever and the coding lane's model calls lost the website
+  // session (2026-11-15). Retry the chat a few seconds later, for as long as it keeps failing.
+  wc.on("did-fail-load", (_e, code, _desc, _url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return               // -3: aborted by a newer navigation, not a failure
+    setTimeout(() => { if (!wc.isDestroyed() && !wc.isLoading()) void wc.loadURL(`${SITE}/chat`).catch(() => undefined) }, 5_000)
+  })
   wc.setWindowOpenHandler(({ url }) => {
     if (route(url) === "stay") void wc.loadURL(url)
     return { action: "deny" }
@@ -123,6 +130,15 @@ export function setRoomsBounds(win: BrowserWindow, rect: Rect | null) {
   const v = ensureView(win)
   v.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)) })
   v.setVisible(true)
+}
+
+let lastRevive = 0
+/** The view is idle on a page that is not the site (a failed load's error page): load the chat again, at most every 10 s. */
+function reviveView() {
+  if (!view || view.webContents.isDestroyed() || view.webContents.isLoading()) return
+  if (Date.now() - lastRevive < 10_000) return
+  lastRevive = Date.now()
+  void view.webContents.loadURL(`${SITE}/chat`).catch(() => undefined)
 }
 
 export function reloadRooms() {
@@ -166,6 +182,7 @@ export async function roomsAccessToken(win: BrowserWindow | undefined): Promise<
     wc.once("did-finish-load", () => ok()); setTimeout(ok, 15_000)
   })
   const read = async (): Promise<{ token: string; exp: number } | null> => {
+    if (!wc.isLoading() && !wc.getURL().startsWith(SITE)) reviveView()
     await loaded()
     try {
       return await wc.executeJavaScript(`(() => {
@@ -204,7 +221,9 @@ export async function roomsAccount(win?: BrowserWindow): Promise<{ id: string; e
   }
   if (!view || view.webContents.isDestroyed()) return undefined
   // Not known yet while the site is still loading (a blank page has no session to read): undefined, not "signed out".
-  if (view.webContents.isLoading() || !view.webContents.getURL().startsWith(SITE)) return undefined
+  // A view that stopped somewhere else (an error page from an earlier failed load) is sent back to the chat.
+  if (view.webContents.isLoading()) return undefined
+  if (!view.webContents.getURL().startsWith(SITE)) { reviveView(); return undefined }
   try {
     return await view.webContents.executeJavaScript(`(() => {
       for (let i = 0; i < localStorage.length; i++) {
