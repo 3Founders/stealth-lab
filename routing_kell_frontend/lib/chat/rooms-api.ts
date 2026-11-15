@@ -95,6 +95,58 @@ export function roomsApi(deps: RoomsDeps) {
     /** A thumbs up (1), down (-1) or neither (0) on one of the agent's answers: it moves the tools that answer used in the ranking. */
     vote: (id: string, event: string, vote: -1 | 0 | 1) => call<{ recorded: boolean; vote?: number }>("POST", `/${e(id)}/agent/vote`, { event, vote }),
     agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent?: string[]; sign_in?: string[] }>("POST", `/${e(id)}/agent`, { text }),
+    /** Which Ways fit this message (the Goal catalog, the same answer as the desktop picker). An empty list means the
+     *  message goes to the agent as before; a Way means the chat shows the cards and the agent waits for a pick. */
+    route: (id: string, text: string) =>
+      call<{ goal: { id: string; name: string } | null; ways: WayChoice[] }>("POST", `/${e(id)}/route`, { text }),
+    /** Run the Way the person picked, headless, and post its result into the room. `onEvent` hears each step start and
+     *  end (`step`), the run ending (`run`), the result being posted (`posted`) and a failure (`error`). */
+    runWay: async (
+      id: string, wayId: string, text: string,
+      onEvent: (ev: WayRunEvent) => void, signal?: AbortSignal,
+    ): Promise<{ posted: boolean; text: string; event: { id: string; seq: number } | null; view: WayRunView | null }> => {
+      const token = await deps.token();
+      if (!token) throw new RoomsApiError("Sign in again to sync your rooms.", 401);
+      let res: Response;
+      try {
+        res = await doFetch(`${base}/v1/rooms/${e(id)}/way`, {
+          method: "POST", signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "text/event-stream" },
+          body: JSON.stringify({ way_id: wayId, text }),
+        });
+      } catch (err) {
+        if ((err as { name?: string })?.name === "AbortError") throw err;
+        throw new RoomsApiError("Couldn't reach the keळ server.");
+      }
+      if (!res.ok || !res.body) {
+        let json: unknown = null;
+        try { json = await res.json(); } catch { /* no body */ }
+        const msg = (json as { error?: unknown } | null)?.error;
+        throw new RoomsApiError(typeof msg === "string" && msg ? msg : `The server answered ${res.status}.`, res.status);
+      }
+      let final: { posted: boolean; text: string; event: { id: string; seq: number } | null; view: WayRunView | null } | null = null;
+      let failure: RoomsApiError | null = null;
+      await readSse(res.body, (event) => {
+        const o = event as Record<string, unknown>;
+        const kind = String(o.event ?? "");
+        if (kind === "step") {
+          onEvent({ type: "step", status: String(o.status ?? "running"), order: Number(o.order ?? 0), of: Number(o.of ?? 0),
+                    title: String(o.title ?? ""), output: typeof o.output === "string" ? o.output : undefined,
+                    error: typeof o.error === "string" ? o.error : undefined });
+        } else if (kind === "done") {
+          onEvent({ type: "run", status: String(o.status ?? ""), view: o as unknown as WayRunView });
+        } else if (kind === "posted") {
+          final = { posted: Boolean(o.event_row), text: String(o.text ?? ""),
+                    event: (o.event_row as { id: string; seq: number } | null) ?? null,
+                    view: (o.view as WayRunView | null) ?? null };
+        } else if (kind === "error" && typeof o.error === "string" && o.error) {
+          failure = new RoomsApiError(o.error);
+        }
+      });
+      if (failure) throw failure;
+      if (!final) throw new RoomsApiError("The run ended before its result was posted.");
+      return final;
+    },
     /** A fresh sign-in link for one tool (links last 10 minutes). {link} to open, or {signedIn: true} when no sign-in is needed any more. */
     toolSignIn: async (server: string): Promise<{ link?: string; signedIn?: boolean }> => {
       const token = await deps.token();
@@ -185,6 +237,24 @@ export type RoomsApi = ReturnType<typeof roomsApi>;
 export type ToolSignIn = {
   server: string; link: string; title?: string; description?: string; uses?: number; icon?: string
 };
+
+/** One Way the router offered for a room message (the same shape as the desktop's picker cards). */
+export type WayChoice = {
+  id: string; name: string; approval: string; review?: string; why?: string; tool?: string;
+  steps: Array<{ order: number; title: string; kind?: string }>;
+};
+
+/** A Way run as the executor reports it (app/execution/way_runs.py's `view`). */
+export type WayRunView = {
+  run_id?: string; status?: string; step?: number; of?: number; error?: string | null; result?: string;
+  steps?: Array<{ n: number; title: string; by?: string }>;
+  waiting_on?: { order?: number; title?: string; description?: string } | null;
+};
+
+/** A progress frame from `runWay`. */
+export type WayRunEvent =
+  | { type: "step"; status: string; order: number; of: number; title: string; output?: string; error?: string }
+  | { type: "run"; status: string; view: WayRunView };
 
 function toSignIn(v: unknown): ToolSignIn | null {
   const o = v as { server?: unknown; link?: unknown; title?: unknown; description?: unknown; uses?: unknown; icon?: unknown } | null;

@@ -31,7 +31,7 @@ import { describeBacking, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
 import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask, relayKey } from "@/lib/chat/relay-client";
 import { DEFAULT_ROOM, freeRoomName, newRoomName, readAgents, readInstructions, readPresets, readRooms, withoutRoom, writeAgents, writeInstructions, writePresets, writeRooms, type RoomList } from "@/lib/chat/rooms";
-import { RoomsApiError, roomsApi, toolLabel, type RoomMember, type ToolSignIn } from "@/lib/chat/rooms-api";
+import { RoomsApiError, roomsApi, toolLabel, type RoomMember, type ToolSignIn, type WayChoice } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
 import { memoryApi } from "@/lib/chat/memory-api";
@@ -77,7 +77,14 @@ const STATUS: Record<RelayTask["status"], string> = {
 // A notice with `signIns` is the tools that asked for your sign-in, shown to you only: one button per tool, each opening its sign-in in
 // a small window, not a raw link. `done` marks one you finished.
 type SignInItem = ToolSignIn & { done?: boolean };
-type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number; signIns?: SignInItem[] };
+// The Ways the router offered for a task, shown in the chat: kell waits until one is picked (or the person runs
+// without one). `state` is the live run: which step is going, the run ending, or a failure.
+type WayLine = {
+  kind: "ways"; id: string; text: string; t: number;
+  goal: { id: string; name: string } | null; ways: WayChoice[];
+  state?: { picked?: string; running?: boolean; step?: number; of?: number; title?: string; done?: boolean; error?: string };
+};
+type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number; signIns?: SignInItem[] } | WayLine;
 
 /** A notice's text with any http(s) link made clickable: the sign-in and consent links are meant to be opened. */
 function withLinks(text: string) {
@@ -95,6 +102,12 @@ const signInInitial = (x: ToolSignIn) => signInTitle(x).trim().slice(0, 1).toUpp
 const signInHue = (x: ToolSignIn) => {
   let h = 0;
   for (const ch of `${x.server}${x.title || ""}`) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+};
+/** A stable hue per Way, so each procedure's tile is its own colour without an image (the sign-in card's recipe). */
+const wayHue = (name: string) => {
+  let h = 0;
+  for (const ch of name || "way") h = (h * 31 + ch.charCodeAt(0)) % 360;
   return h;
 };
 
@@ -325,7 +338,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     el.classList.remove("dg-flash"); void el.offsetWidth; el.classList.add("dg-flash");
     window.setTimeout(() => el.classList.remove("dg-flash"), 1600);
   }, []);
-  const askKellRef = useRef<((r: string, text: string, who?: string) => Promise<void>) | null>(null);
+  const askKellRef = useRef<((r: string, text: string, who?: string, opts?: { skipRoute?: boolean }) => Promise<void>) | null>(null);
   /** The request that hit a sign-in wall: run it again by itself when the person comes back from signing in. */
   const signInRetry = useRef<{ room: string; text: string; who: string } | null>(null);
   /** The sign-in card of the newest request (room and line id), and the sign-in the person opened last. */
@@ -388,9 +401,26 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       note("Asked the agent again.", r);
     } catch (err) { note(err instanceof Error ? err.message : "That didn't send.", r); }
   }, [api, note]);
-  /** Asks an agent to answer in this room. Every agent is kell: "@kell" is the default one, any other handle is an instance of it. */
-  const askKell = useCallback(async (r: string, text: string, who: string = "@kell") => {
+  /** Asks an agent to answer in this room. Every agent is kell: "@kell" is the default one, any other handle is an instance of it.
+   *  A task is routed first: when the Goal catalog offers a Way, the chat shows the cards and nothing runs until one is picked. */
+  const askKell = useCallback(async (r: string, text: string, who: string = "@kell", opts?: { skipRoute?: boolean }) => {
     if (pausedRef.current) { note("Agents are paused. Resume them from the menu to get an answer.", r); return; }
+    const temp = tempRef.current.has(r);
+    const known = () => engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
+    // The choice, before the agent starts: the same catalog answer the desktop's picker reads. A message with no Way (or
+    // small talk, or a canvas edit) goes to the agent exactly as before; routing trouble never blocks an answer.
+    if (!opts?.skipRoute && who === "@kell" && !temp && !canvasOpenRef.current) {
+      const rid = known();
+      if (rid) {
+        try {
+          const routed = await roomsAgent.route(rid, text);
+          if (routed.ways.length) {
+            push(r, { kind: "ways", id: crypto.randomUUID(), text, t: Date.now(), goal: routed.goal, ways: routed.ways });
+            return;
+          }
+        } catch { /* best effort: the agent answers as before */ }
+      }
+    }
     const key = `${r}|${who}`;
     if (askingKell.current.has(key)) {                 // still answering: keep what was sent and ask once it has finished
       queues.current = enqueue(queues.current, key, text);
@@ -399,8 +429,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
     askingKell.current.add(key);
     if (who === "@kell") setKellBusy((p) => ({ ...p, [r]: true }));
-    const temp = tempRef.current.has(r);
-    const known = () => engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
     const done = () => { askingKell.current.delete(key); if (who === "@kell") setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; }); };
     // A room made a moment ago may not have reached the server yet: wait for it (up to 20 s) instead of dropping the first message, which is the one
     // everybody sends. The sync engine is asked to hurry; the question goes out as soon as the room has its id.
@@ -462,6 +490,47 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
   }, [roomsAgent, note, push, broker, addSignIns]);
   askKellRef.current = askKell;
+
+  /** Replace one Way card's live state in place (which step is going, done, failed), without touching the message stream. */
+  const setWayState = useCallback((r: string, id: string, patch: Partial<NonNullable<WayLine["state"]>>) => {
+    const cur = lineStore.current[r] ?? [];
+    lineStore.current = {
+      ...lineStore.current,
+      [r]: cur.map((l) => (l.kind === "ways" && l.id === id ? { ...l, state: { ...l.state, ...patch } } : l)),
+    };
+    bump((n) => n + 1);
+  }, []);
+
+  /** The person picked a Way: run it headless and post the result into the room. The card becomes the run's progress. */
+  const pickWay = useCallback(async (r: string, line: WayLine, way: WayChoice) => {
+    const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
+    if (!id) { note("This room is still syncing. Pick again in a moment.", r); return; }
+    setWayState(r, line.id, { picked: way.id, running: true, step: 0, of: way.steps.length,
+      title: way.steps[0]?.title || "", done: false, error: undefined });
+    try {
+      const out = await roomsAgent.runWay(id, way.id, line.text, (ev) => {
+        if (ev.type === "step") {
+          setWayState(r, line.id, { running: ev.status !== "done" && ev.status !== "failed", step: ev.order, of: ev.of,
+            title: ev.title, ...(ev.error ? { error: ev.error } : {}) });
+        } else if (ev.type === "run") {
+          setWayState(r, line.id, { running: false, done: ev.status === "done",
+            ...(ev.status === "failed" ? { error: ev.view?.error || "The run failed." } : {}) });
+        }
+      });
+      setWayState(r, line.id, { running: false, done: out.view?.status === "done" });
+    } catch (err) {
+      const why = err instanceof Error ? err.message : "That Way could not run.";
+      setWayState(r, line.id, { running: false, error: why });
+      note(why, r);
+    }
+  }, [roomsAgent, note, setWayState]);
+
+  /** "Run without a Way": the cards go and the agent answers the task as it always did. */
+  const skipWay = useCallback((r: string, line: WayLine) => {
+    lineStore.current = { ...lineStore.current, [r]: (lineStore.current[r] ?? []).filter((l) => !(l.kind === "ways" && l.id === line.id)) };
+    bump((n) => n + 1);
+    void askKellRef.current?.(r, line.text, "@kell", { skipRoute: true });
+  }, []);
   // One click, like the app: a tool's sign-in opens in a small window. When it is done (the window closes, or the kell app says its own
   // sign-in window finished) the tool is ticked only if kell says the sign-in really finished: closing the window, or coming back to
   // the tab, without signing in used to tick it anyway (2026-11-09). Once every tool on the card is, the request that hit the sign-in
@@ -856,7 +925,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const items: Item[] = (() => {
     const out: Item[] = [];
     type Run = ReturnType<typeof groupMessages>[number];
-    const seq: Array<{ kind: "run"; run: Run } | { kind: "notice"; l: Extract<Line, { kind: "notice" }> }> = [];
+    const seq: Array<{ kind: "run"; run: Run } | { kind: "line"; l: Exclude<Line, { kind: "msg" }> }> = [];
     let buf: GroupMessage[] = [];
     const flush = () => {
       for (const run of groupMessages(buf)) seq.push({ kind: "run", run });
@@ -864,7 +933,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     };
     for (const l of lines) {
       if (l.kind === "msg") buf.push(l.m);
-      else { flush(); seq.push({ kind: "notice", l }); }
+      else { flush(); seq.push({ kind: "line", l }); }
     }
     flush();
     // What Retry re-runs, per run: one of your own messages re-sends it; an agent's answer re-runs the latest human
@@ -874,6 +943,68 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     for (const s of seq) {
       if (s.kind !== "run") {
         const l = s.l;
+        if (l.kind === "ways") {
+          // The choice, in the chat: kell stops here until one is picked (or "Run without a Way"). Several Ways scroll
+          // sideways; the card is the rooms' tool sign-in card with the Way's own tile, name, one line and action.
+          const st = l.state || {};
+          const running = !!st.running;
+          out.push({ t: l.t, key: l.id, node: (
+            <MessageScroller.Item key={l.id} className="dg-way-card" role="group" aria-label="Choose a procedure">
+              <div className="dg-way-head">
+                <div className="dg-way-head-row">
+                  <b>{l.ways.length === 1 ? "One procedure fits this task" : `${l.ways.length} procedures fit this task`}</b>
+                  {l.goal?.name && <span className="dg-way-goal" title={l.goal.name}>{l.goal.name}</span>}
+                </div>
+                <span>{st.error ? `That Way stopped: ${st.error}`
+                  : st.done ? "Done. The result is in the room."
+                    : running ? "kell is running it now; the result comes into the room."
+                      : "Pick one and kell continues. It waits until you do."}</span>
+              </div>
+              <ol className="dg-way-strip">
+                {l.ways.map((w, i) => {
+                  const picked = st.picked === w.id;
+                  const hue = wayHue(w.name);
+                  return (
+                    <li key={`${w.id}-${i}`} className="dg-way-item" data-picked={picked || undefined}>
+                      <span className="dg-way-icon" aria-hidden="true"
+                        style={{ background: `linear-gradient(145deg, hsl(${hue} 62% 42%), hsl(${hue + 38} 62% 30%))` }}>
+                        <span className="dg-way-mono">{(w.name || "?").trim().slice(0, 1).toUpperCase()}</span>
+                      </span>
+                      <span className="dg-way-text">
+                        <span className="dg-way-name" title={w.name}>{w.name}</span>
+                        {w.why && <span className="dg-way-desc">{w.why}</span>}
+                        <span className="dg-way-meta">
+                          <i data-approval={w.approval}>{w.approval.replace(/_/g, " ")}</i>
+                          <i>{w.steps.length} {w.steps.length === 1 ? "step" : "steps"}</i>
+                          {w.tool && <i className="dg-way-tool" title={w.tool}>{w.tool}</i>}
+                        </span>
+                      </span>
+                      {i === 0 && l.ways.length > 1 ? <span className="dg-way-best">Best fit</span> : null}
+                      {picked ? (
+                        <span className="dg-way-actions" role="status" aria-live="polite">
+                          <span className="dg-way-run">
+                            {st.error ? "Stopped"
+                              : st.done ? "Done"
+                                : `Step ${st.step || 0} of ${st.of || w.steps.length}${st.title ? ` · ${st.title}` : ""}`}
+                          </span>
+                        </span>
+                      ) : (
+                        <button type="button" className="dg-way-btn" disabled={running || Boolean(st.picked)}
+                          onClick={() => void pickWay(roomRef.current, l, w)}>
+                          <span>Use</span><span className="sq" aria-hidden="true">→</span>
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+              {!st.picked && !st.done && (
+                <button type="button" className="dg-way-skip" onClick={() => skipWay(roomRef.current, l)}>Run without a Way</button>
+              )}
+            </MessageScroller.Item>
+          ) });
+          continue;
+        }
         out.push({ t: l.t, key: l.id, node: l.signIns?.length
           ? (
             <MessageScroller.Item key={l.id} className="dg-signin-card" role="status">
