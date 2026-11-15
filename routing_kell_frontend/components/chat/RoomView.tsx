@@ -1638,7 +1638,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       )}
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
-          <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} onSubmitWay={() => setSubmitOpen(true)} onDesktop={() => setDesktopOpen(true)} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
+          <HamburgerMenu onTemporary={newTemporary} onSubmitWay={() => setSubmitOpen(true)} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r),
               onRead: (id) => setNotes((p) => p.filter((n) => n.id !== id)),
               onClear: () => { closeAllOs(); setNotes([]); } }}

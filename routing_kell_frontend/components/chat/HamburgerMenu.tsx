@@ -8,20 +8,18 @@ import { useSlideHighlight } from "@/components/chat/useSlideHighlight";
 import type { SectionId } from "@/components/chat/SettingsDialog";
 
 /**
- * The menu button at the left of the room header. It keeps the side panel short: everything that is not a room or a person lives
- * here or in Settings. Opens on click or Enter, closes on Escape or a click outside, and arrow keys move through the items.
+ * The menu button at the left of the room header. It keeps only what is not already a button in the header or the side panel:
+ * temporary rooms, Submit a Way, the room-list toggle, alerts, Settings, pause, help and sign-out. Search, Canvas, Desktop
+ * sessions and Manage rooms live in the header/sidebar where they are always visible, so they are not repeated here.
+ * Opens on click or Enter, closes on Escape or a click outside, and arrow keys move through the items.
  */
-export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, onManageRooms, onTogglePanel, panelOpen, alerts, onSearch, onTemporary, onCanvas, canvasCount = 0, onSubmitWay, onDesktop }: {
-  /** Opens the search over your rooms (also Cmd+K or Ctrl+K). */
-  onSearch?: () => void;
+export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, onTogglePanel, panelOpen, alerts, onTemporary, onSubmitWay }: {
   /** Starts a temporary room: not saved, not synced. */
   onTemporary?: () => void;
-  /** Opens the canvas beside the chat, and how many canvases this room has. */
-  onCanvas?: () => void; canvasCount?: number;
-  /** Opens "Submit a Way" (components/submit/SubmitWay.tsx) and "Desktop sessions" (DesktopPanel.tsx) beside the chat. */
-  onSubmitWay?: () => void; onDesktop?: () => void;
+  /** Opens "Submit a Way" (components/submit/SubmitWay.tsx) beside the chat. */
+  onSubmitWay?: () => void;
   paused: boolean; onSettings: (s: SectionId) => void; onPause: () => void; onSignOut: () => void;
-  onManageRooms: () => void; onTogglePanel: () => void; panelOpen: boolean;
+  onTogglePanel: () => void; panelOpen: boolean;
   /** The alerts list and its settings. Given, the menu has an Alerts item (with the unread count) and the button carries a dot. */
   alerts?: AlertsProps;
 }) {
@@ -65,30 +63,16 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
       )}
       {view === "menu" && (
         <div className="dg-menu-pop" role="menu" aria-label="Chat menu" ref={slide('[role="menuitem"]', '[role="menuitem"]:focus')}>
-          {onSearch && <button type="button" role="menuitem" onClick={run(onSearch)}>Search<kbd>Ctrl K</kbd></button>}
-          {onCanvas && <button type="button" role="menuitem" onClick={run(onCanvas)}>Canvas{canvasCount > 0 && <span className="dg-unread" aria-label={`${canvasCount} in this room`}>{canvasCount}</span>}</button>}
-          {onDesktop && <button type="button" role="menuitem" onClick={run(onDesktop)}>My desktop sessions</button>}
           {onSubmitWay && <button type="button" role="menuitem" onClick={run(onSubmitWay)}>Submit a Way</button>}
           {onTemporary && <button type="button" role="menuitem" onClick={run(onTemporary)}>New temporary room</button>}
-          <button type="button" role="menuitem" onClick={run(onManageRooms)}>Manage rooms</button>
           <button type="button" role="menuitem" onClick={run(onTogglePanel)}>{panelOpen ? "Close room list" : "Show room list"}</button>
           <hr />
           {alerts && <button type="button" role="menuitem" onClick={() => setView("alerts")}>Alerts{unread > 0 && <span className="dg-unread" aria-label={`${unread} unread`}>{unread > 99 ? "99+" : unread}</span>}</button>}
-          <button type="button" role="menuitem" onClick={run(() => onSettings("preferences"))}>Preferences</button>
-          <button type="button" role="menuitem" onClick={run(() => onSettings("notifications"))}>Notifications</button>
-          <button type="button" role="menuitem" onClick={run(() => onSettings("data"))}>Your data</button>
-          <button type="button" role="menuitem" onClick={run(() => onSettings("memory"))}>Memory and knowledge</button>
-          <button type="button" role="menuitem" onClick={run(() => onSettings("agents"))}>Agents and models</button>
-          <button type="button" role="menuitem" onClick={run(() => onSettings("shortcuts"))}>Keyboard shortcuts</button>
+          <button type="button" role="menuitem" onClick={run(() => onSettings("preferences"))}>Settings</button>
           <hr />
           <button type="button" role="menuitem" onClick={run(onPause)}>{paused ? "Resume agents" : "Pause agents"}</button>
           <hr />
           <Link role="menuitem" href="/docs" onClick={() => close(false)}>Help and docs</Link>
-          <Link role="menuitem" href="/contact" onClick={() => close(false)}>Contact</Link>
-          <button type="button" role="menuitem" onClick={run(() => onSettings("about"))}>About and privacy</button>
-          <hr />
-          <button type="button" role="menuitem" onClick={run(() => onSettings("plan"))}>Plan and billing</button>
-          <button type="button" role="menuitem" onClick={run(() => onSettings("account"))}>Account</button>
           <button type="button" role="menuitem" onClick={run(onSignOut)}>Sign out</button>
         </div>
       )}
