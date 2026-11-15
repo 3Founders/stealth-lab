@@ -215,7 +215,7 @@ def test_writer_accepts_explicit_tenant_scope_and_stamps_the_row():
     assert set_args == ("app.tenant_id", "org-zz")
     ins_sql, ins_args = conn.statements_of("INSERT INTO evidence")[0]
     assert "$17::uuid" in ins_sql  # tenant rides an explicit bound param
-    assert ins_args[-1] == "org-zz"
+    assert ins_args[16] == "org-zz"   # $17 (source_id, $18, follows it)
 
 
 def test_success_writes_exactly_one_evidence_row_and_never_routes():

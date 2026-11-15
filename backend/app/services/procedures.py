@@ -738,6 +738,7 @@ async def record_execution_outcome(
     tenant_scope: Optional[TenantScope] = None,
     evidence_type: str = "execution_result",
     execution_verified: bool = True,
+    source_id: Optional[str] = None,
 ) -> dict:
     """
     `execution_verified` (B2 hardening -- default True, unchanged
@@ -970,6 +971,8 @@ async def record_execution_outcome(
             created_by=OUTCOME_WRITER_STAMP if execution_verified else OUTCOME_WRITER_STAMP_CLAIMED,
             visibility=visibility,
             owner_id=owner_id,
+            # what produced the outcome (a way_runs id): the trace back for a failure, which carries no criteria
+            source_id=UUIDType(str(source_id)) if source_id else None,
         )
         inserted = await conn.fetchrow(
             """
@@ -978,13 +981,13 @@ async def record_execution_outcome(
                 direction, strength_score, strength_method,
                 independence_group, context_key,
                 outcome_status, success_criteria, failure_class,
-                created_by, visibility, owner_id, tenant_id
+                created_by, visibility, owner_id, tenant_id, source_id
             ) VALUES (
                 $1::uuid, $2, $3, $4::uuid, $5,
                 $6, $7, $8,
                 $9, $10,
                 $11, $12::jsonb, $13,
-                $14, $15, $16, $17::uuid
+                $14, $15, $16, $17::uuid, $18::uuid
             )
             RETURNING id, target_type, target_id, target_version,
                       outcome_status, failure_class, context_key,
@@ -1007,6 +1010,7 @@ async def record_execution_outcome(
             evidence.visibility,
             evidence.owner_id,
             scope.tenant_id,
+            evidence.source_id,
         )
         if not success:
             # Failures route in the SAME transaction (§36); successes

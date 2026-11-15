@@ -538,7 +538,7 @@ async def record_outcome(pool: Any, run: dict) -> None:
                               "run_id": run["id"], "failed_step": failed_at and failed_at["order"],
                               "error": (run["error"] or "")[:300]},
             failure_class=None,     # the cause is not known (a reported step failed); `error` above says what
-            execution_verified=False)
+            execution_verified=False, source_id=run["id"])
     except Exception:  # noqa: BLE001 -- the run's own record stands; the evidence is extra
         log.warning("way run %s: the outcome was not recorded", run["id"], exc_info=True)
 

@@ -257,8 +257,9 @@ async def test_a_finished_run_is_self_reported_evidence_and_json_output_is_kept(
     broken = await way(pool, [prompt(1, "x")])                    # a failed run is evidence too (cause unknown)
     run = await way_runs.start(pool, broken["id"], owner_id=OWNER)
     await way_runs.report(pool, run["run_id"], owner_id=OWNER, failed="the API was down")
-    ev = await pool.fetch("SELECT outcome_status FROM evidence WHERE target_id = $1::uuid", broken["id"])
-    assert [e["outcome_status"] for e in ev] == ["failure"]
+    ev = await pool.fetch("SELECT outcome_status, source_id::text AS source FROM evidence WHERE target_id = $1::uuid",
+                          broken["id"])
+    assert [(e["outcome_status"], e["source"]) for e in ev] == [("failure", run["run_id"])]   # traced to its run
 
 
 @pytest.mark.asyncio
