@@ -1,9 +1,10 @@
 // The one bridge between the page and the Electron main: open a tool's sign-in in the person's default browser; the
-// account sign-in and sign-out; the team rooms view (electron/rooms.ts). Nothing else is exposed
+// account sign-in and sign-out; the team rooms view (electron/rooms.ts); the bottom panel's terminal and browser. Nothing else is exposed
 // (contextIsolation stays on; the page never sees ipcRenderer itself).
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 
 type Rect = { x: number; y: number; width: number; height: number }
+type BrowserState = { url: string; title: string; loading: boolean; back: boolean; forward: boolean }
 
 contextBridge.exposeInMainWorld("kellDesktop", {
   openSignIn: (url: string): Promise<boolean> => ipcRenderer.invoke("kell:open-signin", String(url)),
@@ -36,6 +37,36 @@ contextBridge.exposeInMainWorld("kellDesktop", {
     return () => { ipcRenderer.removeListener("kell:menu", h) }
   },
   showMenu: () => ipcRenderer.send("kell:menu-popup"),
+  // The bottom panel's terminal: a shell in the project folder (electron/terminal.ts).
+  term: {
+    create: (cwd: string, cols: number, rows: number): Promise<{ id: string } | { error: string }> => ipcRenderer.invoke("kell:term-create", cwd, cols, rows),
+    write: (id: string, data: string) => ipcRenderer.send("kell:term-write", id, data),
+    resize: (id: string, cols: number, rows: number) => ipcRenderer.send("kell:term-resize", id, cols, rows),
+    kill: (id: string) => ipcRenderer.send("kell:term-kill", id),
+    onData: (cb: (id: string, data: string) => void) => {
+      const h = (_e: unknown, id: string, data: string) => cb(String(id), String(data))
+      ipcRenderer.on("kell:term-data", h)
+      return () => { ipcRenderer.removeListener("kell:term-data", h) }
+    },
+    onExit: (cb: (id: string, code: number) => void) => {
+      const h = (_e: unknown, id: string, code: number) => cb(String(id), Number(code))
+      ipcRenderer.on("kell:term-exit", h)
+      return () => { ipcRenderer.removeListener("kell:term-exit", h) }
+    },
+  },
+  // The bottom panel's browser view (electron/browser.ts).
+  browser: {
+    show: (rect: Rect | null) => ipcRenderer.send("kell:browser-bounds", rect),
+    go: (url: string): Promise<string | null> => ipcRenderer.invoke("kell:browser-go", url),
+    act: (what: "back" | "forward" | "reload" | "stop") => ipcRenderer.send("kell:browser-act", what),
+    state: (): Promise<BrowserState> => ipcRenderer.invoke("kell:browser-state"),
+    external: (url: string) => ipcRenderer.invoke("kell:browser-external", url),
+    onState: (cb: (s: BrowserState) => void) => {
+      const h = (_e: unknown, s: BrowserState) => cb(s)
+      ipcRenderer.on("kell:browser-state", h)
+      return () => { ipcRenderer.removeListener("kell:browser-state", h) }
+    },
+  },
   rooms: {
     show: (rect: Rect | null) => ipcRenderer.send("kell:rooms-bounds", rect),
     reload: () => ipcRenderer.send("kell:rooms-reload"),

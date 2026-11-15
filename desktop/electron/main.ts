@@ -11,6 +11,8 @@ import { isSignInLink, openSignIn } from "./signin"
 import { popupAppMenu, setAppMenu, setFontChoice } from "./menu"
 import { BOOT } from "./memory"
 import { openRoomsEmailSignIn, openRoomsPanel, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
+import { termCreate, termKill, termKillAll, termResize, termWrite } from "./terminal"
+import { browserAct, browserBounds, browserGo, browserState } from "./browser"
 import { createServer } from "node:http"
 import { randomBytes } from "node:crypto"
 import fs from "node:fs"
@@ -121,6 +123,17 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.handle("kell:rooms-signout", () => signOutRooms())
     ipcMain.handle("kell:rooms-signin", (_e, provider) => (win ? signInRooms(win, provider === "github" ? "github" : "google") : false))
     ipcMain.handle("kell:account-open", (_e, url: string) => openAccountSignIn(win, String(url)))
+    // The bottom panel: a terminal in the project folder (electron/terminal.ts) and a browser view (electron/browser.ts).
+    ipcMain.handle("kell:term-create", (_e, cwd: unknown, cols: unknown, rows: unknown) =>
+      (win ? termCreate(win, String(cwd || ""), Number(cols), Number(rows)) : { error: "no window" }))
+    ipcMain.on("kell:term-write", (_e, id: unknown, data: unknown) => termWrite(String(id), String(data)))
+    ipcMain.on("kell:term-resize", (_e, id: unknown, cols: unknown, rows: unknown) => termResize(String(id), Number(cols), Number(rows)))
+    ipcMain.on("kell:term-kill", (_e, id: unknown) => termKill(String(id)))
+    ipcMain.on("kell:browser-bounds", (_e, rect) => { if (win) browserBounds(win, rect && typeof rect === "object" ? rect : null) })
+    ipcMain.handle("kell:browser-go", (_e, url: unknown) => (win ? browserGo(win, String(url || "")) : null))
+    ipcMain.on("kell:browser-act", (_e, what: unknown) => browserAct(String(what)))
+    ipcMain.handle("kell:browser-state", () => browserState())
+    ipcMain.handle("kell:browser-external", (_e, url: unknown) => { const u = String(url || ""); if (/^https?:\/\//i.test(u)) void shell.openExternal(u) })
     // The window's own buttons, drawn by the page: the frame is off (above), so Electron's are not there to click.
     ipcMain.on("kell:win", (_e, what: string) => {
       if (!win) return
@@ -194,7 +207,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   // Clean shutdown: the next child's whole tree (the opencode engine included) dies with the app.
-  app.on("before-quit", killTree)
+  app.on("before-quit", () => { termKillAll(); killTree() })
   app.on("will-quit", killTree)
   app.on("window-all-closed", () => app.quit())
   // A crash of this process must not leave the Next server and the engine running (each is hundreds of MB and they pile up

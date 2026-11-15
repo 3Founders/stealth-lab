@@ -926,3 +926,33 @@
 .dk-fold[aria-expanded="true"] svg { transform: none; }
 .dk-count { font-size: 11px; color: var(--grey); font-variant-numeric: tabular-nums; }
 .dk-sess-list { padding: 0 4px 8px 4px; }
+
+/* The bottom panel under the chat (components/BottomPanel.tsx): a terminal in the project folder and a small browser. The
+   header's two tool buttons open it; the top edge drags its height. */
+.dk-page .dk-head-tool[aria-pressed="true"] { color: var(--ink); background: var(--soft, rgba(0,0,0,.06)); }
+.dk-bottom { position: relative; flex: none; display: flex; flex-direction: column; min-height: 120px; margin: 0 14px 10px;
+  border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.dk-bottom[hidden] { display: none; }
+.dk-bottom[data-max="true"] { height: calc(100% - 120px); }
+.dk-bottom-grip { position: absolute; top: -3px; left: 0; right: 0; height: 7px; cursor: ns-resize; z-index: 2; }
+.dk-bottom-grip:hover { background: linear-gradient(transparent 2px, var(--rule-strong) 2px, var(--rule-strong) 4px, transparent 4px); }
+.dk-bottom-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 8px; border-bottom: 1px solid var(--rule); }
+.dk-bottom-tabs { display: flex; gap: 2px; }
+.dk-bottom-tab { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 6px;
+  font-size: 12.5px; color: var(--grey); cursor: pointer; }
+.dk-bottom-tab:hover { background: var(--soft, rgba(0,0,0,.05)); color: var(--ink); }
+.dk-bottom-tab[aria-selected="true"] { color: var(--ink); background: var(--soft, rgba(0,0,0,.06)); font-weight: 600; }
+.dk-bottom-tab:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.dk-bottom-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.dk-bottom-body[hidden] { display: none; }
+.dk-bottom-note { margin: 10px 12px; }
+.dk-term { flex: 1; min-height: 0; padding: 6px 0 2px 8px; background: #fbfaf5; }
+:root[data-theme="dark"] .dk-term { background: #1b1a17; }
+.dk-term-screen { height: 100%; }
+.dk-term .xterm { height: 100%; }
+.dk-term .xterm-viewport { background: transparent !important; }
+.dk-browser-bar { display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--rule); }
+.dk-browser-addr { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; padding: 5px 10px; margin: 0 4px; border: 1px solid var(--rule);
+  border-radius: 999px; background: var(--paper); color: var(--ink); }
+.dk-browser-addr:focus { outline: none; border-color: var(--rule-strong); }
+.dk-browser-view { flex: 1; min-height: 0; background: var(--paper); }

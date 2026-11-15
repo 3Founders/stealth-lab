@@ -18,6 +18,7 @@ import type { Delegation, WayOption } from "@/lib/plan"
 import { planFromOption } from "@/lib/plan"
 import ProcedureGraph from "@/components/ProcedureGraph"
 import ProcedurePicker from "@/components/ProcedurePicker"
+import BottomPanel, { GlobeIcon, TerminalIcon, type PanelTab } from "@/components/BottomPanel"
 
 // The Electron preload's bridge (electron/preload.ts). Absent in a plain browser (`next dev`): sign-in links then open a tab
 // and the rooms are a link to the website's chat.
@@ -678,6 +679,10 @@ export default function Home() {
   const [signinNote, setSigninNote] = useState("")
   // The coding lane, or the team rooms (the website's chat in a view over the placeholder below; electron/rooms.ts).
   const [pane, setPane] = useState<"code" | "rooms">("code")
+  // The bottom panel under the chat: terminal and browser (components/BottomPanel.tsx). Mounted on first use and then only
+  // hidden, so its shells keep running.
+  const [panel, setPanel] = useState<{ open: boolean; tab: PanelTab; used: boolean }>({ open: false, tab: "terminal", used: false })
+  const togglePanel = (tab: PanelTab) => setPanel((p) => ({ used: true, tab, open: !(p.open && p.tab === tab) }))
   const [roomsWho, setRoomsWho] = useState<RoomsWho | undefined>(undefined)   // undefined: not read yet
   // The site's own email/password sign-in page is showing in the rooms view (it is placed even before a session exists).
   const [roomsForm, setRoomsForm] = useState(false)
@@ -1704,6 +1709,8 @@ export default function Home() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); setPalette((p) => !p); setPaletteQ(""); setPaletteIdx(0) }
+      // Ctrl+` shows or hides the terminal, as in other editors.
+      else if (e.ctrlKey && (e.key === "`" || e.code === "Backquote")) { e.preventDefault(); togglePanel("terminal") }
       else if (e.key === "Escape" && palette) { setPalette(false) }
     }
     window.addEventListener("keydown", onKey)
@@ -1837,6 +1844,8 @@ export default function Home() {
     { id: "fork", title: "Fork this session", hint: "a new session with this whole chat; the original stays as it is", run: () => void fork() },
     { id: "left", title: "Show or hide the project sidebar", run: () => toggleSidebar("left") },
     { id: "right", title: "Show or hide the changes panel", run: () => toggleSidebar("right") },
+    { id: "terminal", title: "Show or hide the terminal", hint: "Ctrl+` — a shell in the project folder", run: () => togglePanel("terminal") },
+    { id: "browser", title: "Show or hide the browser", hint: "open your dev server or any page beside the chat", run: () => togglePanel("browser") },
     { id: "stop", title: "Stop kell", hint: "end the running turn; nothing is undone", run: () => void stop() },
     { id: "code", title: "Go to the coding agent", run: () => setPane("code") },
     { id: "rooms", title: "Go to the team rooms", run: () => setPane("rooms") },
@@ -2232,6 +2241,14 @@ export default function Home() {
             <div className="dk-chips">
               {spend > 0 && <span className="dk-spend">${spend.toFixed(4)} this session</span>}
             </div>
+            <button type="button" className="dk-icon dk-icon-sm dk-head-tool" aria-pressed={panel.open && panel.tab === "terminal"}
+              aria-label="Terminal" title="Terminal (Ctrl+`)" onClick={() => togglePanel("terminal")}>
+              <TerminalIcon size={16} />
+            </button>
+            <button type="button" className="dk-icon dk-icon-sm dk-head-tool" aria-pressed={panel.open && panel.tab === "browser"}
+              aria-label="Browser" title="Browser" onClick={() => togglePanel("browser")}>
+              <GlobeIcon size={16} />
+            </button>
             <ThemeToggle className="dg-theme" />
             {!rightOpen && (
               <button type="button" className="dk-icon dk-icon-sm dk-head-toggle dk-show-right" aria-label="Show the changes panel" title="Show the changes panel"
@@ -2733,6 +2750,11 @@ export default function Home() {
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
             </button>
           </form>
+          {panel.used && (
+            <BottomPanel directory={directory || ""} open={panel.open} tab={panel.tab}
+              onTab={(tab) => setPanel((p) => ({ ...p, tab }))} onClose={() => setPanel((p) => ({ ...p, open: false }))}
+              active={pane === "code" && !palette} />
+          )}
         </section>
 
         <aside className="dk-panel" aria-label="File, changes, steps and tools">
