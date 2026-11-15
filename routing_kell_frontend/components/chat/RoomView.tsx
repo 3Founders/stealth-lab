@@ -82,7 +82,7 @@ type SignInItem = ToolSignIn & { done?: boolean };
 type WayLine = {
   kind: "ways"; id: string; text: string; t: number;
   goal: { id: string; name: string } | null; ways: WayChoice[];
-  state?: { picked?: string; running?: boolean; step?: number; of?: number; title?: string; done?: boolean; error?: string };
+  state?: { picked?: string; running?: boolean; step?: number; of?: number; title?: string; done?: boolean; waiting?: boolean; error?: string };
 };
 type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number; signIns?: SignInItem[] } | WayLine;
 
@@ -506,14 +506,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
     if (!id) { note("This room is still syncing. Pick again in a moment.", r); return; }
     setWayState(r, line.id, { picked: way.id, running: true, step: 0, of: way.steps.length,
-      title: way.steps[0]?.title || "", done: false, error: undefined });
+      title: way.steps[0]?.title || "", done: false, waiting: false, error: undefined });
     try {
       const out = await roomsAgent.runWay(id, way.id, line.text, (ev) => {
         if (ev.type === "step") {
           setWayState(r, line.id, { running: ev.status !== "done" && ev.status !== "failed", step: ev.order, of: ev.of,
             title: ev.title, ...(ev.error ? { error: ev.error } : {}) });
         } else if (ev.type === "run") {
-          setWayState(r, line.id, { running: false, done: ev.status === "done",
+          setWayState(r, line.id, { running: false, done: ev.status === "done", waiting: ev.status === "waiting_human",
             ...(ev.status === "failed" ? { error: ev.view?.error || "The run failed." } : {}) });
         }
       });
@@ -957,8 +957,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 </div>
                 <span>{st.error ? `That Way stopped: ${st.error}`
                   : st.done ? "Done. The result is in the room."
-                    : running ? "kell is running it now; the result comes into the room."
-                      : "Pick one and kell continues. It waits until you do."}</span>
+                    : st.waiting ? "It needs you at one step; the room message says what."
+                      : running ? "kell is running it now; the result comes into the room."
+                        : "Pick one and kell continues. It waits until you do."}</span>
               </div>
               <ol className="dg-way-strip">
                 {l.ways.map((w, i) => {
@@ -985,7 +986,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                           <span className="dg-way-run">
                             {st.error ? "Stopped"
                               : st.done ? "Done"
-                                : `Step ${st.step || 0} of ${st.of || w.steps.length}${st.title ? ` · ${st.title}` : ""}`}
+                                : st.waiting ? "Waiting for you"
+                                  : `Step ${st.step || 0} of ${st.of || w.steps.length}${st.title ? ` · ${st.title}` : ""}`}
                           </span>
                         </span>
                       ) : (
