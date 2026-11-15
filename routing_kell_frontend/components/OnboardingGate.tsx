@@ -14,7 +14,10 @@ const EXEMPT_PREFIXES = ["/onboarding", "/sign-in"];
  * V1 identity spec §11: no speculative is_new_user JWT claim, no
  * middleware auth rewrite, no new cookie infrastructure -- just the
  * existing authenticated profile API, checked once per navigation. A
- * signed-in visitor whose profile isn't onboarding_complete yet is sent to
+ * signed-in visitor on the home page is sent to /chat (the rooms are home
+ * once there is an account; public/session-home.js does the same before the
+ * first paint when the session is already in this browser). A signed-in
+ * visitor whose profile isn't onboarding_complete yet is sent to
  * /onboarding; everyone else is left alone.
  */
 export default function OnboardingGate() {
@@ -27,6 +30,8 @@ export default function OnboardingGate() {
     (async () => {
       const session = await getSession();
       if (!session || cancelled) return;
+      // Signed in, the rooms are home: the landing page is not shown. Onboarding is checked on the page this lands on (/chat).
+      if (pathname === "/") { router.replace("/chat"); return; }
       const profile = await getMyProfile();
       if (cancelled || profile.kind !== "ok") return;
       if (profile.data.onboarding_required) {
