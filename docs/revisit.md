@@ -230,7 +230,7 @@ Today nobody outside can download or use the app. In this order:
 
 - **Rejection email is not set up.** A rejected step's reason shows only on the page and in the API reply; no email
   goes out, because production has no Resend key or sending address. The Submit a Way form (website `/submit`, the
-  rooms panel, the desktop) still says the reason comes back "by email too". Needs: a Resend account and a verified
+  rooms panel, the desktop) said the reason comes back "by email too". Needs: a Resend account and a verified
   sender domain, then `RESEND_API_KEY` (and the sender) on the Railway `kell-mcp` service (a secret write: Anuj or
-  Chaitanya). Until then, drop "(by email too)" from `routing_kell_frontend/components/submit/SubmitWay.tsx`.
+  Chaitanya). The form's "(by email too)" was dropped on 2026-11-15; put it back when the email works.
   Detail: [goal_submission.md](goal_submission.md).

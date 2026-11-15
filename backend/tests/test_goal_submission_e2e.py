@@ -169,7 +169,7 @@ async def test_a_person_rejecting_a_step_takes_the_way_out_of_retrieval(pool, fa
 async def test_changing_an_approved_step_gives_the_way_its_next_version(pool, fakes):
     owner = f"test-{uuid.uuid4().hex[:8]}"
     out = await api.submit(pool, owner, {"goal": f"survey papers {uuid.uuid4().hex[:6]}", "steps": [
-        {"prompt": "Search for papers on the topic", "locator": "https://api.openalex.org/works"},
+        {"prompt": "Search for papers on the topic", "locator": "https://api.openalex.org/works?search=llm+judges"},
         {"prompt": "Summarise each paper in two lines"}]})
     assert out["status"] == "ai_approved"
     v1 = out["parent_procedure_id"]
@@ -197,6 +197,37 @@ async def test_changing_an_approved_step_gives_the_way_its_next_version(pool, fa
     bad = await api.fix_step(pool, owner, out["id"], 2, {"prompt": "VAGUE summarise"})
     assert bad["status"] == "needs_changes" and bad["parent_procedure_id"] is None
     assert not await _retrievable(pool, v2)
+
+
+def test_a_search_link_with_no_query_is_rejected():
+    assert review._bare_search("https://api.openalex.org/works")
+    assert review._bare_search("https://api.openalex.org/works?per_page=5")
+    assert review._bare_search("http://export.arxiv.org/api/query")
+    assert review._bare_search("https://api.openalex.org/works?search=llm+judges") is None
+    assert review._bare_search("https://api.semanticscholar.org/graph/v1/paper/search?query=elo") is None
+    assert review._bare_search("https://api.openalex.org/works/W2100837269") is None      # one fixed work
+    assert review._bare_search("https://arxiv.org/abs/2212.09748") is None
+
+
+@pytest.mark.asyncio
+async def test_a_persons_runs_are_listed_and_can_be_cancelled(pool, fakes):
+    owner = f"test-{uuid.uuid4().hex[:8]}"
+    out = await api.submit(pool, owner, {"goal": f"collect sources {uuid.uuid4().hex[:6]}", "steps": [
+        {"kind": "human", "description": "Pick the three sources to use"}, {"prompt": "Summarise them"}]})
+    run = await api.start_run(pool, owner, out["id"], "LLM judges")
+    assert run["status"] == "waiting_human"
+    listed = await api.my_runs(pool, owner)
+    assert [r["run_id"] for r in listed] == [run["id"]]
+    r = listed[0]
+    assert (r["status"], r["step"], r["of"], r["step_title"]) == ("waiting_human", 1, 2, "Pick the three sources to use")
+    assert r["way_name"] and r["input"] == "LLM judges"
+    assert await api.my_runs(pool, "someone-else") == []                       # only your own
+    with pytest.raises(LookupError):
+        await api.cancel_run(pool, "someone-else", run["id"])
+    gone = await api.cancel_run(pool, owner, run["id"])
+    assert gone["status"] == "cancelled"
+    assert await api.my_runs(pool, owner) == []                                  # no longer open
+    assert [r["status"] for r in await api.my_runs(pool, owner, open_only=False)] == ["cancelled"]
 
 
 @pytest.mark.asyncio

@@ -5538,6 +5538,7 @@ async def run_way(ctx: Context, way_id: str = "", input: str = "", run_id: str =
         run_way(run_id, done=true, note=<what they did or found>).
       status "done": `result` is the last step's output. "failed": `error` says why; ask before trying another Way.
     kell runs scripts and plain fetches itself. run_way(run_id) alone: the run's state; cancel=true stops it.
+    run_way() with no arguments: the person's open runs (wherever they were started), to continue or cancel.
     Stuck on a step for want of a method: run_way(run_id, lookup=<what you need to know>), once per step -- kell
     looks it up and either replaces the step with a Way that does it or adds what it found to your_turn. Do not call
     find_ways or start another run for a step. A failed step is looked up once the same way before the run fails.
@@ -5564,8 +5565,8 @@ async def run_way(ctx: Context, way_id: str = "", input: str = "", run_id: str =
     if submission_id and not way_id:
         return await _submission_call(ctx, lambda p, o: _sub_api.start_run(p, o, submission_id, input,
                                                                             mode="session", finder=finder))
-    if not way_id:
-        return "REFUSED: pass way_id to start a run, or run_id to continue one"
+    if not way_id:                                    # no arguments: the person's open runs, to continue or cancel
+        return await _submission_call(ctx, lambda p, o: _sub_api.my_runs(p, o))
     return await _submission_call(ctx, lambda p, o: _way_runs.start(p, way_id, owner_id=o, input=input,
                                                                      finder=finder))
 

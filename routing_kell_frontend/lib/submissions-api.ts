@@ -25,9 +25,16 @@ export interface Submission {
 }
 export interface SubmissionRow { id: string; goal_name: string; mode: string; status: Submission["status"]; created_at: string; steps: number; rejected: number }
 export interface Run {
-  id: string; status: "running" | "waiting_human" | "done" | "failed"; next_step: number; steps?: number; error: string | null;
+  id: string; status: "running" | "waiting_human" | "waiting_session" | "done" | "failed" | "cancelled"; next_step: number;
+  steps?: number; error: string | null; mode?: "session" | "headless";
   waiting_on: { kind: "step" | "signin"; order: number; title: string; description?: string; link?: string } | null;
   outputs: { order: number; title: string; actor: "human" | "ai"; output: string }[];
+}
+
+/** One of the person's runs, wherever it was started (the website, the desktop, a chat): GET /v1/goals/runs. */
+export interface RunRow {
+  run_id: string; status: Run["status"]; mode: "session" | "headless"; way_id: string; way_name: string; input: string;
+  step: number; of: number; step_title: string; started_at: string | null; updated_at: string | null;
 }
 
 export const STATUS_LABEL: Record<Submission["status"] | Step["status"], string> = {
@@ -87,6 +94,8 @@ export function submissionsApi(deps: SubmissionsDeps) {
     run: (id: string, input: string) => call<Run>("POST", `/submissions/${encodeURIComponent(id)}/runs`, { input }),
     getRun: (runId: string) => call<Run>("GET", `/runs/${encodeURIComponent(runId)}`),
     done: (runId: string, note: string) => call<Run>("POST", `/runs/${encodeURIComponent(runId)}/done`, { note }),
+    runs: () => call<{ runs: RunRow[] }>("GET", "/runs").then((r) => r.runs),
+    cancel: (runId: string) => call<Run>("POST", `/runs/${encodeURIComponent(runId)}/cancel`),
   };
 }
 export type SubmissionsApi = ReturnType<typeof submissionsApi>;

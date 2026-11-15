@@ -88,6 +88,33 @@ describe("Submit a Way", () => {
     expect(host.textContent).toContain("two-line summaries");
   });
 
+  it("lists the person's open runs wherever they started, and cancels one", async () => {
+    const api = fakeApi() as SubmissionsApi & { calls: Record<string, unknown[][]> };
+    let open = [
+      { run_id: "r1", status: "waiting_session", mode: "session", way_id: "w", way_name: "Research manuscript", input: "LLM judges",
+        step: 6, of: 16, step_title: "Index the literature", started_at: null, updated_at: null },
+      { run_id: "r2", status: "waiting_human", mode: "headless", way_id: "w", way_name: "Research manuscript", input: "",
+        step: 3, of: 16, step_title: "Go or no-go", started_at: null, updated_at: null },
+    ];
+    Object.assign(api, {
+      runs: vi.fn(() => Promise.resolve(open)),
+      cancel: vi.fn((id: string) => { open = open.filter((r) => r.run_id !== id); return Promise.resolve({ id, status: "cancelled" }); }),
+    });
+    root = createRoot(host);
+    act(() => root!.render(<SubmitWay api={api} />));
+    act(() => byText("My runs").click());
+    await flush();
+    expect(host.textContent).toContain("Step 6 of 16: Index the literature");
+    expect(host.textContent).toContain("Waiting for the AI");
+    expect(host.textContent).toContain("Step 3 of 16: Go or no-go");
+    const cancel = host.querySelector('button[aria-label="Cancel the run of Research manuscript"]') as HTMLButtonElement;
+    act(() => cancel.click());
+    await flush();
+    expect((api as unknown as { cancel: ReturnType<typeof vi.fn> }).cancel).toHaveBeenCalledWith("r1");
+    expect(host.textContent).not.toContain("Index the literature");
+    expect(host.textContent).toContain("Go or no-go");
+  });
+
   it("cleans a step for the server", () => {
     expect(cleanStep({ kind: "human", description: "  do it ", prompt: "dropped", locator: "x" })).toEqual({ kind: "human", description: "do it" });
     expect(cleanStep({ kind: "automated", title: "", prompt: "p", locator: "  https://a.b " })).toEqual({ kind: "automated", prompt: "p", locator: "https://a.b" });

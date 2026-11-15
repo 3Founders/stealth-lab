@@ -112,6 +112,10 @@ def goal_tree_to_knowledge(tree: Any) -> dict:
                 "do": step.get("goal") or step.get("do") or step.get("description") or step.get("action") or step.get("title"),
                 "description": step.get("description"),
                 **({"role": step["role"]} if step.get("role") else {}),
+                # Who does the step: a submitted Way marks a person's step actor "human" (its kind stays the generic
+                # one), so a client can show it as the person's and not as a prompt (2026-11-15: the desktop graph
+                # showed a research Way's three go/no-go steps as "prompt").
+                **({"actor": step["actor"]} if step.get("actor") in ("human", "ai") else {}),
                 "source_locator": step.get("source_locator"),
                 "binding": step.get("binding"),
                 "needs": step_needs(step),

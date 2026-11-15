@@ -545,3 +545,27 @@ async def record_outcome(pool: Any, run: dict) -> None:
 
 async def get(pool: Any, run_id: str, *, owner_id: Optional[str]) -> dict:
     return view(await _load(pool, run_id, owner_id))
+
+
+async def mine(pool: Any, owner_id: str, *, open_only: bool = True, limit: int = 20) -> list[dict]:
+    """The person's runs, newest first: where each stands, so one started anywhere (the desktop, the website, a chat)
+    can be continued or cancelled from anywhere (2026-11-15: two paused runs could not be found to cancel)."""
+    rows = await pool.fetch(
+        """SELECT r.id::text AS run_id, r.status, r.mode, r.next_step, r.plan, r.input, r.started_at, r.updated_at,
+                  COALESCE(p.display_name, p.name) AS way_name, p.procedure_id::text AS way_id
+           FROM way_runs r JOIN procedures p ON p.id = r.procedure_row_id
+           WHERE r.owner_id = $1 AND (NOT $2::bool OR r.status NOT IN ('done', 'failed', 'cancelled'))
+           ORDER BY r.updated_at DESC LIMIT $3""", owner_id, open_only, max(1, min(int(limit), 100)))
+    out = []
+    for r in rows:
+        plan = r["plan"]
+        while isinstance(plan, str):                 # stored as JSON text by the json codec (see _load)
+            plan = json.loads(plan)
+        plan = plan or []
+        step = min(r["next_step"], len(plan)) if plan else r["next_step"]
+        out.append({"run_id": r["run_id"], "status": r["status"], "mode": r["mode"], "way_id": r["way_id"],
+                    "way_name": r["way_name"], "input": (r["input"] or "")[:200], "step": step, "of": len(plan),
+                    "step_title": plan[step - 1]["title"] if plan else "",
+                    "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+                    "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None})
+    return out

@@ -11,6 +11,10 @@ import { summarize } from "@/lib/summarize"
 
 export const dynamic = "force-dynamic"
 
+/** A Way this long on less than this balance is likely to stop partway: the person hears it before the run starts. */
+const LONG_WAY_STEPS = 5
+const LOW_FOR_LONG_WAY_USD = 0.5
+
 type InFile = { name?: string; path?: string; dataUrl?: string; mime?: string; rel?: string; size?: number }
 const TEXT_EXT = /\.(txt|md|markdown|json|jsonl|ya?ml|toml|ini|cfg|conf|env|csv|tsv|xml|html?|css|scss|less|m?js|cjs|jsx|tsx?|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|php|sh|bash|zsh|ps1|sql|graphql|gql|vue|svelte|astro|lua|r|scala|clj|exs?|dart|tf|hcl|properties|lock|log)$/i
 const isText = (f: InFile) => /^text\//.test(String(f.mime || "")) || /(json|xml|yaml|javascript|typescript|x-sh|x-python)/.test(String(f.mime || "")) || TEXT_EXT.test(String(f.name || ""))
@@ -51,9 +55,14 @@ export async function POST(req: Request) {
         const enc = (obj: any) => ctrl.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(obj)}\n\n`))
         // The personal lane spends the person's own wallet: with nothing left, say "you need a plan" instead of letting the
         // gateway's refusal come back as a raw engine error. (A balance that cannot be read is left to the model call.)
+        const way = body.plan && typeof body.plan === "object" ? (body.plan as Delegation) : null
         if (!pooledEngineConfig() && !ownKeyLane()) {
           const left = await walletRemaining()
           if (left !== null && left <= 0) { enc({ type: "need_plan" }); enc({ type: "done", outcome: "need_plan" }); ctrl.close(); return }
+          // A Way of many steps on a nearly empty wallet stops partway (2026-11-15: a 16-step research Way stopped at
+          // step 6). Say so before it starts; the run is kept, so it can go on after a top-up.
+          if (left !== null && way?.way && way.steps.length >= LONG_WAY_STEPS && left < LOW_FOR_LONG_WAY_USD)
+            enc({ type: "low_balance", left, steps: way.steps.length })
         }
         const client = await clientFor(e)                 // async: loads the ESM-only client via import()
         // Subscribe before prompting: otherwise the turn's session.idle can fire before the stream starts.

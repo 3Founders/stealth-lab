@@ -46,6 +46,17 @@ def test_a_tool_step_carries_its_locator_and_the_way_its_rank():
     assert proc["steps"][0]["locator"] == loc
 
 
+def test_a_submitted_ways_person_step_says_so():
+    # A submitted Way's steps are sub-Way references with an actor; a person's go/no-go came back as a plain
+    # instruction and the desktop drew it as a prompt (2026-11-15).
+    ref = {"procedure_id": "S", "version": 1}
+    out = _steps([{"order": 1, "title": "Write the proposal", "actor": "ai", "subprocedure_ref": ref},
+                  {"order": 2, "title": "Decide go or no-go", "actor": "human", "subprocedure_ref": ref},
+                  {"order": 3, "goal": "An older step with no actor"}])
+    assert [s.get("actor") for s in out] == ["ai", "human", None]
+    assert [s["kind"] for s in out] == ["instruction"] * 3                      # the kind clients know is unchanged
+
+
 def test_a_binding_without_an_explicit_locator_uses_its_server_url():
     out = _steps([{"order": 0, "binding": {"kind": "tool", "tool": "t", "server_url": "https://x.example/mcp"}}])
     assert out[0]["locator"]["url"] == "https://x.example/mcp"

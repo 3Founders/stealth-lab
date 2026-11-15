@@ -61,3 +61,8 @@
 .dg-page .sw-step-tools button { box-shadow: var(--dg-lift); }
 .dg-page .sw-pill { box-shadow: var(--dg-dent); }
 .dg-page .sw-list button { box-shadow: 0 1px 0 color-mix(in srgb, currentColor 8%, transparent); }
+
+/* My runs: a run's row is the open button plus its own Cancel beside it */
+.sw-runrow { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--rule); }
+.sw-list .sw-runrow > button:first-child { flex: 1; min-width: 0; border-bottom: 0; }
+.sw-list .sw-runrow > .sw-btn { width: auto; display: inline-flex; flex: none; padding: 6px 12px; border: 1px solid var(--rule); }

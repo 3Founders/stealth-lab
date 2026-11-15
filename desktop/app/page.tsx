@@ -67,6 +67,19 @@ const subagentTitle = (input: any): string => {
 const contentText = (c: any): string =>
   Array.isArray(c) ? c.filter((x: any) => x && x.type === "text").map((x: any) => String(x.text || "")).join("\n\n").trim() : ""
 
+/** Where a Way run stands, read from a kell_run_way reply: the run, the step it waits at, and how many there are. */
+type RunAt = { id: string; step: number; of: number; title: string }
+const runAtOf = (text: string): RunAt | null => {
+  let r: any
+  try { r = JSON.parse(text) } catch { return null }
+  const id = typeof r?.run_id === "string" ? r.run_id : ""
+  if (!id || !Number.isFinite(Number(r.of))) return null
+  if (["done", "failed", "cancelled"].includes(String(r.status))) return null
+  const step = Number(r.next_step ?? r.step) || 1
+  const row = Array.isArray(r.steps) ? r.steps.find((s: any) => Number(s?.n) === step) : null
+  return { id, step, of: Number(r.of), title: String(row?.title || r.your_turn?.title || r.waiting_on?.title || "") }
+}
+
 /** When a session was last used, short: the time today, else the day. */
 const when = (ms: number) => {
   const d = new Date(ms), now = new Date()
@@ -184,7 +197,9 @@ const signInFrom = (raw: string): { server: string; link: string } | null => {
 
 type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission" | "goal"; text: string; at?: number; server?: string
               state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string
-              files?: Attachment[] }
+              files?: Attachment[]
+              /** plan lines: the Way run the missing credit paused, or (low) the balance before a long Way starts */
+              run?: RunAt; low?: { left: number; steps: number } }
 type Step = { kind: "tool" | "model"; label: string; note?: string; id?: string; state?: "running" | "done" | "failed"; hint?: string }
 /** One subagent the engine ran for this turn. The right panel lists it beside the main and delegated agents; clicking it
  *  shows the brief it was given and the answer it returned. */
@@ -476,6 +491,8 @@ export default function Home() {
   // The call ids already known to be subagents: the tool's name comes on input.started, and the later events for the same
   // call may carry only its id (so the panel must not depend on the name arriving twice).
   const subagentIds = useRef<Set<string>>(new Set())
+  /** The Way run this chat is in, from the last kell_run_way reply: a stop for credit names where it paused. */
+  const lastRun = useRef<RunAt | null>(null)
   // The model this chat last ran on, from its own history (app/api/sessions). The main agent row says it, so a reopened
   // chat does not read as "no agent" (2026-11-14).
   const [sessionModel, setSessionModel] = useState<string | null>(null)
@@ -1285,6 +1302,10 @@ export default function Home() {
             : [...s, { kind: "tool", label: String(d.name || "tool"), id, state, hint, note: state === "failed" ? "failed" : undefined }])
           // The subagent's row: its one-line task while it runs, its answer (or failure) when it ends. The call's name is
           // not repeated on every event, so a known id is enough (2026-11-14: the row never filled in).
+          if (t === "session.tool.success" && /run_id/.test(contentText(d.content))) {
+            const at = runAtOf(contentText(d.content))
+            if (at || /"status":\s*"(done|failed|cancelled)"/.test(contentText(d.content))) lastRun.current = at
+          }
           if (id && SUBAGENT_TOOL.test(String(d.name || ""))) subagentIds.current.add(id)
           if (id && subagentIds.current.has(id)) {
             if (t === "session.tool.called") {
@@ -1320,7 +1341,14 @@ export default function Home() {
           setLines((l) => l.some((x) => x.requestID === d.id) ? l
             : [...l, { who: "permission", text: String(d.message || what || "a tool call"), sessionID: d.sessionID, requestID: String(d.id), at: Date.now() }])
         }
-        else if (t === "need_plan") { failed = true; setLines((l) => [...l, { who: "plan", text: "", at: Date.now() }]); setBusy(false) }
+        else if (t === "need_plan") {
+          failed = true
+          const run = lastRun.current ?? undefined
+          setLines((l) => [...l, { who: "plan", text: "", at: Date.now(), ...(run ? { run } : {}) }]); setBusy(false)
+        }
+        else if (t === "low_balance") {
+          setLines((l) => [...l, { who: "plan", text: "", at: Date.now(), low: { left: Number(ev.left) || 0, steps: Number(ev.steps) || 0 } }])
+        }
         else if (t === "error") {
           failed = true
           if (needsWebSignIn(ev.error)) { setEngine({ up: false, error: String(ev.error) }); appendAssistant("Sign in to run models: the buttons are on the left.") }
@@ -2389,7 +2417,16 @@ export default function Home() {
                         <div className="dg-col">
                           <div className="dg-meta"><b>Kell</b><span className="dg-badge">plan</span><time>{time(l.at)}</time></div>
                           <div className="dk-signin">
-                            <p>You need a plan to run models. Starter, Pro and Plus include usage, and you can add credit any time.</p>
+                            {l.low ? (
+                              <p>Your balance is ${l.low.left.toFixed(2)}, and this Way has {l.low.steps} steps: it may stop partway. If it
+                                does, the run is kept; add credit and say "continue" to pick it up where it stopped.</p>
+                            ) : l.run ? (
+                              <p>Out of credit: your Way run is paused at step {l.run.step} of {l.run.of}
+                                {l.run.title ? <> ({l.run.title})</> : null}. Nothing is lost. Add a plan or credit, then say
+                                "continue" and kell picks it up from step {l.run.step}.</p>
+                            ) : (
+                              <p>You need a plan to run models. Starter, Pro and Plus include usage, and you can add credit any time.</p>
+                            )}
                             <div className="dk-row">
                               <a className="btn-ink" href="https://www.kell.org.in/pricing" target="_blank" rel="noopener">See plans</a>
                             </div>

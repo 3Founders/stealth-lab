@@ -6,8 +6,10 @@
     GET  /v1/goals/submissions/{id}             -> one, with each step's state and the reason for a rejection
     POST /v1/goals/submissions/{id}/steps/{n}   {kind, description | prompt, locator}  -> fix step n, reviewed again
     POST /v1/goals/submissions/{id}/runs        {input}  -> run the approved Way; it pauses at a human step
+    GET  /v1/goals/runs                         ?all=1  -> the caller's runs, newest first (open ones unless all=1)
     GET  /v1/goals/runs/{run_id}
     POST /v1/goals/runs/{run_id}/done           {note}  -> the person did the step the run waits on; it continues
+    POST /v1/goals/runs/{run_id}/cancel         -> stop the run
 
 All the work is in app/submissions/api.py, shared with the MCP tools and the CLI.
 """
@@ -94,6 +96,21 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
         body = await _body(request)
         return await _answer(request, api.start_run(pool, subject, request.path_params["submission_id"],
                                                     str(body.get("input") or "")))
+
+    @server.custom_route("/v1/goals/runs", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def runs_mine(request: Request) -> Response:
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        open_only = request.query_params.get("all") not in ("1", "true")
+        return _json(request, {"runs": await api.my_runs(pool, subject, open_only=open_only)})
+
+    @server.custom_route("/v1/goals/runs/{run_id}/cancel", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def run_cancel(request: Request) -> Response:
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        return await _answer(request, api.cancel_run(pool, subject, request.path_params["run_id"]))
 
     @server.custom_route("/v1/goals/runs/{run_id}", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def run_get(request: Request) -> Response:

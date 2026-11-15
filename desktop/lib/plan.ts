@@ -37,10 +37,12 @@ export function chooseModel(task: string, models: Models, way: { approval: strin
   const strong = models.strong || models.fallback || models.cheap || null
   const cheap = models.cheap || models.fallback || strong
   if (!strong && !cheap) return { model: null, rung: null, why: "no model list on this machine yet: the engine's default runs the turn" }
-  const security = NEEDS_STRONG.test(task)
+  // The word that asked for the strong rung, named as it is: "review the literature" said "a security/analysis task"
+  // (2026-11-15), which was wrong about the task even though the rung was right.
+  const word = task.match(NEEDS_STRONG)?.[0]?.toLowerCase()
   const unproven = !!way && !PROVEN.has(way.approval)
-  if (strong && (security || unproven)) {
-    const why = security ? "a security/analysis task: the strong rung"
+  if (strong && (word || unproven)) {
+    const why = word ? `the task says "${word}", where a wrong answer costs more: the strong rung`
       : `the Way is "${way?.approval}" (not verified yet): the strong rung`
     return { model: { providerID: "kell", id: strong }, rung: "strong" as const, why }
   }
@@ -86,7 +88,9 @@ export function stepsOf(way: any): DelegationStep[] {
   return steps.map((step: any, i: number) => {
     const b = step?.binding && typeof step.binding === "object" ? step.binding : null
     const raw = String(step?.kind || (b ? "tool" : "prompt"))
-    const kind = raw === "action" ? "tool" : raw === "subgoal" ? "step" : raw === "instruction" ? "prompt" : raw
+    // A person's step (a submitted Way marks it actor "human") is shown as the person's, whatever its kind.
+    const kind = step?.actor === "human" || raw === "human" ? "human"
+      : raw === "action" ? "tool" : raw === "subgoal" ? "step" : raw === "instruction" ? "prompt" : raw
     const order = Number(step?.order ?? i + 1) || i + 1
     return {
       order,

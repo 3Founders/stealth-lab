@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  runnable, STATUS_LABEL, type Run, type StepIn, type Submission, type SubmissionRow, type SubmissionsApi,
+  runnable, STATUS_LABEL, type Run, type RunRow, type StepIn, type Submission, type SubmissionRow, type SubmissionsApi,
 } from "@/lib/submissions-api";
 import "./submit.css";
 
@@ -11,7 +11,7 @@ import "./submit.css";
  * review; a rejected one shows why and can be fixed on its own. An approved Way can be run from here, pausing at the steps a person does.
  * One component for the website's /submit page and the rooms' panel (the desktop app's Rooms pane is the same page).
  */
-type View = { kind: "new" } | { kind: "list" } | { kind: "one"; id: string };
+type View = { kind: "new" } | { kind: "list" } | { kind: "one"; id: string } | { kind: "runs" } | { kind: "run"; id: string };
 
 const blank = (kind: StepIn["kind"] = "automated"): StepIn => ({ kind, title: "", description: "", prompt: "", locator: "" });
 const DRAFT_KEY = "kell:submit-draft";
@@ -22,11 +22,14 @@ export default function SubmitWay({ api, compact = false, initial }: { api: Subm
     <div className="sw" data-compact={compact || undefined}>
       <nav className="sw-tabs" aria-label="Submissions">
         <button type="button" aria-pressed={view.kind === "new"} onClick={() => setView({ kind: "new" })}>New Way</button>
-        <button type="button" aria-pressed={view.kind !== "new"} onClick={() => setView({ kind: "list" })}>My submissions</button>
+        <button type="button" aria-pressed={view.kind === "list" || view.kind === "one"} onClick={() => setView({ kind: "list" })}>My submissions</button>
+        <button type="button" aria-pressed={view.kind === "runs" || view.kind === "run"} onClick={() => setView({ kind: "runs" })}>My runs</button>
       </nav>
       {view.kind === "new" && <NewWay api={api} onDone={(id) => setView({ kind: "one", id })} />}
       {view.kind === "list" && <Mine api={api} onOpen={(id) => setView({ kind: "one", id })} />}
       {view.kind === "one" && <One api={api} id={view.id} />}
+      {view.kind === "runs" && <Runs api={api} onOpen={(id) => setView({ kind: "run", id })} />}
+      {view.kind === "run" && <OneRun api={api} id={view.id} onBack={() => setView({ kind: "runs" })} />}
     </div>
   );
 }
@@ -116,7 +119,7 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
       <div className="sw-row">
         <button type="submit" className="btn-ink sw-btn" disabled={sending}><span>{sending ? "Submitting… kell is reviewing each step" : "Submit for review"}</span></button>
       </div>
-      <p className="sw-dim">Each step becomes its own reusable goal. kell's AI reviewer checks every step; approved steps go into search marked “AI approved”, and a rejected step comes back with the reason (by email too) so you fix just that one.</p>
+      <p className="sw-dim">Each step becomes its own reusable goal. kell's AI reviewer checks every step; approved steps go into search marked “AI approved”, and a rejected step comes back with the reason so you fix just that one.</p>
     </form>
   );
 }
@@ -281,28 +284,108 @@ function RunBox({ api, id }: { api: SubmissionsApi; id: string }) {
           <button type="button" className="btn-ink sw-btn" disabled={busy} onClick={() => void go(() => api.run(id, input))}><span>{busy ? "Running…" : run ? "Run again" : "Run"}</span></button>
         </div>
       ) : null}
-      {run && (
-        <div className="sw-run-out">
-          {run.outputs.map((o) => (
-            <div key={o.order} className="sw-out">
-              <b>Step {o.order}: {o.title}</b> <span className="sw-dim">{o.actor === "human" ? "done by you" : "done by kell"}</span>
-              <pre>{o.output}</pre>
-            </div>
-          ))}
-          {run.status === "waiting_human" && run.waiting_on && (
-            <div className="sw-wait">
-              <p><b>Your turn, step {run.waiting_on.order}: {run.waiting_on.title}</b></p>
-              {run.waiting_on.kind === "signin" && run.waiting_on.link
-                ? <p>Sign in to the tool first: <a href={run.waiting_on.link} target="_blank" rel="noopener noreferrer">open the sign-in</a>, then mark it done.</p>
-                : <p>{run.waiting_on.description}</p>}
-              <textarea rows={2} aria-label="What you did or found" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What you did or found (passed to the next steps)" />
-              <button type="button" className="btn-ink sw-btn" disabled={busy} onClick={() => void go(async () => { const r = await api.done(run.id, note); setNote(""); return r; })}><span>{busy ? "Continuing…" : "Done, continue"}</span></button>
-            </div>
-          )}
-          {run.status === "done" && <p className="sw-mode" role="status">Done.</p>}
-          {run.status === "failed" && <p className="sw-error" role="alert">The run stopped: {run.error}</p>}
+      {run && <RunOut run={run} note={note} setNote={setNote} busy={busy}
+        onDone={() => void go(async () => { const r = await api.done(run.id, note); setNote(""); return r; })} />}
+      {error && <p className="sw-error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+/** A run's steps so far and, when it waits on the person, their turn. Shared by "Run this Way" and "My runs". */
+function RunOut({ run, note, setNote, busy, onDone }: {
+  run: Run; note: string; setNote: (v: string) => void; busy: boolean; onDone: () => void;
+}) {
+  return (
+    <div className="sw-run-out">
+      {run.outputs.map((o) => (
+        <div key={o.order} className="sw-out">
+          <b>Step {o.order}: {o.title}</b> <span className="sw-dim">{o.actor === "human" ? "done by you" : "done by kell"}</span>
+          <pre>{o.output}</pre>
+        </div>
+      ))}
+      {run.status === "waiting_human" && run.waiting_on && (
+        <div className="sw-wait">
+          <p><b>Your turn, step {run.waiting_on.order}: {run.waiting_on.title}</b></p>
+          {run.waiting_on.kind === "signin" && run.waiting_on.link
+            ? <p>Sign in to the tool first: <a href={run.waiting_on.link} target="_blank" rel="noopener noreferrer">open the sign-in</a>, then mark it done.</p>
+            : <p>{run.waiting_on.description}</p>}
+          <textarea rows={2} aria-label="What you did or found" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What you did or found (passed to the next steps)" />
+          <button type="button" className="btn-ink sw-btn" disabled={busy} onClick={onDone}><span>{busy ? "Continuing…" : "Done, continue"}</span></button>
         </div>
       )}
+      {run.status === "waiting_session" && (
+        <p className="sw-dim">The next step is done by the AI in the chat that started this run (the desktop app or your assistant): say “continue” there.</p>
+      )}
+      {run.status === "done" && <p className="sw-mode" role="status">Done.</p>}
+      {run.status === "failed" && <p className="sw-error" role="alert">The run stopped: {run.error}</p>}
+      {run.status === "cancelled" && <p className="sw-dim" role="status">Cancelled.</p>}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------------------------------------------------ my runs
+
+const RUN_LABEL: Record<Run["status"], string> = {
+  running: "Running", waiting_human: "Waiting for you", waiting_session: "Waiting for the AI", done: "Done", failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+/** Every open run of the person's, wherever it was started, so a paused one can be continued or cancelled from here. */
+function Runs({ api, onOpen }: { api: SubmissionsApi; onOpen: (id: string) => void }) {
+  const [rows, setRows] = useState<RunRow[] | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  const load = useCallback(async () => {
+    try { setRows(await api.runs()); setError(""); } catch (e) { setError((e as Error).message); }
+  }, [api]);
+  useEffect(() => { void load(); }, [load]);
+  const cancel = async (id: string) => {
+    setBusy(id); setError("");
+    try { await api.cancel(id); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(""); }
+  };
+  if (error && !rows) return <p className="sw-error" role="alert">{error}</p>;
+  if (!rows) return <p className="sw-dim">Loading…</p>;
+  if (!rows.length) return <p className="sw-dim">No runs in progress.</p>;
+  return (
+    <>
+      <ul className="sw-list">
+        {rows.map((r) => (
+          <li key={r.run_id} className="sw-runrow">
+            <button type="button" onClick={() => onOpen(r.run_id)}>
+              <span className="sw-name">{r.way_name}</span>
+              <span className="sw-pill" data-status={r.status}>{RUN_LABEL[r.status] || r.status}</span>
+              <span className="sw-dim">Step {r.step} of {r.of}{r.step_title ? `: ${r.step_title}` : ""}{r.input ? ` · “${r.input.slice(0, 80)}”` : ""}</span>
+            </button>
+            <button type="button" className="btn-line sw-btn" aria-label={`Cancel the run of ${r.way_name}`} disabled={busy === r.run_id}
+              onClick={() => void cancel(r.run_id)}>{busy === r.run_id ? "Cancelling…" : "Cancel"}</button>
+          </li>
+        ))}
+      </ul>
+      {error && <p className="sw-error" role="alert">{error}</p>}
+    </>
+  );
+}
+
+function OneRun({ api, id, onBack }: { api: SubmissionsApi; id: string; onBack: () => void }) {
+  const [run, setRun] = useState<Run | null>(null);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const go = async (f: () => Promise<Run>) => {
+    setBusy(true); setError("");
+    try { setRun(await f()); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  };
+  useEffect(() => { void go(() => api.getRun(id)); }, [api, id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const open = run && !["done", "failed", "cancelled"].includes(run.status);
+  return (
+    <section className="sw-run" aria-label="This run">
+      <div className="sw-row">
+        <button type="button" className="btn-line sw-btn" onClick={onBack}>← My runs</button>
+        {open && <button type="button" className="btn-line sw-btn" disabled={busy} onClick={() => void go(() => api.cancel(id))}>Cancel this run</button>}
+      </div>
+      {!run && !error && <p className="sw-dim">Loading…</p>}
+      {run && <RunOut run={run} note={note} setNote={setNote} busy={busy}
+        onDone={() => void go(async () => { const r = await api.done(run.id, note); setNote(""); return r; })} />}
       {error && <p className="sw-error" role="alert">{error}</p>}
     </section>
   );

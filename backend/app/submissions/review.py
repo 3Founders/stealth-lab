@@ -47,6 +47,27 @@ submitter can act on; for an approval, what makes it clear>"}]}"""
 
 # ---------------------------------------------------------------------------------------------------------------- checks
 
+# Search endpoints that answer without a query with the same unrelated page every time: kell fetches a step's link
+# exactly as written, before the run's question exists (2026-11-15: a research Way's step 4 linked
+# https://api.openalex.org/works and every run got a 1951 protein-assay paper).
+_SEARCH_ENDPOINTS = re.compile(
+    r"^https?://(api\.openalex\.org/(works|authors|sources|concepts|topics)|api\.semanticscholar\.org/graph/v1/paper/search"
+    r"|export\.arxiv\.org/api/query|eutils\.ncbi\.nlm\.nih\.gov/entrez/eutils/esearch\.fcgi|api\.crossref\.org/works"
+    r"|www\.google\.com/search|duckduckgo\.com/|www\.bing\.com/search)/?(\?|$)", re.I)
+
+
+def _bare_search(url: str) -> Optional[str]:
+    """A search API linked with no search in it: it returns the same results on every run."""
+    m = _SEARCH_ENDPOINTS.match(url.strip())
+    if not m:
+        return None
+    query = url.split("?", 1)[1] if "?" in url else ""
+    if re.search(r"(^|&)(search|query|q|search_query|term|filter|query\.\w+)=[^&]+", query, re.I):
+        return None
+    return ("the link is a search with no query, so every run gets the same unrelated results; remove the link and "
+            "say in the prompt which source to search, or link a fixed page")
+
+
 async def _reachable(url: str, client: Optional[httpx.AsyncClient] = None) -> Optional[str]:
     """None when the website answers; else why not. Every hop is screened (a public http(s) host only)."""
     from app.services.screening import screen_locator
@@ -123,7 +144,7 @@ async def check_step(pool: Any, step: dict, *, client: Optional[httpx.AsyncClien
     loc = step.get("locator") or {}
     kind, value = loc.get("type"), str(loc.get("value") or "")
     if kind == "url":
-        why = await _reachable(value, client)
+        why = _bare_search(value) or await _reachable(value, client)
         if why:
             problems.append(why)
     elif kind == "tool":

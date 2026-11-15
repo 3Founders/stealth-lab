@@ -120,4 +120,16 @@ async def get_run(pool: Any, owner_id: str, run_id: str) -> dict:
         return await runs.get(pool, run_id, owner_id=owner_id)
 
 
+async def my_runs(pool: Any, owner_id: str, *, open_only: bool = True) -> list[dict]:
+    from app.execution import way_runs
+
+    return await way_runs.mine(pool, owner_id, open_only=open_only)
+
+
+async def cancel_run(pool: Any, owner_id: str, run_id: str) -> dict:
+    from app.execution import way_runs
+
+    return await way_runs.report(pool, run_id, owner_id=owner_id, cancel=True)
+
+
 ERRORS = (intake.SubmissionError, runs.RunError, LookupError)
