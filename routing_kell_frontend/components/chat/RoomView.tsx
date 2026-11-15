@@ -1007,6 +1007,18 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                           <span>Use</span><span className="sq" aria-hidden="true">→</span>
                         </button>
                       )}
+                      {picked && w.steps.length > 0 ? (
+                        <ol className="dg-way-steps" aria-label={`${w.steps.length} steps`}>
+                          {w.steps.map((s, n) => (
+                            <li key={`${s.order}-${n}`} style={{ ["--i" as any]: n }}
+                              data-state={st.done || (st.step || 0) > s.order ? "done"
+                                : (st.step || 0) === s.order ? "running" : "todo"}>
+                              <span className="dg-way-dot" aria-hidden="true" />
+                              <span className="dg-way-step-title">{s.title}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      ) : null}
                     </li>
                   );
                 })}

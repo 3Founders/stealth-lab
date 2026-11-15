@@ -1555,6 +1555,18 @@ span.dg-replyq { cursor: default; }
 .dg-way-btn:disabled .sq { transform: none; }
 .dg-way-actions { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 4px; flex: none; }
 .dg-way-run { font-size: .8em; color: var(--grey); text-align: right; max-width: 118px; }
+/* The picked Way's steps, in the card: the same Goal -> Way -> steps shape as the desktop graph, compact. The dot of the
+   step kell is on pulses; finished steps are inked. */
+.dg-way-steps { grid-column: 1 / -1; list-style: none; margin: 2px 0 0; padding: 4px 0 0; display: flex;
+  flex-direction: column; gap: 3px; border-top: 1px solid var(--rule); }
+.dg-way-steps li { display: flex; align-items: flex-start; gap: 7px; font-size: .8em; color: var(--grey);
+  animation: dg-rise 320ms var(--dg-smooth) backwards; animation-delay: calc(var(--i, 0) * 50ms); }
+.dg-way-dot { flex: none; width: 6px; height: 6px; margin-top: 4px; border-radius: 50%;
+  border: 1.5px solid var(--rule-strong); background: var(--surface); }
+.dg-way-steps li[data-state="done"] .dg-way-dot { background: var(--ink); border-color: var(--ink); }
+.dg-way-steps li[data-state="running"] .dg-way-dot { background: var(--yellow); border-color: var(--ink);
+  animation: dg-pulse 1.2s var(--dg-smooth) infinite; }
+.dg-way-steps li[data-state="running"] .dg-way-step-title { color: var(--ink); }
 .dg-way-skip { justify-self: start; font: inherit; font-size: .85em; background: none; border: 0; padding: 0;
   color: var(--grey); text-decoration: underline; cursor: pointer; }
 .dg-way-skip:hover { color: var(--ink); }
@@ -1562,7 +1574,7 @@ span.dg-replyq { cursor: default; }
   .dg-way-item { grid-template-columns: 40px minmax(0, 1fr) auto; }
   .dg-way-best { grid-column: 2; grid-row: 2; justify-self: start; }
 }
-@media (prefers-reduced-motion: reduce) { .dg-way-card { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .dg-way-card, .dg-way-steps li, .dg-way-steps li[data-state="running"] .dg-way-dot { animation: none !important; } }
 
 /* The sidebar's own Search (Ctrl K was the only way in), "+ New room" beside Manage rooms, and its inline name box. */
 .dg-side-search { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 6px 10px; padding: 7px 10px; font: inherit; font-size: .9em;
