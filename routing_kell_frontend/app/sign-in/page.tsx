@@ -16,6 +16,12 @@ function destinationFrom(searchParams: URLSearchParams): string {
   return isSafeRedirectPath(raw) ? raw : "/";
 }
 
+/** A sign-in that lands on "/" should reach the rooms once; clear the one-time home flag so the redirect happens again. */
+function allowHomeRedirect(destination: string) {
+  if (destination !== "/") return;
+  try { window.sessionStorage.removeItem("kell:home:redirected"); } catch { /* storage blocked */ }
+}
+
 function GoogleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 18 18" aria-hidden="true">
@@ -58,6 +64,7 @@ function SignInInner() {
   async function oauth(provider: "google" | "github") {
     const client = getSupabase();
     if (!client) return;
+    allowHomeRedirect(destination);
     setStatus("loading");
     const { error } = await client.auth.signInWithOAuth({
       provider,
@@ -95,6 +102,7 @@ function SignInInner() {
         setMessage(/already registered|already exists/i.test(error.message) ? "An account with that email already exists. Sign in instead." : "Could not create an account with those details.");
         return;
       }
+      allowHomeRedirect(destination);
       if (!data.session) {
         setStatus("check-email");
         return;
@@ -110,6 +118,7 @@ function SignInInner() {
       setMessage("That email and password don't match an account.");
       return;
     }
+    allowHomeRedirect(destination);
     router.push(destination);
   }
 

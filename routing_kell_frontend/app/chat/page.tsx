@@ -37,7 +37,7 @@ export default function ChatPage() {
           </div>
         )}
         {session && (
-          <RoomView subject={session.subject} back={<BackButton inline />} brand={<Link href="/" aria-label="keळ, back to the site"><Wordmark priority style={{ height: 38, width: "auto" }} /></Link>} />
+          <RoomView subject={session.subject} back={<BackButton inline />} brand={<Link href="/?home=1" aria-label="keळ, back to the site"><Wordmark priority style={{ height: 38, width: "auto" }} /></Link>} />
         )}
       </section>
     </>

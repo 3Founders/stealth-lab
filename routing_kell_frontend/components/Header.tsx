@@ -139,7 +139,7 @@ export default function Header() {
     <div className="nav-wrap">
       <div className="frame">
         <header className="nav">
-          <Link href="/" className="logo" aria-label="keळ, home" onClick={() => setOpen(false)}>
+          <Link href="/?home=1" className="logo" aria-label="keळ, home" onClick={() => setOpen(false)}>
             <Wordmark priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{navLinks.map(item)}</nav>
