@@ -1553,7 +1553,7 @@ span.dg-replyq { cursor: default; }
 .dg-way-btn:hover .sq, .dg-way-btn:focus-visible .sq { transform: translate(2px, -2px); }
 .dg-way-btn:disabled { opacity: .55; cursor: default; }
 .dg-way-btn:disabled .sq { transform: none; }
-.dg-way-actions { display: flex; align-items: center; justify-content: flex-end; flex: none; }
+.dg-way-actions { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 4px; flex: none; }
 .dg-way-run { font-size: .8em; color: var(--grey); text-align: right; max-width: 118px; }
 .dg-way-skip { justify-self: start; font: inherit; font-size: .85em; background: none; border: 0; padding: 0;
   color: var(--grey); text-decoration: underline; cursor: pointer; }

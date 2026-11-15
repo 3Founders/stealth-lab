@@ -995,6 +995,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                                 : st.waiting ? "Waiting for you"
                                   : `Step ${st.step || 0} of ${st.of || w.steps.length}${st.title ? ` · ${st.title}` : ""}`}
                           </span>
+                          {st.error && !running ? (
+                            <button type="button" className="dg-way-btn" onClick={() => void pickWay(roomRef.current, l, w)}>
+                              <span>Try again</span><span className="sq" aria-hidden="true">→</span>
+                            </button>
+                          ) : null}
                         </span>
                       ) : (
                         <button type="button" className="dg-way-btn" disabled={running || Boolean(st.picked)}
