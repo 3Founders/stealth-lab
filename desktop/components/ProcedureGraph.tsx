@@ -16,8 +16,10 @@ const KIND: Record<string, string> = {
 
 const short = (id?: string) => (id ? id.slice(0, 8) : "")
 
-export default function ProcedureGraph({ plan, glass, onToggleGlass }: {
+export default function ProcedureGraph({ plan, preview = false, glass, onToggleGlass }: {
   plan: Delegation | null
+  /** The best fit while the choice is open in the chat: the same graph, marked as a preview so it never reads as running. */
+  preview?: boolean
   glass: boolean
   onToggleGlass: () => void
 }) {
@@ -51,6 +53,7 @@ export default function ProcedureGraph({ plan, glass, onToggleGlass }: {
     <section className="dk-proc" data-glass={glass ? "on" : "off"} aria-label="Procedure graph">
       <div className="dk-proc-head">
         <h2>Procedure</h2>
+        {preview && <span className="dk-proc-preview">Preview · pick in the chat</span>}
         <button type="button" className="dk-icon dk-proc-toggle" aria-pressed={glass}
           aria-label={glass ? "Turn the glass effect off" : "Turn the glass effect on"}
           title={glass ? "Glass effect on" : "Glass effect off"} onClick={onToggleGlass}>
@@ -63,29 +66,37 @@ export default function ProcedureGraph({ plan, glass, onToggleGlass }: {
         </button>
       </div>
 
-      {!plan?.way ? (
+      {!plan ? (
         <p className="dk-note">Send a task: kell resolves a Goal and a Way, and the graph shows the steps it will run.</p>
       ) : (
-        <div className="dk-proc-graph">
+        <div className="dk-proc-graph" key={`${plan.goal?.id || ""}-${plan.way?.id || "none"}-${steps.length}`}>
           <span className="dk-proc-aurora" aria-hidden="true" />
-          <div className="dk-proc-node dk-proc-goal" role="group" aria-label="Goal">
+          <div className="dk-proc-node dk-proc-goal" role="group" aria-label="Goal" style={{ ["--i" as any]: 0 }}>
             <span className="dk-proc-label">Goal</span>
             <b title={plan.goal?.name}>{plan.goal?.name || "no Goal matched"}</b>
             {plan.goal?.id && <small>{short(plan.goal.id)}</small>}
           </div>
           <span className="dk-proc-link" aria-hidden="true" />
-          <div className="dk-proc-node dk-proc-way" role="group" aria-label="Way">
-            <span className="dk-proc-label">Way</span>
-            <b title={plan.way.name}>{plan.way.name}</b>
-            <span className="dk-proc-tags">
-              <i data-approval={plan.way.approval}>{plan.way.approval}</i>
-              <i>{steps.length} {steps.length === 1 ? "step" : "steps"}</i>
-            </span>
-          </div>
+          {!plan.way ? (
+            <div className="dk-proc-node dk-proc-way dk-proc-empty" role="group" aria-label="Way">
+              <span className="dk-proc-label">Way</span>
+              <b>No Way bound yet</b>
+              <small>kell matched the Goal; no written Way runs it</small>
+            </div>
+          ) : (
+            <div className="dk-proc-node dk-proc-way" role="group" aria-label="Way">
+              <span className="dk-proc-label">Way</span>
+              <b title={plan.way.name}>{plan.way.name}</b>
+              <span className="dk-proc-tags">
+                <i data-approval={plan.way.approval}>{plan.way.approval}</i>
+                <i>{steps.length} {steps.length === 1 ? "step" : "steps"}</i>
+              </span>
+            </div>
+          )}
           {steps.length > 0 && (
             <ol className="dk-proc-steps" aria-label={`${steps.length} steps`}>
               {steps.map((s) => (
-                <li key={`${s.order}-${s.title}`} className="dk-proc-step">
+                <li key={`${s.order}-${s.title}`} className="dk-proc-step" style={{ ["--i" as any]: s.order }}>
                   <span className="dk-proc-dot" data-kind={s.kind} aria-hidden="true" />
                   <div className="dk-proc-node">
                     <span className="dk-proc-order">{s.order}</span>

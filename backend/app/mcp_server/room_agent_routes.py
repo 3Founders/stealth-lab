@@ -230,6 +230,42 @@ def _sse(obj: Any) -> str:
     return f"data: {json.dumps(obj, default=str)}\n\n"
 
 
+def _way_cards(answer: dict[str, Any], limit: int = 6) -> dict[str, Any]:
+    """The route answer as the chat's Way cards: the best Goal that has a written Way, then its Ways (name, approval,
+    step count and bound tool). The same shape the desktop picker uses, so both surfaces read the same answer."""
+    goals = [g for g in (answer.get("goals") or []) if isinstance(g, dict)]
+    goal = next((g for g in goals if isinstance(g.get("ways"), list) and g["ways"]), goals[0] if goals else None)
+    ways: list[dict[str, Any]] = []
+    for w in (goal.get("ways") if isinstance(goal, dict) else []) or []:
+        if not isinstance(w, dict) or len(ways) >= limit:
+            continue
+        steps = [s for s in (w.get("steps") or []) if isinstance(s, dict)]
+        cards = [c for c in (w.get("cards") or []) if isinstance(c, dict)]
+        tool = ""
+        for s in steps:
+            b = s.get("binding") if isinstance(s.get("binding"), dict) else None
+            if b and b.get("name"):
+                tool = str(b.get("name"))
+                break
+        ways.append({
+            "id": str(w.get("procedure_id") or ""),
+            "name": str(w.get("name") or ""),
+            "approval": str(w.get("verification_state") or w.get("approval_status") or "candidate"),
+            "review": str(w.get("approval_status") or ""),
+            "why": str((goal.get("description") or goal.get("matched_by") or "") if isinstance(goal, dict) else ""),
+            "tool": tool or (str(cards[0].get("name") or "") if cards else ""),
+            "steps": [{"order": int(s.get("order") or i + 1),
+                       "title": str(s.get("title") or s.get("do") or s.get("description") or f"Step {i + 1}"),
+                       "kind": str(s.get("kind") or ("tool" if s.get("binding") else "prompt"))}
+                      for i, s in enumerate(steps)],
+        })
+    return {
+        "goal": ({"id": str(goal.get("goal_id") or ""), "name": str(goal.get("canonical_name") or "")}
+                 if isinstance(goal, dict) else None),
+        "ways": ways,
+    }
+
+
 def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_call: ModelCall,
              find_tools: FindTools, use_tool: UseTool, model_stream: ModelStream | None = None, recent: int = 12,
              discover: Any = None, tools_of: Any = None, call_cheap: Any = None, classify: Any = None) -> None:
@@ -378,6 +414,149 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         from app.tool_routing.route_api import route_payload
 
         return _json(request, await route_payload(pool, q, limit=k, owner_id=subject))
+
+    @server.custom_route("/v1/rooms/{room_id}/route", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def room_route(request: Request) -> Response:
+        """Which Ways fit a room message, before @kell answers it: the rooms' version of the desktop's picker.
+
+        A task (three words or more, not a plain question) is routed through the same Goal catalog as the desktop; the
+        chat shows the Ways and waits for a pick. No Way means the message goes to the agent exactly as before.
+        """
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001
+            return _error(request, "the request body must be JSON", 400)
+        text = str(data.get("text") or "").strip()[: rm.MAX_BODY] if isinstance(data, dict) else ""
+        if not text:
+            return _error(request, "send the message in `text`", 400)
+        room_id = request.path_params["room_id"]
+        try:
+            await rm.recent_events(pool, subject, room_id, 1)      # membership, the same check the agent makes
+        except rm.RoomError as exc:
+            return _error(request, str(exc), exc.status)
+        if not agent.wants_work(text) or agent.plainly_answerable(text):
+            return _json(request, {"goal": None, "ways": []})
+        from app.tool_routing.route_api import route_payload
+        answer = await route_payload(pool, text, limit=5, owner_id=subject)
+        return _json(request, _way_cards(answer))
+
+    @server.custom_route("/v1/rooms/{room_id}/way", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def room_way(request: Request) -> Response:
+        """Run the Way the person picked in the room, headless, and post the result into the room.
+
+        The run is kell's executor (app/execution/way_runs.py) in "headless" mode: kell does the prompt, fetch and tool
+        steps itself. Progress arrives as SSE (`step` while it runs, `done` when the run ended, `posted` when the
+        result is in the room); the same result is returned as JSON without `Accept: text/event-stream`.
+        """
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001
+            return _error(request, "the request body must be JSON", 400)
+        way_id = str(data.get("way_id") or "").strip()[:200] if isinstance(data, dict) else ""
+        text = str(data.get("text") or "").strip()[: rm.MAX_BODY] if isinstance(data, dict) else ""
+        if not way_id:
+            return _error(request, "say which Way: {\"way_id\": \"<procedure id>\"}", 400)
+        room_id = request.path_params["room_id"]
+        try:
+            await rm.recent_events(pool, subject, room_id, 1)
+        except rm.RoomError as exc:
+            return _error(request, str(exc), exc.status)
+        my_label = await rm.owner_label(pool, subject)
+        try:
+            people = await pool.fetchval(
+                "SELECT count(*) FROM room_members WHERE room_id::text = $1 AND removed_at IS NULL", str(room_id))
+        except Exception:  # noqa: BLE001
+            people = 0
+        post_handle = f"@{my_label}/kell" if (people or 0) > 1 else "@kell"
+        try:
+            way_name = await pool.fetchval(
+                """SELECT name FROM procedures WHERE id::text = $1 OR procedure_id::text = $1
+                   ORDER BY version DESC LIMIT 1""", way_id)
+        except Exception:  # noqa: BLE001
+            way_name = None
+        from app.execution import way_runs as _way_runs
+
+        async def finish(view: dict[str, Any]) -> tuple[str, Any]:
+            status = str(view.get("status") or "")
+            if status == "done":
+                body = str(view.get("result") or "Done.")
+            elif status == "failed":
+                body = f"It stopped at step {view.get('step')} of {view.get('of')}: {view.get('error') or 'a step failed'}"
+            elif status == "waiting_human":
+                w = view.get("waiting_on") or {}
+                body = (f"It needs you at step {w.get('order')}: {w.get('title') or 'a person step'}."
+                        + (f" {w.get('description')}" if w.get("description") else ""))
+            else:
+                body = str(view.get("error") or "The run ended without a result.")
+            head = f"{way_name or 'The Way'} - {view.get('of') or 0} steps."
+            reply = f"{head}\n\n{body}".strip()
+            events = rm.agent_events(post_handle, reply)
+            appended = await rm.append_events(pool, subject, room_id, events)
+            return reply, (appended["accepted"][0] if appended["accepted"] else None)
+
+        async def run_way() -> tuple[dict[str, Any], str, Any]:
+            view = await _way_runs.start(pool, way_id, owner_id=subject, input=text, mode="headless")
+            reply, accepted = await finish(view)
+            return view, reply, accepted
+
+        if "text/event-stream" in (request.headers.get("accept") or ""):
+            queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+            async def work() -> None:
+                try:
+                    view = await _way_runs.start(
+                        pool, way_id, owner_id=subject, input=text, mode="headless",
+                        on_progress=lambda ev: queue.put_nowait(dict(ev)))
+                    reply, accepted = await finish(view)
+                    queue.put_nowait({"event": "posted", "done": True, "text": reply, "event_row": accepted, "view": view})
+                except Exception as exc:  # noqa: BLE001
+                    log.exception("room way: the run failed for room %s", str(room_id)[:8])
+                    queue.put_nowait({"event": "error", "error": str(exc)[:300] or "the run could not start"})
+                finally:
+                    queue.put_nowait(None)
+
+            task = asyncio.ensure_future(work())
+            _RUNNING.add(task)
+            task.add_done_callback(_RUNNING.discard)
+            _BY_ROOM.setdefault((subject, str(room_id)), {})[task] = post_handle
+            task.add_done_callback(lambda t, k=(subject, str(room_id)): (_BY_ROOM.get(k, {}).pop(t, None), (not _BY_ROOM.get(k)) and _BY_ROOM.pop(k, None)))
+
+            async def frames() -> AsyncIterator[str]:
+                while True:
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_S)
+                    except asyncio.TimeoutError:
+                        yield ": keep-alive\n\n"
+                        continue
+                    if item is None:
+                        return
+                    yield _sse(item)
+
+            return StreamingResponse(frames(), media_type="text/event-stream",
+                                     headers={**cors_headers(request), "Cache-Control": "no-store",
+                                              "X-Accel-Buffering": "no"})
+        try:
+            view, reply, accepted = await run_way()
+        except Exception as exc:  # noqa: BLE001
+            log.exception("room way: the run failed for room %s", str(room_id)[:8])
+            return _error(request, str(exc)[:300] or "the run could not start", 502)
+        return _json(request, {"posted": accepted is not None, "text": reply, "event": accepted, "view": view})
 
     @server.custom_route("/v1/rooms/{room_id}/agent/stop", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_stop(request: Request) -> Response:

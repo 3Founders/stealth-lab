@@ -662,7 +662,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 
 V1_TOOLS: frozenset[str] = frozenset({
-    "find_ways", "add_goal", "search_goals", "report_discovery", "submit", "submit_goal", "run_way", "recommend_models", "report_model_run", "report_result",
+    "find_ways", "add_goal", "search_goals", "route_goal", "report_discovery", "submit", "submit_goal", "run_way", "recommend_models", "report_model_run", "report_result",
     "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool", "delegate_inbox",
     "delegate_result", "delegate_call", "room_list", "room_read", "room_file", "room_post", "room_members", "canvas_list", "canvas_read", "canvas_write",
     "memory_read", "memory_search", "memory_write"})
@@ -674,6 +674,7 @@ V1_TOOLS: frozenset[str] = frozenset({
 _V1_ANNOTATIONS: dict[str, dict] = {
     "find_ways": {"title": "Find proven ways", "read_only_hint": True, "open_world_hint": False},
     "search_goals": {"title": "Find Goals", "read_only_hint": True, "open_world_hint": False},
+    "route_goal": {"title": "Route a task to its Goal and Ways", "read_only_hint": True, "open_world_hint": False},
     # a write: stores a candidate Goal owned by the caller, in the same catalog the router reads
     "add_goal": {"title": "Add a Goal", "read_only_hint": False, "destructive_hint": False,
                  "idempotent_hint": False, "open_world_hint": False},
@@ -5485,6 +5486,38 @@ async def search_goals(ctx: Context, query: str, limit: int = 10) -> str:
                 for r in rows
             ]
     return json.dumps({"query": text, "goals": hits}, default=str)
+
+
+@server.tool()
+@_activity.traced
+async def route_goal(ctx: Context, query: str, limit: int = 5) -> str:
+    """
+    Which Goal fits this task, and that Goal's written Ways and tools -- the Goal catalog's answer, not a judgment of
+    whether knowledge helps. `find_ways` first decides whether a lookup is worthwhile, so for an ordinary task ("search
+    the web for X") it can answer `not_needed` while a stored Way does fit; this answers the router's own question
+    instead (the same read as `GET /v1/goals/route`).
+
+    Returns {"query": ..., "goals": [{goal_id, canonical_name, description, score, matched_by, ways: [{procedure_id,
+    name, steps, verification_state, approval_status, cards}], tools: [...]}]}. Read-only.
+    """
+    from app.tool_routing.route_api import route_payload
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    text = " ".join(str(query or "").split())[:2000]
+    if not text:
+        return json.dumps({"query": "", "goals": []})
+    try:
+        owner = _kell_owner()
+    except PermissionError:
+        owner = ""
+    k = max(1, min(int(limit or 5), 20))
+    scope = None
+    if owner:
+        from app.services.auth_context import AccessScope
+
+        scope = AccessScope.for_user(owner)
+    payload = await route_payload(pool, text, limit=k, owner_id=owner or None, scope=scope)
+    return json.dumps(payload, default=str)
 
 
 @server.tool()

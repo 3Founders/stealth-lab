@@ -1242,7 +1242,7 @@ export default function Home() {
       // Nothing runs yet: the panel shows the Ways as cards, and the person picks one (or runs without one).
       setPendingTurn({ text: sent, files: outgoing, asGoal, goal: routed.goal })
       setBusy(false); busyRef.current = false
-      setDelegateStatus(`${routed.options.length} ${routed.options.length === 1 ? "Way" : "Ways"} found — choose one in the right panel`)
+      setDelegateStatus(`${routed.options.length} ${routed.options.length === 1 ? "Way" : "Ways"} found - choose one in the chat`)
       return
     }
     await runTurn(sent, outgoing, null)
@@ -1737,8 +1737,8 @@ export default function Home() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); setPalette((p) => !p); setPaletteQ(""); setPaletteIdx(0) }
-      // Ctrl+` shows or hides the terminal, as in other editors.
-      else if (e.ctrlKey && (e.key === "`" || e.code === "Backquote")) { e.preventDefault(); togglePanel("terminal") }
+      // Ctrl/Cmd+J shows or hides the terminal (the Inspector's first tab), as in other editors.
+      else if ((e.ctrlKey || e.metaKey) && (e.key === "j" || e.key === "J")) { e.preventDefault(); togglePanel("terminal") }
       else if (e.key === "Escape" && palette) { setPalette(false) }
     }
     window.addEventListener("keydown", onKey)
@@ -1872,7 +1872,7 @@ export default function Home() {
     { id: "fork", title: "Fork this session", hint: "a new session with this whole chat; the original stays as it is", run: () => void fork() },
     { id: "left", title: "Show or hide the project sidebar", run: () => toggleSidebar("left") },
     { id: "right", title: "Show or hide the changes panel", run: () => toggleSidebar("right") },
-    { id: "terminal", title: "Show or hide the terminal", hint: "Ctrl+` — a shell in the project folder", run: () => togglePanel("terminal") },
+    { id: "terminal", title: "Show or hide the terminal", hint: "Ctrl+J — a shell in the project folder", run: () => togglePanel("terminal") },
     { id: "browser", title: "Show or hide the browser", hint: "open your dev server or any page beside the chat", run: () => togglePanel("browser") },
     { id: "stop", title: "Stop kell", hint: "end the running turn; nothing is undone", run: () => void stop() },
     { id: "code", title: "Go to the coding agent", run: () => setPane("code") },
@@ -1931,6 +1931,13 @@ export default function Home() {
 
   const importSourceInfo = IMPORT_SOURCES.find((s) => s.id === importSource) || IMPORT_SOURCES[0]
 
+  // The graph in the right sidebar: the chosen Way, or a preview of the best Way while the choice is open in the chat.
+  // The cards themselves live in the middle chat now (2026-11-16); the sidebar is always the procedure, never a list.
+  const previewPlan = !delegation && pendingTurn && delegateOptions.length
+    ? planFromOption(pendingTurn.text, settings?.models || {}, pendingTurn.goal, delegateOptions[0])
+    : null
+  const shownPlan = delegation ?? previewPlan
+
   // The side sheet's derived view: this chat's stored threads, newest first, and whether its newest turn is still out.
   const btwThreads = btwHistory
     .filter((t) => (t.sessionID || null) === (sessionID || null))
@@ -1949,7 +1956,7 @@ export default function Home() {
   return (
     <section className="dg-page dk-page" style={springVars() as React.CSSProperties}>
       <ThemeWatcher />
-      <nav className="dk-switch" aria-label="Code, rooms and import">
+      <nav className="dk-switch" aria-label="Code, rooms and help">
         {desktop() && (
           <button type="button" className="dk-icon dk-icon-sm dk-menubtn" aria-label="File, Edit and View menu" title="File, Edit, View and Help" onClick={() => desktop()?.showMenu?.()}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -1959,14 +1966,9 @@ export default function Home() {
           <button type="button" role="tab" aria-selected={pane === "code"} onClick={() => setPane("code")}>Code</button>
           <button type="button" role="tab" aria-selected={pane === "rooms"} onClick={() => setPane("rooms")}>Rooms</button>
         </div>
-        {/* Bring another agent's chats into this project: the same popup as the sidebar's import link, with a source each. */}
-        <button type="button" className="dk-import-open" onClick={() => openImport()} aria-haspopup="dialog"
-          title="Import chats from Claude Code, Codex or OpenCode">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>
-          <span className="lbl">Import chats</span>
-        </button>
-        <span className="dk-who">{settings?.signedIn ? <>Signed in as <b>{settings.account || "your kell account"}</b></> : "Not signed in"}</span>
-        <span className="dk-help" ref={helpRef}>
+        {/* The top bar keeps only the app menu, the Code/Rooms tabs and the window controls. Importing other agents'
+            chats lives in Sessions; who is signed in lives in the account button at the foot of the sidebar. */}
+        <span className="dk-help" ref={helpRef} style={{ marginLeft: "auto" }}>
           <button type="button" className="dk-icon dk-icon-sm" aria-label="Help" title="Help" aria-expanded={helpOpen} onClick={() => setHelpOpen((o) => !o)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6" /><path d="M12 17h.01" /></svg>
           </button>
@@ -2159,12 +2161,14 @@ export default function Home() {
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                 </button>
               </div>
-              {showSessions && (
-                <div className="dk-sess dk-sess-list">
-                  {sessions.length === 0 ? <p className="dk-note">No sessions yet. Write a message to start one.</p> : sessions.map(sessionRow)}
-                  <button type="button" className="dk-sess-import" onClick={() => openImport("opencode")}>Import OpenCode chats</button>
+              <div className="dk-sec-body" data-open={showSessions}>
+                <div className="dk-sec-body-in">
+                  <div className="dk-sess dk-sess-list">
+                    {sessions.length === 0 ? <p className="dk-note">No sessions yet. Write a message to start one.</p> : sessions.map(sessionRow)}
+                    <button type="button" className="dk-sess-import" onClick={() => openImport()}>Import other agent chats</button>
+                  </div>
                 </div>
-              )}
+              </div>
 
               {/* The project's files: a folder opens on click and asks the app for its entries then; a file opens in the
                   right panel's file view. */}
@@ -2177,11 +2181,13 @@ export default function Home() {
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
                 </button>
               </div>
-              {showFiles && (
-                <div className="dk-tree" key={`${directory}:${treeEpoch}`}>
-                  <TreeLevel directory={directory} rel="" depth={0} onOpen={openFile} selected={filePath || undefined} />
+              <div className="dk-sec-body" data-open={showFiles}>
+                <div className="dk-sec-body-in">
+                  <div className="dk-tree" key={`${directory}:${treeEpoch}`}>
+                    <TreeLevel directory={directory} rel="" depth={0} onOpen={openFile} selected={filePath || undefined} />
+                  </div>
                 </div>
-              )}
+              </div>
             </>
           )}
           </div>
@@ -2270,7 +2276,7 @@ export default function Home() {
               {spend > 0 && <span className="dk-spend">${spend.toFixed(4)} this session</span>}
             </div>
             <button type="button" className="dk-icon dk-icon-sm dk-head-tool" aria-pressed={panel.open && panel.tab === "terminal"}
-              aria-label="Terminal" title="Terminal (Ctrl+`)" onClick={() => togglePanel("terminal")}>
+              aria-label="Terminal" title="Terminal (Ctrl+J)" onClick={() => togglePanel("terminal")}>
               <TerminalIcon size={16} />
             </button>
             <button type="button" className="dk-icon dk-icon-sm dk-head-tool" aria-pressed={panel.open && panel.tab === "browser"}
@@ -2509,6 +2515,21 @@ export default function Home() {
                     </div>
                   )
                 })}
+                {pendingTurn && delegateOptions.length > 0 && (
+                  // The Ways the router found, in the conversation itself: after the person's line, before anything
+                  // runs. kell is stopped until one is picked; several Ways scroll sideways (2026-11-16).
+                  <div className="dg-run dk-pick-run" data-agent="true">
+                    <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                    <div className="dg-col">
+                      <div className="dg-meta">
+                        <b>Kell</b><span className="dg-badge">procedure</span>
+                        <time>{time(lines.at(-1)?.at || Date.now())}</time>
+                      </div>
+                      <ProcedurePicker goal={pendingTurn.goal} options={delegateOptions}
+                        onPick={applyOption} onSkip={runWithoutWay} />
+                    </div>
+                  </div>
+                )}
                 {remoteLive && remoteLive.sessionID === sessionID && !busy && (
                   <div className="dk-remote-live" role="status" aria-live="polite">
                     <div className="dg-run dk-you" data-agent={false}>
@@ -2679,16 +2700,6 @@ export default function Home() {
                   onApprove={(id) => void decideApproval(id, "approve")}
                   onDeny={(id) => void decideApproval(id, "deny")} />
               ))}
-            </div>
-          )}
-          {pendingTurn && delegateOptions.length > 0 && (
-            // The message is waiting on a choice; the cards are in the right panel, and this brings it back if closed.
-            <div className="dk-choose" role="status">
-              <div>
-                <b>Choose a procedure</b>
-                <p>{delegateOptions.length} {delegateOptions.length === 1 ? "Way" : "Ways"} found for this task. Pick one in the right panel; the turn runs on the model it needs.</p>
-              </div>
-              <button type="button" className="btn-line dg-mini" onClick={() => showSidebar("right")}>Open the panel</button>
             </div>
           )}
           {delegateStatus && (
@@ -2888,97 +2899,8 @@ export default function Home() {
                   </>)}
             </section>
           )}
-          {/* The delegated model: what the router matched, which model runs the turn and why, and the scoped side call. */}
-          <details className="dk-fold dk-delegate" open={delegateOpen}
-            onToggle={(e) => setDelegateOpen(e.currentTarget.open)}>
-            <summary className="dk-panel-head">
-              <h2>Delegated{delegation?.model ? ` · ${delegation.model.id}` : ""}</h2>
-              {delegation?.model && (
-                <span className="dk-iconrow">
-                  <button type="button" className="dk-icon dk-icon-sm" aria-label="Ask the delegated model" title="Ask it directly"
-                    onClick={(e) => { e.preventDefault(); document.getElementById("dk-delegate-ask")?.focus() }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-                  </button>
-                </span>
-              )}
-            </summary>
-            {(delegateStatus || (busy && delegation?.model)) && (
-              <p className="dk-delegate-status" role="status" aria-live="polite">
-                <span className="dg-pulse" aria-hidden="true" />
-                {delegateStatus || `Working with ${delegation?.model?.id}…`}
-              </p>
-            )}
-            {!delegation && delegateOptions.length === 0 && <p className="dk-note">Send a task: kell searches its Ways and shows them here; you pick the one to apply.</p>}
-            {!delegation && delegateNote && <p className="dk-err">{delegateNote}</p>}
-            {delegateOptions.length > 0 && (
-              <ProcedurePicker goal={pendingTurn?.goal ?? null} options={delegateOptions} glass={glassGraph}
-                onToggleGlass={toggleGlassGraph} onPick={applyOption} onSkip={runWithoutWay} />
-            )}
-            {delegateOptions.length === 0 && delegation && (
-              <div className="dk-delegate-body">
-                <ProcedureGraph plan={delegation} glass={glassGraph} onToggleGlass={toggleGlassGraph} />
-                <p className="dk-note">{delegation.why}</p>
-                <details className="dk-brief">
-                  <summary>What it may see</summary>
-                  <pre>{delegation.brief}</pre>
-                </details>
-                <form className="dk-delegate-ask" onSubmit={(e) => { e.preventDefault(); void askDelegate() }}>
-                  <input id="dk-delegate-ask" value={delegateAsk} onChange={(e) => setDelegateAsk(e.target.value)}
-                    placeholder={`Ask ${delegation.model?.id || "the delegated model"} directly…`} autoComplete="off"
-                    aria-label="Ask the delegated model" disabled={delegateBusy} />
-                  <button type="submit" className="btn-line dg-mini" disabled={delegateBusy || !delegateAsk.trim()}>
-                    {delegateBusy ? "Asking…" : "Ask"}
-                  </button>
-                </form>
-                <p className="dk-note">The brief and the question only: no files, no shell, no chat history.</p>
-                {delegateErr && <p className="dk-err">{delegateErr}</p>}
-                {delegateAnswer && <div className="dk-delegate-a" aria-live="polite"><Markdown text={delegateAnswer} /></div>}
-              </div>
-            )}
-          </details>
-          <details className="dk-fold" open={changesOpen}
-            onToggle={(e) => setChangesOpen(e.currentTarget.open)}>
-          <summary className="dk-panel-head">
-            <h2>Changed by kell{files.length ? ` · ${files.length}` : ""}</h2>
-          </summary>
-          {filesNote && !files.length && <p className="dk-note">{filesNote}</p>}
-          <FileList files={files} openOne />
-          </details>
-
-          <details className="dk-fold">
-          <summary><h2>Other changes in this folder{otherFiles.length ? ` · ${otherFiles.length + otherMore}` : ""}</h2></summary>
-          {readEngine && otherFiles.length === 0 && <p className="dk-note">No other changes</p>}
-          <FileList files={otherFiles} />
-          {otherMore > 0 && <p className="dk-note">and {otherMore} more</p>}
-          </details>
-
-          <details className="dk-fold">
-          <summary><h2>Model steps{ledger.length ? ` · ${ledger.length}` : ""}</h2></summary>
-          {ledger.length === 0 ? <p className="dk-note">No model steps yet</p> : (
-            <div className="dk-ledger">
-              {ledger.map((r) => (
-                <div className="row" key={r.id}>
-                  <span title={r.tokens || ""}><span className="dk-rung" data-r={isCheap(r) ? "cheap" : "strong"}>{isCheap(r) ? "cheap" : "strong"}</span><b>{r.model || "picking model…"}</b></span>
-                  <span>{r.cost != null ? `$${r.cost.toFixed(5)}` : "—"}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          </details>
-
-          <details className="dk-fold">
-          <summary><h2>Tools for this request{cards.length ? ` · ${cards.length}` : ""}</h2></summary>
-          {cardsNote && <p className="dk-note">{cardsNote}</p>}
-          <div className="dk-cards">
-            {cards.map((c) => (
-              <div className="dk-card" key={c.name}>
-                <span className="name" title={`${c.name}${c.url ? ` — ${c.url}` : ""}`}>{c.name}</span>
-                <span className="dg-badge" data-kind="tab">{c.source === "installed" ? "installed" : "available"}</span>
-                <span className="meta">{c.source === "installed" ? "installed here" : "kell can run it for you"}{c.needsSignIn ? " · asks you to sign in once" : ""}</span>
-              </div>
-            ))}
-          </div>
-          </details>
+          {/* The procedure graph: the chosen Way, or a preview of the best fit while the chat shows the choice. */}
+          <ProcedureGraph plan={shownPlan} preview={!!previewPlan} glass={glassGraph} onToggleGlass={toggleGlassGraph} />
         </aside>
         <div className="dk-scrim-right" onClick={() => setRightOpen(false)} aria-hidden="true" />
       </div>

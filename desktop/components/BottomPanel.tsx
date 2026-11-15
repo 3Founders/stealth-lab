@@ -94,7 +94,9 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
       const self = t
       xterm.onData((data: string) => { if (self.id) d.term!.write(self.id, data) })
       // Ctrl+C copies when there is a selection (else it goes to the shell as an interrupt). Ctrl+V is the page's own paste.
+      // Ctrl/Cmd+J is the app's terminal toggle (app/page.tsx), not a line feed to the shell.
       xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+        if (e.type === "keydown" && (e.ctrlKey || e.metaKey) && (e.key === "j" || e.key === "J")) return false
         if (e.type !== "keydown" || !e.ctrlKey || e.key !== "c" || !xterm.hasSelection()) return true
         void navigator.clipboard.writeText(xterm.getSelection()); xterm.clearSelection(); return false
       })
@@ -202,7 +204,7 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
       <span className="dk-bottom-grip" role="separator" aria-orientation="horizontal" aria-label="Drag to resize the panel" onPointerDown={startResize} />
       <div className="dk-bottom-head">
         <div className="dk-bottom-tabs" role="tablist" aria-label="Panel">
-          <button type="button" role="tab" aria-selected={tab === "terminal"} className="dk-bottom-tab" onClick={() => onTab("terminal")} title="Terminal">
+          <button type="button" role="tab" aria-selected={tab === "terminal"} className="dk-bottom-tab" onClick={() => onTab("terminal")} title="Terminal (Ctrl+J)">
             <TerminalIcon /><span>Terminal</span>
           </button>
           <button type="button" role="tab" aria-selected={tab === "browser"} className="dk-bottom-tab" onClick={() => onTab("browser")} title="Browser">
