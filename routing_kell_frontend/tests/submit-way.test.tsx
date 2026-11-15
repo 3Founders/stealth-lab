@@ -70,6 +70,10 @@ describe("Submit a Way", () => {
     expect(sent.steps).toHaveLength(2);
     expect(host.textContent).toContain("point it at the links from step 1");
     expect(host.textContent).toContain("Joins kell's existing goal “Find papers”.");
+    const link = host.querySelector('.sw-loc a') as HTMLAnchorElement;                  // the link on its own line, clickable
+    expect(link.href).toBe("https://arxiv.org/list");
+    expect(link.closest("p")!.textContent).toContain("Link:");
+    expect(byText("Change this step")).toBeTruthy();                                     // an approved step can be changed too
 
     act(() => byText("Fix this step").click());
     type(host.querySelector('input[aria-label="Link or tool for step 2"]') as HTMLInputElement, "");

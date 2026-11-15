@@ -155,6 +155,19 @@ function StepEditor({ step, n, onChange }: { step: StepIn; n: number; onChange: 
   );
 }
 
+const LOCATOR_LABEL: Record<string, string> = { url: "Link", file: "File", script: "Script", tool: "Tool" };
+
+/** A step's link, file, script or tool on its own line; anything web-reachable opens in a new tab. */
+function LocatorLine({ locator }: { locator: { type: string; value: string } }) {
+  const web = /^https?:\/\//i.test(locator.value);
+  return (
+    <p className="sw-loc">
+      <b>{LOCATOR_LABEL[locator.type] || "Link"}:</b>{" "}
+      {web ? <a href={locator.value} target="_blank" rel="noopener noreferrer">{locator.value}</a> : <code>{locator.value}</code>}
+    </p>
+  );
+}
+
 // ------------------------------------------------------------------------------------------------------- my submissions
 
 function Mine({ api, onOpen }: { api: SubmissionsApi; onOpen: (id: string) => void }) {
@@ -224,12 +237,14 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
                 <b>Step {s.order}: {s.title}</b>
                 <span className="sw-pill" data-status={s.status}>{STATUS_LABEL[s.status]}</span>
               </div>
-              <p className="sw-dim">{s.kind === "human" ? `A person: ${s.description}` : [s.prompt, s.locator?.value].filter(Boolean).join(" · ")}</p>
+              <p className="sw-dim">{s.kind === "human" ? `A person: ${s.description}` : s.prompt}</p>
+              {s.kind !== "human" && s.locator?.value && <LocatorLine locator={s.locator} />}
               {matchNote(s) && <p className="sw-dim">{matchNote(s)}</p>}
               {s.status === "rejected" && s.reason && <p className="sw-reason"><b>Why:</b> {s.reason}</p>}
-              {s.status === "rejected" && (fixing?.order === s.order ? (
+              {s.status !== "reviewing" && (fixing?.order === s.order ? (
                 <div className="sw-fix">
                   <StepEditor step={fixing.step} n={s.order} onChange={(x) => setFixing({ order: s.order, step: x })} />
+                  {s.status !== "rejected" && <p className="sw-dim">kell reviews the change; once it passes, the Way gets its next version and runs use it.</p>}
                   <div className="sw-row">
                     <button type="button" className="btn-ink sw-btn" disabled={busy} onClick={() => void fix()}><span>{busy ? "Reviewing…" : "Send the fix"}</span></button>
                     <button type="button" className="btn-line sw-btn" onClick={() => setFixing(null)}>Cancel</button>
@@ -237,7 +252,8 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
                 </div>
               ) : (
                 <button type="button" className="btn-line sw-btn" onClick={() => setFixing({ order: s.order, step: {
-                  kind: s.kind, title: s.title, description: s.description, prompt: s.prompt, locator: s.locator?.value || "" } })}>Fix this step</button>
+                  kind: s.kind, title: s.title, description: s.description, prompt: s.prompt, locator: s.locator?.value || "" } })}>
+                  {s.status === "rejected" ? "Fix this step" : "Change this step"}</button>
               ))}
             </div>
           </li>
