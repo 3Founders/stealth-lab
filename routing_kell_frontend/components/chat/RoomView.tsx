@@ -341,6 +341,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const askKellRef = useRef<((r: string, text: string, who?: string, opts?: { skipRoute?: boolean }) => Promise<void>) | null>(null);
   /** The request that hit a sign-in wall: run it again by itself when the person comes back from signing in. */
   const signInRetry = useRef<{ room: string; text: string; who: string } | null>(null);
+  /** Way cards whose run is already starting: a double click must not start two runs. */
+  const wayRuns = useRef<Set<string>>(new Set());
   /** The sign-in card of the newest request (room and line id), and the sign-in the person opened last. */
   const signInCard = useRef<{ room: string; id: string } | null>(null);
   const signInOpened = useRef<string | null>(null);
@@ -505,6 +507,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const pickWay = useCallback(async (r: string, line: WayLine, way: WayChoice) => {
     const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
     if (!id) { note("This room is still syncing. Pick again in a moment.", r); return; }
+    if (wayRuns.current.has(line.id)) return;
+    wayRuns.current.add(line.id);
     setWayState(r, line.id, { picked: way.id, running: true, step: 0, of: way.steps.length,
       title: way.steps[0]?.title || "", done: false, waiting: false, error: undefined });
     try {
@@ -522,6 +526,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       const why = err instanceof Error ? err.message : "That Way could not run.";
       setWayState(r, line.id, { running: false, error: why });
       note(why, r);
+    } finally {
+      wayRuns.current.delete(line.id);
     }
   }, [roomsAgent, note, setWayState]);
 

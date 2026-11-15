@@ -1378,7 +1378,8 @@ export default function Home() {
   // The person picked one of the Ways: build its plan (model rung, brief) and run the waiting turn.
   const applyOption = (option: WayOption) => {
     const pending = pendingTurn
-    if (!pending) return
+    if (!pending || busyRef.current) return                 // a double click must not start the turn twice
+    busyRef.current = true
     const plan = planFromOption(pending.text, settings?.models || {}, pending.goal, option)
     planRef.current = plan
     setDelegation(plan)
@@ -1394,7 +1395,8 @@ export default function Home() {
   // contract. Nothing is hidden: the panel says no Way was applied.
   const runWithoutWay = () => {
     const pending = pendingTurn
-    if (!pending) return
+    if (!pending || busyRef.current) return
+    busyRef.current = true
     const plan = planFromOption(pending.text, settings?.models || {}, pending.goal, null)
     planRef.current = plan
     setDelegation(plan)
