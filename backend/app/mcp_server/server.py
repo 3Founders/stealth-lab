@@ -5525,7 +5525,7 @@ async def submit_goal(ctx: Context, goal: str = "", steps: list[dict] | None = N
 @_activity.traced
 async def run_way(ctx: Context, way_id: str = "", input: str = "", run_id: str = "", output: Any = None,
                   failed: str = "", done: bool = False, note: str = "", cancel: bool = False,
-                  submission_id: str = "") -> str:
+                  submission_id: str = "", lookup: str = "") -> str:
     """
     Run a Way find_ways returned (or one from submit_goal), one step at a time, each step's output fed to the next.
 
@@ -5537,16 +5537,23 @@ async def run_way(ctx: Context, way_id: str = "", input: str = "", run_id: str =
         run_way(run_id, done=true, note=<what they did or found>).
       status "done": `result` is the last step's output. "failed": `error` says why; ask before trying another Way.
     kell runs scripts and plain fetches itself. run_way(run_id) alone: the run's state; cancel=true stops it.
+    Stuck on a step for want of a method: run_way(run_id, lookup=<what you need to know>), once per step -- kell
+    looks it up and either replaces the step with a Way that does it or adds what it found to your_turn. Do not call
+    find_ways or start another run for a step. A failed step is looked up once the same way before the run fails.
     """
     from app.execution import way_runs as _way_runs
     from app.submissions import api as _sub_api
 
+    async def finder(query: str) -> str:              # a step's lookup: find_ways, with its governor and triage
+        return await find_ways(query, ctx, detail="full")
+
     if run_id:
         async def on_run(pool, owner):
             try:
-                if done or cancel or failed or output is not None:
+                if done or cancel or failed or lookup or output is not None:
                     return await _way_runs.report(pool, run_id, owner_id=owner, output=output, failed=failed,
-                                                  done=done, note=note, cancel=cancel)
+                                                  done=done, note=note, cancel=cancel, lookup=lookup,
+                                                  finder=finder)
                 return await _way_runs.get(pool, run_id, owner_id=owner)
             except LookupError:                       # a run started by the older submission runner
                 if done:
@@ -5555,10 +5562,11 @@ async def run_way(ctx: Context, way_id: str = "", input: str = "", run_id: str =
         return await _submission_call(ctx, on_run)
     if submission_id and not way_id:
         return await _submission_call(ctx, lambda p, o: _sub_api.start_run(p, o, submission_id, input,
-                                                                            mode="session"))
+                                                                            mode="session", finder=finder))
     if not way_id:
         return "REFUSED: pass way_id to start a run, or run_id to continue one"
-    return await _submission_call(ctx, lambda p, o: _way_runs.start(p, way_id, owner_id=o, input=input))
+    return await _submission_call(ctx, lambda p, o: _way_runs.start(p, way_id, owner_id=o, input=input,
+                                                                     finder=finder))
 
 
 # ---------------------------------------------------------------------------

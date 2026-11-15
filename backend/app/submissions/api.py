@@ -86,7 +86,8 @@ async def mine(pool: Any, owner_id: str) -> list[dict]:
     return await store.list_for_owner(pool, owner_id)
 
 
-async def start_run(pool: Any, owner_id: str, submission_id: str, input: str = "", mode: str = "headless") -> dict:
+async def start_run(pool: Any, owner_id: str, submission_id: str, input: str = "", mode: str = "headless",
+                    finder: Any = None) -> dict:
     """Run a submission's approved Way on the Way executor (app/execution/way_runs.py). "headless" (the website: no
     session to hand steps to) has kell do every automated step; the MCP tool runs it in "session" mode."""
     from app.execution import way_runs
@@ -97,7 +98,7 @@ async def start_run(pool: Any, owner_id: str, submission_id: str, input: str = "
         raise runs.RunError("no submission with that id")
     if row["status"] not in ("ai_approved", "approved") or not row["parent"]:
         raise runs.RunError(f"this Way is {row['status'].replace('_', ' ')}; only an approved Way runs")
-    return await way_runs.start(pool, row["parent"], owner_id=owner_id, input=input, mode=mode)
+    return await way_runs.start(pool, row["parent"], owner_id=owner_id, input=input, mode=mode, finder=finder)
 
 
 async def finish_step(pool: Any, owner_id: str, run_id: str, note: str = "") -> dict:

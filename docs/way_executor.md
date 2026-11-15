@@ -65,9 +65,39 @@ submission runner (`goal_submission_runs`) still continues there.
   otherwise kell's own model does it.
 - **Thin coding steps:** `your_turn` carries the step's check and note and, in `part_of`, what the whole Way achieves.
 
+## Lookups: a step finding a way mid-run (2026-11-15)
+
+By default a step doesn't look anything up: the Way's own text is the step's instructions. A step can look up **once at
+most**, and there's no cap per run. A lookup is `find_ways`, with its rate limiter and triage, and the query is the
+step itself: its text, the Way's goal and the task. Lookups happen only on the `run_way` MCP tool's paths, through its
+`finder`. Headless website runs don't look anything up.
+
+| When | What decides | Cost |
+|---|---|---|
+| **Step kind** (when the run loads) | Script, tool, human and plain-fetch steps, and pinned sub-Ways, are never judged: their binding is what they need. A step that names a goal but no Way (`subgoal_id` / kind `subgoal`) always looks up when reached. | free |
+| **Hint** (once per version of a Way, stored in `way_lookup_hints`, db/209) | Each reasoning step gets one JEV **triage** with the Way's goal as context. Only `reusable_task` (confidence ≥ 0.6) goes on to a JEV **identity** vote (the three-way vote used for goal matching) of the step against the Way's goal. `same` / `possible_same` / `generalizes` means no hint, since a lookup would only find this Way again. Any other relation gives a hint, and a hinted step looks up when the run reaches it. | JEV calls only for the first run of each version; later runs read the cache |
+| **Failed** | A step reported `failed=`, or a step kell ran raised an error, looks up once for a Way that does it. Only a replacement Way rescues the step; otherwise the run fails as before. | 1 lookup |
+| **Needs** | Kell's model may answer `NEEDS: <what>` (headless, when it can't do the step), or the session asks with `run_way(run_id, lookup=...)`. If the session's query asks for the Way's own goal or something broader (identity vote), it's refused without a search. | 1 lookup |
+
+**JEV unavailable means no hint, so no lookup.** Hints aren't cached unless every step got an answer. This is the
+opposite of `find_ways` triage: inside a run the step already has the Way's text.
+
+**Using the answer is automatic** (`way_lookups.look_up`):
+- A resolved Way that isn't already in the run replaces the step with its own steps (paths `3.1`, `3.2`, ...;
+  `MAX_DEPTH` still applies).
+- Otherwise, what the reply offers (the chosen Way's steps, or the `suggested` one) is attached to the step as untrusted
+  `know_how`. It goes into `your_turn`, or into kell's model's prompt, which then runs the step once more.
+- Steps that came from a lookup never look up again, so lookups can't chain.
+- Each lookup is recorded on its step (`lookup`: why, query, outcome, used) and shown as `looked_up` in the run's
+  steps. The outcome evidence counts `lookups` and `replaced_by_lookup`.
+- A Way whose steps keep needing lookups is missing something, and its hints mark where.
+
+Not built: an **applicability** check of a step's preconditions against the run's context. Stored steps don't carry
+preconditions yet; once they do, `INAPPLICABLE` becomes another signal.
+
 ## Not done yet
 
-- Not yet exercised against production data.
+- Lookups (db/209) aren't deployed.
 - The desktop change reaches people only in the next desktop release.
 
-Tests: `tests/test_way_runs_e2e.py` (11, on a real database).
+Tests: `tests/test_way_runs_e2e.py`, `tests/test_way_lookups_e2e.py` (12), both on a real database.
