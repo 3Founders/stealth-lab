@@ -533,7 +533,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   /** "Run without a Way": the cards go and the agent answers the task as it always did. */
   const skipWay = useCallback((r: string, line: WayLine) => {
-    lineStore.current = { ...lineStore.current, [r]: (lineStore.current[r] ?? []).filter((l) => !(l.kind === "ways" && l.id === line.id)) };
+    const cur = lineStore.current[r] ?? [];
+    if (!cur.some((l) => l.kind === "ways" && l.id === line.id)) return;   // a second click after the card went
+    lineStore.current = { ...lineStore.current, [r]: cur.filter((l) => !(l.kind === "ways" && l.id === line.id)) };
     bump((n) => n + 1);
     void askKellRef.current?.(r, line.text, "@kell", { skipRoute: true });
   }, []);
