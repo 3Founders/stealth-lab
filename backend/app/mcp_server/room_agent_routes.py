@@ -464,8 +464,21 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             await rm.recent_events(pool, subject, room_id, 1)      # membership, the same check the agent makes
         except rm.RoomError as exc:
             return _error(request, str(exc), exc.status)
-        if not agent.wants_work(text) or agent.plainly_answerable(text):
+        if not agent.wants_work(text):
             return _json(request, {"goal": None, "ways": []})
+        # One cheap judgment decides whether the person is asking for a procedure at all (JEV first). Ordinary work --
+        # "fix this", "add a test", "what does this function do" -- goes straight to the agent, with no catalog read
+        # and no picker. The judgment fails toward the picker (2026-11-16).
+        from app.mcp_server import procedure_intent as _pi
+
+        intent = _pi.CACHE.get(text[:_pi.QUERY_MAX])
+        if intent is None:
+            intent = await _pi.procedure_intent(
+                text[:_pi.QUERY_MAX], _pi.default_judge(),
+                timeout_s=float(__import__("os").environ.get("KELL_PROCEDURE_TIMEOUT", "3")))
+            _pi.CACHE.put(text[:_pi.QUERY_MAX], intent)
+        if not intent.search:
+            return _json(request, {"goal": None, "ways": [], "procedure": intent.as_dict()})
         from app.tool_routing.route_api import route_payload
         answer = await route_payload(pool, text, limit=10, owner_id=subject)
         # "Research" alone does not rank "Search the literature and check novelty" high; a procedure/research ask

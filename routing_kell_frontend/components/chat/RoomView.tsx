@@ -343,6 +343,22 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const signInRetry = useRef<{ room: string; text: string; who: string } | null>(null);
   /** Way cards whose run is already starting: a double click must not start two runs. */
   const wayRuns = useRef<Set<string>>(new Set());
+  /** Direct / Auto / Ask before the procedure picker: the same switch as the desktop app. Kept per browser, so a
+   *  person who chose Auto is not asked again on the next room. The ref lets the callbacks read it without re-wiring. */
+  const [procMode, setProcMode] = useState<"direct" | "auto" | "ask">("ask");
+  const procModeRef = useRef<"direct" | "auto" | "ask">("ask");
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("kell:procedure-mode");
+      if (saved === "direct" || saved === "auto" || saved === "ask") { setProcMode(saved); procModeRef.current = saved; }
+    } catch { /* none kept */ }
+  }, []);
+  const chooseProcMode = useCallback((mode: "direct" | "auto" | "ask") => {
+    setProcMode(mode); procModeRef.current = mode;
+    try { window.localStorage.setItem("kell:procedure-mode", mode); } catch { /* the state still changes */ }
+  }, []);
+  /** pickWay is declared after askKell (it needs the line store); the ref lets Auto call it without a re-wiring loop. */
+  const pickWayRef = useRef<((r: string, line: WayLine, way: WayChoice) => Promise<void>) | null>(null);
   /** The sign-in card of the newest request (room and line id), and the sign-in the person opened last. */
   const signInCard = useRef<{ room: string; id: string } | null>(null);
   const signInOpened = useRef<string | null>(null);
@@ -418,14 +434,24 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     // The choice, before the agent starts: the same catalog answer the desktop's picker reads. A message with no Goal
     // (small talk, or a canvas edit) goes to the agent as before; when the search itself fails, the person is told and
     // the model does not answer as if it had searched (2026-11-16).
-    if (!opts?.skipRoute && who === "@kell" && !temp && !canvasOpenRef.current) {
+    if (!opts?.skipRoute && who === "@kell" && !temp && !canvasOpenRef.current && procModeRef.current !== "direct") {
       const rid = known();
       if (rid) {
         try {
           const routed = await roomsAgent.route(rid, text);
-          if (routed.ways.length || (routed.goals?.length ?? 0)) {
+          if (routed.ways.length) {
+            const line: WayLine = { kind: "ways", id: crypto.randomUUID(), text, t: Date.now(), goal: routed.goal,
+              ways: routed.ways, goals: routed.goals ?? [] };
+            push(r, line);
+            // Auto: the best fit is accepted without a click; the card stays in the chat to show the run's progress.
+            if (procModeRef.current === "auto") void pickWayRef.current?.(r, line, routed.ways[0]);
+            return;
+          }
+          if (procModeRef.current === "ask") {
+            // Ask: the search's result comes first even when nothing matched, so the model is never the one to
+            // discover a failed search. The card says so and offers "Let kell work on it".
             push(r, { kind: "ways", id: crypto.randomUUID(), text, t: Date.now(), goal: routed.goal,
-              ways: routed.ways, goals: routed.goals ?? [] });
+              ways: [], goals: routed.goals ?? [] });
             return;
           }
         } catch (err) {
@@ -537,6 +563,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       wayRuns.current.delete(line.id);
     }
   }, [roomsAgent, note, setWayState]);
+  useEffect(() => { pickWayRef.current = pickWay; }, [pickWay]);
 
   /** "Run without a Way": the cards go and the agent answers the task as it always did. */
   const skipWay = useCallback((r: string, line: WayLine) => {
@@ -1632,6 +1659,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const c = parseCommand(line);
     if (c) {
       if (c.cmd === "error") return note(c.message);
+      if (c.cmd === "mode") {
+        chooseProcMode(c.mode);
+        return note(c.mode === "direct"
+          ? "Procedure mode: Direct. Prompts go straight to the model; kell does not search for a procedure."
+          : c.mode === "auto"
+            ? "Procedure mode: Auto. When a procedure fits, the best one runs on its own."
+            : "Procedure mode: Ask. When a procedure fits, the ways appear here and kell waits for your pick.");
+      }
       if (c.cmd === "stop") {
         broker.setPaused(true);
         controllers.current.forEach((ctl) => ctl.abort());
@@ -1927,7 +1962,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             ))}
           </div>
         )}
-        <Composer onEscape={replyingTo ? () => setReplyingTo(null) : editing ? () => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); } : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
+        <Composer onEscape={replyingTo ? () => setReplyingTo(null) : editing ? () => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); } : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} procedureMode={procMode} onProcedureMode={chooseProcMode} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
       <input ref={encFile} type="file" accept=".kellbackup,application/json" hidden onChange={(e) => void restoreEncrypted(e)} />

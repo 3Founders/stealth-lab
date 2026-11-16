@@ -1,6 +1,6 @@
 // The MCP/engine half of the delegation plan. The pure types and planning functions live in lib/plan.ts, so the page
 // can import them without pulling node:fs (lib/mcp.ts) into the browser bundle.
-import { callMcpTool } from "./mcp"
+import { callKellRoute, callMcpTool } from "./mcp"
 import { planFromRoute, stepsOf, toolOf, type Delegation, type GoalOption, type Models, type Routed, type WayOption } from "./plan"
 
 export * from "./plan"
@@ -80,12 +80,30 @@ function fromCatalog(answer: any, limit = 8): Routed {
 }
 
 /**
+ * Does this prompt ask for a procedure at all? JEV decides (POST /procedure, one typed choice): "find procedures for
+ * research" and "what is the best way to..." do; "fix the failing test", "add a test" and "explain this function" do
+ * not. Ordinary work then goes straight to the model, with no catalog read and no picker. A missing verdict opens the
+ * picker, as before: a skipped picker costs the person a Way, a wasted one only a second or two.
+ */
+export async function wantsProcedure(task: string, timeoutMs = 4000): Promise<boolean> {
+  try {
+    const verdict = await callKellRoute("/procedure", { query: task.trim().slice(0, 4000) }, timeoutMs)
+    return verdict?.search !== false
+  } catch {
+    return true
+  }
+}
+
+/**
  * Route the task: find_ways (the judged, repo-aware answer) and the Goal catalog run together. find_ways decides whether
  * knowledge helps and names the best Way; the catalog adds the other Ways that fit, so the picker is a real choice
  * rather than one card. A slow or refused find_ways never hides the catalog, and vice versa.
  */
 export async function routeTask(task: string, timeoutMs = 20_000): Promise<Routed> {
   const text = task.trim().slice(0, 4000)
+  if (!(await wantsProcedure(text, Math.min(timeoutMs, 4000)))) {
+    return { goal: null, options: [], goals: [], skip: true }
+  }
   let firstErr: any = null
   // A task that asks for procedures (or is about research) also reads the catalog for the literature/novelty side:
   // "research" alone does not rank "Search the literature and check novelty" high, and it is one of the Ways people

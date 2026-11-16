@@ -72,6 +72,7 @@ export async function POST(req: Request) {
     try {
       const routed = await routeTask(text, timeoutMs)
       const plan = planFromRoute(text, models, routed)
+      if (routed.skip) return NextResponse.json({ ...plan, options: [], goals: [], skip: true })
       if (routed.options.length) remember(key, plan, routed.options)
       return NextResponse.json({ ...plan, options: routed.options, goals: routed.goals ?? [] })
     } catch (err: any) {
@@ -96,8 +97,15 @@ export async function POST(req: Request) {
           send({ type: "done" })
           return
         }
-        status("routing", "Asking kell's router (find_ways)…")
+        status("routing", "Checking whether this needs a procedure…")
         const routed = await routeTask(text, timeoutMs)
+        if (routed.skip) {
+          const plan = planFromRoute(text, models, routed)
+          status("skip", "Ordinary work - going straight to the model")
+          send({ type: "plan", plan, options: [], goals: [], skip: true })
+          send({ type: "done" })
+          return
+        }
         status("goal", goalLine(routed), { goal: routed.goal, options: routed.options, goals: routed.goals ?? [] })
         const plan = planFromRoute(text, models, routed)
         status("model", plan.model ? `Model: ${plan.model.id} (${plan.rung}) — ${plan.why}` : `Model: the engine's default — ${plan.why}`,

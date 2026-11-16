@@ -218,6 +218,17 @@ type BtwThread = { id: string; sessionID: string | null; at: number; updated: nu
 const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
   { name: "/btw", hint: "ask a side question about this chat; answered from it, not added to it" },
   { name: "/goal", hint: "set a completion condition; kell keeps working until it holds" },
+  { name: "/direct", hint: "send prompts straight to the model; never search for a procedure" },
+  { name: "/auto", hint: "search for a procedure and use the best fit automatically" },
+  { name: "/ask", hint: "search for a procedure and show the ways to choose from" },
+]
+/** How a prompt is handled before the model runs: direct sends it as is; auto searches and uses the best-fitting Way;
+ *  ask searches and waits for the person to pick one (the default, so no procedure is ever applied on its own). */
+type ProcMode = "direct" | "auto" | "ask"
+const PROC_MODES: Array<{ id: ProcMode; label: string; hint: string }> = [
+  { id: "direct", label: "Direct", hint: "Straight to the model, no procedure search (/direct)" },
+  { id: "auto", label: "Auto", hint: "Search for a procedure and use the best fit automatically (/auto)" },
+  { id: "ask", label: "Ask", hint: "Search for a procedure and show the ways to pick from (/ask)" },
 ]
 /** A /goal condition: one per session, judged after every turn by a separate cheap model (app/api/goal). */
 type GoalState = { condition: string; started: number; turns: number; reason: string; state: "active" | "paused" | "met" | "impossible"
@@ -687,6 +698,19 @@ export default function Home() {
       try { localStorage.setItem("kell.procedure.glass", next ? "on" : "off") } catch { /* the state still changes */ }
       return next
     })
+  }, [])
+  // Direct / Auto / Ask, the same idea as Claude's mode switch: the person chooses whether a prompt goes straight to the
+  // model, uses the best-fitting Way on its own, or waits for a choice. Persisted, and switchable by button or command.
+  const [procMode, setProcMode] = useState<ProcMode>("ask")
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("kell.procedure.mode")
+      if (saved === "direct" || saved === "auto" || saved === "ask") setProcMode(saved)
+    } catch { /* storage blocked: the default stands */ }
+  }, [])
+  const chooseProcMode = useCallback((mode: ProcMode) => {
+    setProcMode(mode)
+    try { localStorage.setItem("kell.procedure.mode", mode) } catch { /* the state still changes */ }
   }, [])
   // Opening or starting a chat always returns the middle column to the session itself.
   useEffect(() => { setAgentView("main") }, [sessionID])
@@ -1170,13 +1194,13 @@ export default function Home() {
   // Ask the router for the task's Goal and the Ways it offers. The route streams its progress, so the panel shows
   // "asking the router" instead of going silent. Nothing runs yet: the person picks a Way from the cards (or chooses to
   // run without one), and only then does the turn start.
-  const planFor = async (text: string): Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[] } | null> => {
+  const planFor = async (text: string): Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null> => {
     const seq = ++planSeq.current
     planErr.current = ""
-    let settle: (p: { goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[] } | null) => void = () => undefined
-    const planP = new Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[] } | null>((ok) => { settle = ok })
+    let settle: (p: { goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null) => void = () => undefined
+    const planP = new Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null>((ok) => { settle = ok })
     void (async () => {
-      let routed: { goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[] } | null = null
+      let routed: { goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null = null
       try {
         const r = await fetch("/api/delegate", {
           method: "POST",
@@ -1201,7 +1225,8 @@ export default function Home() {
             else if (ev.type === "plan" && ev.plan) {
               routed = { goal: ev.plan.goal ?? null,
                 options: Array.isArray(ev.options) ? ev.options as WayOption[] : [],
-                goals: Array.isArray(ev.goals) ? ev.goals as GoalOption[] : [] }
+                goals: Array.isArray(ev.goals) ? ev.goals as GoalOption[] : [],
+                skip: ev.skip === true }
               if (seq === planSeq.current) {
                 planRef.current = ev.plan as Delegation
                 setDelegation(null)                    // nothing is applied until the person picks
@@ -1229,6 +1254,21 @@ export default function Home() {
     const outgoing = again === undefined ? attachments : (filesOverride ?? [])
     if (!asGoal && /^\/goal\b/i.test(body.trim())) { goalCommand.current(body.trim()); return }
     if (!asGoal && /^\/btw\b/i.test(body.trim())) { handleBtwCommand(body.trim()); if (again === undefined) { setText(""); histPos.current = null } return }
+    if (!asGoal) {
+      // Direct / Auto / Ask, switchable from the composer or by typing the command (the same names, one dispatcher).
+      const m = /^\/(direct|auto|ask)\s*$/i.exec(body.trim())
+      if (m) {
+        const mode = m[1].toLowerCase() as ProcMode
+        chooseProcMode(mode)
+        if (again === undefined) { setText(""); histPos.current = null }
+        appendNote(mode === "direct"
+          ? "Procedure mode: Direct. Prompts go straight to the model; kell does not search for a procedure."
+          : mode === "auto"
+            ? "Procedure mode: Auto. When a procedure fits, kell uses the best fit and says which one."
+            : "Procedure mode: Ask. When a procedure fits, the ways appear here and kell waits for your pick.")
+        return
+      }
+    }
     setAgentView("main")                                    // a new prompt is for the session, not the agent view
     if ((!body.trim() && !outgoing.length) || !directory) return
     if (busyRef.current) {                                    // still working: keep it for when this turn ends
@@ -1237,9 +1277,11 @@ export default function Home() {
       return
     }
     const sent = body
-    // The procedure search starts now, before the model: every task shows the Goals/Ways it found, even when none has
-    // a written Way. Small talk is the only exception. The model never starts the search itself (2026-11-16).
-    const skipSearch = CHAT_ONLY.test(sent.trim())
+    // The procedure search starts now, before the model, unless the person chose Direct or this is small talk. When it
+    // runs, every task shows the Goals/Ways it found, even when none has a written Way. The model never starts the
+    // search itself (2026-11-16). JEV decides whether the prompt asks for a procedure at all; ordinary work skips the
+    // picker inside /api/delegate.
+    const skipSearch = procMode === "direct" || CHAT_ONLY.test(sent.trim())
     const routedP = skipSearch ? null : planFor(sent)
     if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
     else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
@@ -1252,6 +1294,24 @@ export default function Home() {
     setCards([]); setCardsNote(""); loadTools(sent || outgoing.map((f) => f.name).join(" "))
     if (skipSearch) { await runTurn(sent, outgoing, null); return }
     const routed = await routedP
+    // JEV judged this ordinary work: no picker, no card, the model starts as if kell held nothing.
+    if (routed?.skip) { setDelegateStatus(""); await runTurn(sent, outgoing, null); return }
+    if (routed && procMode === "auto") {
+      // Auto: the best-fitting Way is applied without a click. No Way means the model does the work, with no card.
+      const best = routed.options[0] ?? null
+      const plan = planFromOption(sent, settings?.models || {}, routed.goal, best)
+      planRef.current = plan
+      setDelegation(plan)
+      setDelegateOptions(routed.options)
+      setDelegateGoals(routed.goals)
+      setPendingTurn(null)
+      setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
+      setDelegateStatus(best
+        ? `Auto: using the best fit, ${best.name}`
+        : "Auto: no stored procedure fits - the model does the work")
+      await runTurn(sent, outgoing, plan)
+      return
+    }
     if (routed) {
       // Nothing runs yet: the chat shows the Ways, or the Goals that matched with no written Way. The person picks a
       // Way or says to work on it without one.
@@ -2573,6 +2633,8 @@ export default function Home() {
                         <b>Kell</b><span className="dg-badge">procedure</span>
                         <time>{time(lines.at(-1)?.at || Date.now())}</time>
                       </div>
+                    </div>
+                    <div className="dk-pick-wide">
                       <ProcedurePicker goal={pendingTurn.goal} options={delegateOptions} goals={delegateGoals}
                         onPick={applyOption} onSkip={runWithoutWay} />
                     </div>
@@ -2824,6 +2886,15 @@ export default function Home() {
                 else { histPos.current += 1; setText(promptHistory[histPos.current]) }
               }} />
             <div className="dg-composer-meta">
+              <div className="dk-mode" role="group" aria-label="Procedure mode" data-mode={procMode}>
+                <span className="dk-mode-thumb" aria-hidden="true" />
+                {PROC_MODES.map((m) => (
+                  <button key={m.id} type="button" className="dk-mode-btn" data-on={procMode === m.id || undefined}
+                    aria-pressed={procMode === m.id} title={m.hint} onClick={() => chooseProcMode(m.id)}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
               {text.trim() && <span className="dg-count" aria-live="off">{words} {words === 1 ? "word" : "words"}</span>}
               <button type="button" className="dg-attach dg-attach-file" onClick={() => void pickAttachments()}
                 disabled={!directory || (engine != null && !engine.up)} aria-label="Attach files" title="Attach files">

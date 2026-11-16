@@ -25,6 +25,7 @@ export type Command =
   | { cmd: "add-agent"; name?: string; about?: string }
   | { cmd: "export" }
   | { cmd: "temporary" }
+  | { cmd: "mode"; mode: "direct" | "auto" | "ask" }
   | { cmd: "error"; message: string };
 
 /** Slash commands typed into the room. Anything that is not one returns null and is sent as an ordinary message. */
@@ -35,6 +36,9 @@ export function parseCommand(line: string): Command | null {
   if (word === "/stop") return { cmd: "stop" };
   if (word === "/export") return { cmd: "export" };
   if (word === "/temporary") return { cmd: "temporary" };
+  if (word === "/direct") return { cmd: "mode", mode: "direct" };
+  if (word === "/auto") return { cmd: "mode", mode: "auto" };
+  if (word === "/ask" || word === "/procedure" || word === "/procedures") return { cmd: "mode", mode: "ask" };
   if (word === "/invite") return { cmd: "error", message: "Inviting someone else's agent isn't available yet. Use /add-agent to add another assistant." };
   if (word === "/add-agent") {
     const m = /--name=(?:"([^"]*)"|(\S+))/.exec(t);

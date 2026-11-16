@@ -1740,6 +1740,53 @@ async def triage_route(request: Request) -> JSONResponse:
     return JSONResponse(verdict.as_dict())
 
 
+@server.custom_route("/procedure", methods=["POST"], include_in_schema=False)
+async def procedure_route(request: Request) -> JSONResponse:
+    """The desktop's and the rooms' first question, before the Goal/Way picker: does this prompt ask for a procedure?
+
+    Body `{"query": "<the prompt>", "context"?: "..."}`; reply `{"search": bool, "intent"?, "confidence"?,
+    "provider"?, "reason"?, "latency_ms"}` (procedure_intent.ProcedureIntent). One judge call (JEV first) replaces
+    the whole catalog read for ordinary work: only a "procedure" verdict opens the picker, so "fix the failing test"
+    goes straight to the model (2026-11-16).
+
+    Same gate as the other data routes. Every failure answers `search: true` (a skipped picker costs the person a
+    Way; a wasted one costs a second or two, and "Run without a Way" is one click); only a malformed body is a 400.
+    Rate limited per caller in memory (PROCEDURE_INTENT_RATE_PER_MIN, default 60/min) because each miss is a paid
+    judge call.
+    """
+    from app.mcp_server import procedure_intent as _pi
+
+    denied = await _route_gate(request)
+    if denied is not None:
+        return denied
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    query = body.get("query") if isinstance(body, dict) else None
+    if not isinstance(query, str) or not query.strip():
+        return JSONResponse({"error": "send JSON with a non-empty string `query`"}, status_code=400)
+    query = condense(query.strip(), _pi.QUERY_MAX)
+    context = body.get("context") if isinstance(body.get("context"), str) else ""
+    context = context.strip()[-_pi.CONTEXT_MAX:]
+    token = await _route_token(request)
+    key = (token.subject if token is not None and token.subject else None) or (
+        request.client.host if request.client else "unknown")
+    if not _pi.WINDOW.allow(key):
+        return JSONResponse(_pi.ProcedureIntent(True, reason="procedure intent rate limit").as_dict())
+    verdict = _pi.CACHE.get(query, context)
+    if verdict is None:
+        judge = _pi.default_judge()
+        verdict = await _pi.procedure_intent(
+            query, judge, context=context,
+            timeout_s=float(os.environ.get("KELL_PROCEDURE_TIMEOUT", "3")),
+            min_confidence=settings.find_ways_triage_min_confidence)
+        _pi.CACHE.put(query, verdict, context)
+        if context:
+            _pi.CACHE.put(query, verdict)     # the follow-up ask for this prompt alone reuses it
+    return JSONResponse(verdict.as_dict())
+
+
 @server.custom_route("/goal/judge", methods=["POST"], include_in_schema=False)
 async def goal_judge_route(request: Request) -> JSONResponse:
     """The desktop app's /goal evaluator, on kell's semantic chain: JEV first (one typed choice), then Gemini/Gemma.

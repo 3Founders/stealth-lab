@@ -396,9 +396,12 @@
    supporting text, a metadata row, a "Best fit" badge and one dark action. Several Ways scroll sideways, one snap per
    card, so the sidebar does not grow downwards; the turn waits until one is picked (2026-11-16). */
 .dk-pick { margin: 0 0 2px; padding: 12px 12px 10px; border: 1px solid var(--rule-strong); border-radius: 12px;
-  background: var(--paper); display: grid; gap: 8px; max-width: min(680px, 100%);
+  background: var(--paper); display: grid; gap: 8px; max-width: 100%;
   animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
-.dk-pick-run .dg-col { min-width: 0; max-width: min(720px, 100%); }
+/* The picker spans the centre panel: the run is two columns (avatar, meta) and the card is one full-width row under
+   them, so its sideways scrollbar reaches both ends with only the card's own margin left over (2026-11-16). */
+.dk-pick-run .dg-col { min-width: 0; max-width: 100%; }
+.dk-pick-wide { grid-column: 1 / -1; min-width: 0; }
 .dk-pick-head h2 { margin: 0 0 3px; }
 .dk-pick-sub { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--grey); }
 .dk-pick-sub b { font-weight: 500; color: var(--ink); }
@@ -411,7 +414,7 @@
   white-space: nowrap; }
 .dk-pick-goal-chip[data-has-way] { color: var(--ink); border-color: var(--rule-strong); }
 .dk-pick-strip { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
-  padding: 2px 2px 8px; margin: 0 -2px; scrollbar-width: thin; }
+  margin-inline: -12px; padding: 2px 12px 8px; scrollbar-width: thin; }
 .dk-pick-strip::-webkit-scrollbar { height: 6px; }
 .dk-pick-strip::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 999px; }
 .dk-pick-card { all: unset; box-sizing: border-box; flex: 0 0 min(300px, 84%); scroll-snap-align: start; cursor: pointer;
@@ -456,6 +459,30 @@
   .dk-pick { background: var(--surface); }
 }
 @media (prefers-reduced-motion: reduce) { .dk-pick, .dk-pick-card { animation: none !important; transition: none !important; } }
+
+/* Direct / Auto / Ask: the procedure mode, in the row above the message box (chat.css already floats
+   .dg-composer-meta there). The thumb slides between the three labels on the smooth spring; transform only, and the
+   reduced-motion block at the end of this file removes it (docs/ios_animation.md). */
+.dg-composer .dg-composer-meta { left: 18px; justify-content: flex-end; }
+.dk-mode { margin-right: auto; position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: 999px; background: var(--paper); }
+.dk-mode-thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 8px) / 3);
+  border-radius: 999px; background: var(--ink); pointer-events: none; transform: translateX(0);
+  transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
+.dk-mode[data-mode="auto"] .dk-mode-thumb { transform: translateX(calc(100% + 2px)); }
+.dk-mode[data-mode="ask"] .dk-mode-thumb { transform: translateX(calc(200% + 4px)); }
+.dg-composer .dk-mode-btn { position: relative; z-index: 1; height: auto; padding: 3px 11px; border: 0; border-radius: 999px;
+  background: none; color: var(--grey); font-size: 11px; line-height: 16px; cursor: pointer;
+  transition: color var(--dg-micro-d) var(--dg-micro); }
+.dg-composer .dk-mode-btn[data-on] { color: var(--paper); }
+.dg-composer .dk-mode-btn:not(:disabled):hover { background: none; color: var(--ink); }
+.dg-composer .dk-mode-btn[data-on]:not(:disabled):hover { color: var(--paper); }
+.dk-mode-btn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .dg-composer .dg-composer-meta { left: 12px; }
+  .dg-composer .dk-mode-btn { padding-inline: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .dk-mode-thumb, .dg-composer .dk-mode-btn { transition: none !important; } }
 
 /* The right panel's Agents list: the session itself and the model the router delegated this turn to. Selecting one
    swaps the middle column (main chat vs that agent's own output). */

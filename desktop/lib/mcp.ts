@@ -51,6 +51,36 @@ function payload(reply: Rpc): any {
   try { return JSON.parse(text) } catch { return text }
 }
 
+/** A kell REST route (not an MCP tool): `/procedure`, `/triage`. The configured `url` is the MCP endpoint
+ *  (`https://…/mcp`); these routes live at the host root. Same sign-in and bearer as a tool call. */
+export async function callKellRoute(path: string, body: unknown, timeoutMs = 8000): Promise<any> {
+  await freshSignIn()
+  const { url, token } = config()
+  if (!url) throw Object.assign(new Error("kell is not signed in on this machine"), { status: 401 })
+  const base = String(url).replace(/\/mcp\/?$/, "").replace(/\/+$/, "")
+  let r: Response
+  try {
+    r = await fetch(`${base}${path}`, {
+      method: "POST", signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        "content-type": "application/json", accept: "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw Object.assign(new Error("kell's server could not be reached"), { status: 502 })
+  }
+  if (r.status === 401) throw Object.assign(new Error("kell's sign-in expired; sign in again"), { status: 401 })
+  const text = await r.text()
+  let json: any = null
+  try { json = JSON.parse(text) } catch { /* not JSON */ }
+  if (r.status >= 400) {
+    throw Object.assign(new Error(String(json?.error || `kell's server answered ${r.status}`)), { status: 502 })
+  }
+  return json ?? text
+}
+
 export async function callMcpTool(name: string, args: Record<string, unknown>, timeoutMs = 12_000): Promise<any> {
   let lastErr: any
   // A hosted edge can terminate a long semantic lookup (the transport says "terminated"). One retry on a fresh MCP

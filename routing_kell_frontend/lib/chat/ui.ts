@@ -31,6 +31,9 @@ export const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
   { name: "/stop", hint: "Pause every agent until you resume" },
   { name: "/export", hint: "Save this room as a Markdown file" },
   { name: "/temporary", hint: "Start a room that is not saved or synced" },
+  { name: "/direct", hint: "Send prompts straight to the model; never search for a procedure" },
+  { name: "/auto", hint: "Search for a procedure and use the best fit automatically" },
+  { name: "/ask", hint: "Search for a procedure and show the ways to pick from" },
 ];
 
 /** The command being typed: the line starts with "/" and the caret is still inside that first word. */

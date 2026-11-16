@@ -127,8 +127,9 @@ export type WayOption = {
 /** A Goal the catalog matched, even when it has no written Way. The search result is shown before the model runs. */
 export type GoalOption = { id: string; name: string; score?: number; hasWay?: boolean }
 
-/** What the router resolved, before a model is picked or a Way is chosen. */
-export type Routed = { goal: Delegation["goal"]; options: WayOption[]; goals?: GoalOption[] }
+/** What the router resolved, before a model is picked or a Way is chosen. `skip`: JEV judged this ordinary work, so the
+ *  picker stays closed and the model runs at once. */
+export type Routed = { goal: Delegation["goal"]; options: WayOption[]; goals?: GoalOption[]; skip?: boolean }
 
 /** Turn one chosen Way into the plan: the model rung, the reason, and the least-privilege brief. */
 export function planFromOption(task: string, models: Models, goal: Delegation["goal"], option: WayOption | null): Delegation {
