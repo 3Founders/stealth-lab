@@ -7,13 +7,11 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import Markdown from "@/components/chat/Markdown"
 import SmoothText, { Thinking } from "@/components/chat/SmoothText"
 import MessageActions from "@/components/chat/MessageActions"
-import { ApprovalCard } from "@/components/chat/ApprovalCard"
 import ThemeToggle, { ThemeWatcher } from "@/components/ThemeToggle"
 import { useSpringScroll } from "@/components/chat/useSpringScroll"
 import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
 import { applyFont, readFont, saveFont } from "@/lib/font"
-import type { ToolApproval } from "@/lib/tools"
 import type { Delegation, GoalOption, WayOption } from "@/lib/plan"
 import { planFromOption } from "@/lib/plan"
 import ProcedureGraph from "@/components/ProcedureGraph"
@@ -37,7 +35,6 @@ const IMPORT_SOURCES: { id: ImportSource; label: string; note: string }[] = [
   { id: "opencode", label: "OpenCode", note: "Chats started with the opencode CLI in this folder." },
 ]
 type KellDesktop = {
-  openSignIn: (url: string) => Promise<boolean>
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void; showMenu?: () => void
   pickFiles?: () => Promise<string[]>; pathForFile?: (file: File) => string; openPath?: (path: string) => Promise<string>
   onFont?: (cb: (font: string) => void) => () => void; setFont?: (font: string) => void
@@ -187,19 +184,10 @@ const needsWebSignIn = (e?: string | null) => !!e && /sign in to run models/i.te
 const CHAT_ONLY = /^\s*(hi|hello|hey|thanks|thank you|ok|okay|yes|no|yep|nope|cool|great|good|nice|lol|sure|bye)\b[\s!.?]*$/i
 const desktop = () => (typeof window !== "undefined" ? (window as unknown as { kellDesktop?: KellDesktop }).kellDesktop : undefined)
 
-// A tool that needs a sign-in comes back from kell's gateway as JSON inside the tool's result:
-// {"sign_in_required": true, "server": ..., "link": ...} or {"consent_required": true, ...}. The event carries it as text,
-// sometimes escaped once more, so this reads it from the raw event rather than a parsed field.
-const signInFrom = (raw: string): { server: string; link: string } | null => {
-  if (!/(sign_in_required|consent_required)\\*"\s*:\s*true/.test(raw)) return null
-  const link = raw.match(/link\\*"\s*:\s*\\*"(https:[^"\\\s]+)/)?.[1]
-  if (!link) return null
-  const server = raw.match(/server\\*"\s*:\s*\\*"([^"\\]+)/)?.[1] || ""
-  return { server, link }
-}
+// A tool that needs a sign-in is no longer shown in the app: kell's gateway answer is left to the agent (2026-11-16).
 
-type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission" | "goal" | "catalog"; text: string; at?: number; server?: string
-              state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string
+type Line = { who: "user" | "assistant" | "plan" | "permission" | "goal" | "catalog"; text: string; at?: number; server?: string
+              sessionID?: string; requestID?: string; answer?: string
               files?: Attachment[]
               /** plan lines: the Way run the missing credit paused, or (low) the balance before a long Way starts */
               run?: RunAt; low?: { left: number; steps: number } }
@@ -237,7 +225,6 @@ type GoalState = { condition: string; started: number; turns: number; reason: st
 // by assistantMessageID), session.step.ended carries tokens and cost for the same message. Neither event carries a rung.
 type LedgerRow = { id: string; model?: string; providerID?: string; tokens?: string; cost?: number }
 type FileDiff = { file: string; patch: string; additions: number; deletions: number; status: "added" | "deleted" | "modified" }
-type ToolCard = { name: string; source: "installed" | "registry"; url: string | null; needsSignIn: boolean }
 type Settings = {
   signedIn: boolean; account: string | null; subject?: string | null; server: string | null
   lane?: "organization" | "personal" | "own-key" | "none"; gateway?: string | null
@@ -472,7 +459,7 @@ export default function Home() {
   const menuRef = useRef<(what: string) => void>(() => {})
   menuRef.current = (what) => {
     if (what === "open-folder" && !busy && !opening) void (async () => { const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); setSideView("project"); void openProject(d) } })()
-    if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); loadChanges(null) }
+    if (what === "new-session") newSession()
   }
   useEffect(() => desktop()?.onMenu?.((w) => menuRef.current(w)), [])
   // Follow the window's maximize state: our button, a double-click on the title bar, or Windows itself all keep the
@@ -512,6 +499,12 @@ export default function Home() {
   const [sessionModel, setSessionModel] = useState<string | null>(null)
   const [ledger, setLedger] = useState<LedgerRow[]>([])
   const [sessionID, setSessionID] = useState<string | null>(null)
+  // The chat being read from the app's store (or the engine's backfill): a switch says so instead of going blank.
+  const [sessLoading, setSessLoading] = useState<string | null>(null)
+  const sessionSeq = useRef(0)                             // only the last clicked chat may fill the pane
+  // A new session discards whatever a procedure search that is still running would put on screen: its picker, its
+  // card, or its error belonged to the chat the person just left (2026-11-16).
+  const turnGen = useRef(0)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
   const [sessions, setSessions] = useState<{ id: string; title: string; updated: number; directory?: string | null }[]>([])
   const dirRef = useRef("")                             // the open folder, for callbacks that outlive a render
@@ -593,36 +586,6 @@ export default function Home() {
   // The slash menu: which row is highlighted, and the draft it was dismissed for (typing again reopens it).
   const [cmdIdx, setCmdIdx] = useState(0)
   const [cmdDismissedFor, setCmdDismissedFor] = useState<string | null>(null)
-  // Pending tool approvals (P1-11): a call the gate wants the person to allow. The card sits above the
-  // composer and polls the desktop proxy, which reaches kell's /tools/approvals with the MCP token; the
-  // browser never sees the token or the server address.
-  const [approvals, setApprovals] = useState<ToolApproval[]>([])
-  const [approvalBusy, setApprovalBusy] = useState(false)
-  const refreshApprovals = useCallback(async () => {
-    try {
-      const r = await fetch("/api/tools/approve")
-      if (!r.ok) return
-      const j = await r.json()
-      setApprovals(Array.isArray(j?.approvals) ? j.approvals : [])
-    } catch { /* not signed in, or the server is restarting */ }
-  }, [])
-  const decideApproval = useCallback(async (id: string, action: "approve" | "deny") => {
-    setApprovalBusy(true)
-    try {
-      await fetch("/api/tools/approve", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, action }),
-      })
-      await refreshApprovals()
-    } catch { /* the next poll shows the row again */ } finally { setApprovalBusy(false) }
-  }, [refreshApprovals])
-  useEffect(() => {
-    void refreshApprovals()
-    const t = window.setInterval(() => void refreshApprovals(), 15_000)
-    const onFocus = () => void refreshApprovals()
-    window.addEventListener("focus", onFocus)
-    return () => { window.clearInterval(t); window.removeEventListener("focus", onFocus) }
-  }, [refreshApprovals])
   const textRef = useRef<HTMLTextAreaElement>(null)
   // Up-arrow history: the prompts already sent in THIS chat (the session's user lines), not a global list.
   const histPos = useRef<number | null>(null)
@@ -652,8 +615,6 @@ export default function Home() {
     } catch (e: any) { setFileErr(String(e?.message || e)) }
     finally { setFileBusy(false) }
   }
-  const [cards, setCards] = useState<ToolCard[]>([])
-  const [cardsNote, setCardsNote] = useState("")
   // The delegation for the current turn: kell's Goal/Way/Tool, the model that runs the turn, and the scoped side call.
   // `planRef` keeps the last plan even when the router answered after the prompt had already gone out.
   const [delegation, setDelegation] = useState<Delegation | null>(null)
@@ -665,7 +626,7 @@ export default function Home() {
   const [delegateOptions, setDelegateOptions] = useState<WayOption[]>([])
   // The Goals the search matched, even when none has a written Way: the chat shows the result before the model runs.
   const [delegateGoals, setDelegateGoals] = useState<GoalOption[]>([])
-  const [pendingTurn, setPendingTurn] = useState<{ text: string; files: Attachment[]; asGoal: boolean; goal: Delegation["goal"] } | null>(null)
+  const [pendingTurn, setPendingTurn] = useState<{ text: string; files: Attachment[]; asGoal: boolean; goal: Delegation["goal"]; sid: string | null } | null>(null)
   const [delegateAsk, setDelegateAsk] = useState("")
   const [delegateAnswer, setDelegateAnswer] = useState("")
   // Every direct answer the delegated agent has given in this session, for the agent view in the middle.
@@ -760,15 +721,22 @@ export default function Home() {
   useEffect(() => {
     fetch("/api/engine").then((r) => r.json()).then(async (j) => {
       setEngine({ up: !!j.up })
-      if (j.up) { void loadSessions(); return }
       // The folder and the chat to reopen come from the app's own store (app/api/last): the page's localStorage is
-      // wiped on every start, which is why the app used to open on nothing and look like the chats were gone.
+      // wiped on every start, which is why the app used to open on nothing and look like the chats were gone. This runs
+      // whether the engine is already up or not: returning early on a warm start left the app with no project and no
+      // session, so the sidebar showed another project's chats and opening one looked like a switch that did nothing
+      // (2026-11-16).
       let last: { directory?: string | null; sessionID?: string | null } | null = null
       try { last = (await (await fetch("/api/last")).json()).last } catch { /* none yet */ }
       if (last?.directory) {
         setDirectory(last.directory)
+        dirRef.current = last.directory   // the local list can load before the engine has finished starting
+        setSideView("project")            // the restored project's sessions are the point of opening it
+        void loadSessions()
         void openProject(last.directory, last.sessionID || undefined)
+        return
       }
+      if (j.up) void loadSessions()
     })
     fetch("/api/settings").then((r) => r.json()).then(setSettings).catch(() => undefined)
   }, [])
@@ -782,7 +750,20 @@ export default function Home() {
   }, [])
   useEffect(() => { scrollToEnd({ instant: true }) }, [scrollToEnd, sessionID])
   useEffect(() => { histPos.current = null; histSaved.current = "" }, [sessionID])
-  useEffect(() => { follow() }, [lines, steps, busy, follow])
+  // The middle column follows new chat content only while the chat is showing. An agent view is a fixed report, not a
+  // stream: opening one starts at its head, and going back to the chat returns to the latest message (2026-11-16).
+  useEffect(() => {
+    if (agentView === "main") { scrollToEnd({ instant: true }); return }
+    const el = logRef.current
+    if (el) el.scrollTop = 0
+  }, [agentView, scrollToEnd])
+  useEffect(() => { if (agentView === "main") follow() }, [lines, steps, busy, agentView, follow])
+  // A view whose agent is gone (a new session, a new turn, the picker opening) returns to the chat instead of leaving a
+  // stale selection in the panel.
+  useEffect(() => {
+    if (agentView === "delegated" && !delegation?.model) setAgentView("main")
+    else if (agentView.startsWith("sub:") && !subagents.some((s) => `sub:${s.id}` === agentView)) setAgentView("main")
+  }, [agentView, delegation?.model, subagents])
   // A file dropped outside the composer must not navigate the window to file://; the drop zone still handles its own.
   useEffect(() => {
     const stop = (e: DragEvent) => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault() }
@@ -808,12 +789,13 @@ export default function Home() {
 
   const loadSessions = useCallback(async () => {
     try {
-      // Backfill once from the engine, then read the app's own store (docs/localdb.md).
-      await fetch("/api/local/sync", { method: "POST" }).catch(() => undefined)
+      // Backfill once from the engine, then read the app's own store (docs/localdb.md). Timeouts keep a starting or
+      // dead engine from holding the sidebar and the last chat behind it (2026-11-16).
+      await fetch("/api/local/sync", { method: "POST", signal: AbortSignal.timeout(8_000) }).catch(() => undefined)
       const dir = dirRef.current
-      const j = await (await fetch(`/api/local/sessions${dir ? `?directory=${encodeURIComponent(dir)}` : ""}`)).json()
+      const j = await (await fetch(`/api/local/sessions${dir ? `?directory=${encodeURIComponent(dir)}` : ""}`, { signal: AbortSignal.timeout(10_000) })).json()
       setSessions(Array.isArray(j.sessions) ? j.sessions : [])
-      const p = await (await fetch("/api/sessions?projects=1")).json()
+      const p = await (await fetch("/api/sessions?projects=1", { signal: AbortSignal.timeout(8_000) })).json()
       if (Array.isArray(p.projects)) mergeProjects(p.projects.map((x: { dir: string }) => x.dir))
     } catch { /* the lists stay as they were */ }
   }, [])
@@ -874,29 +856,84 @@ export default function Home() {
   }, [importOpen, importBusy])
 
   // A past session: its conversation back on screen, and the next message continues it.
-  const openSession = async (id: string) => {
-    if (busy || id === sessionID) return
-    setQueued([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setCards([]); setCardsNote(""); setSpend(0)
+  const openSession = async (id: string, force = false) => {
+    if (!force && id === sessionID) return
+    // A turn that is still running belongs to the chat it started in: switching away detaches the pane from its
+    // stream, and the engine keeps answering. `force` is the turn-end reload of that same chat.
+    if (!force && busyRef.current) { detached.current = true; setDetachedView(true) }
+    const seq = ++sessionSeq.current
+    onScreen.current = id                                // the stream stops writing to the pane in this same tick
+    // On a narrow window the project list is a drawer over the chat: picking a chat closes it, or the drawer keeps
+    // covering the conversation the click just opened (2026-11-16).
+    if (typeof window !== "undefined" && window.innerWidth <= 760) setLeftOpen(false)
+    setSideView("project")                                  // the open chat belongs to a project, and its list is there
+    setQueued([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setSpend(0)
+    setDelegateLog([]); setDelegation(null); setDelegateStatus(""); planRef.current = null
+    setSessLoading(id)
     setSessionID(id); setLines([])
     void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: id }) }).catch(() => undefined)
     try {
-      // The app's own history first (docs/localdb.md); the engine is only the one-time backfill source.
-      let j = await (await fetch(`/api/local/sessions?id=${encodeURIComponent(id)}`)).json()
-      if (j.error || !Array.isArray(j.lines)) j = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`)).json()
+      // The app's own history first (docs/localdb.md); the engine is only the one-time backfill source. A timeout keeps
+      // one dead engine call from making every click look like a switch that does nothing (2026-11-16).
+      let j = await (await fetch(`/api/local/sessions?id=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(15_000) })).json()
+      if (j.error || !Array.isArray(j.lines)) {
+        j = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(15_000) })).json()
+      }
+      // The local store can hold the session row with no messages yet (older and imported chats): read the engine's own
+      // record before showing an empty conversation. The local route returns `lines: []`, not an error, in that case.
+      if (!Array.isArray(j.lines) || j.lines.length === 0) {
+        const e = await fetch(`/api/sessions?id=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(15_000) })
+          .then((r) => r.json()).catch(() => null)
+        if (e && Array.isArray(e.lines) && e.lines.length) j = e
+      }
+      if (seq !== sessionSeq.current) return          // a newer click won
       setLines(Array.isArray(j.lines) ? j.lines : [])
+      // A permission or credit card that arrived while this chat was in the background is put back with its lines.
+      const queued = pendingLines.current.filter((x) => x.sid === id)
+      if (queued.length) {
+        pendingLines.current = pendingLines.current.filter((x) => x.sid !== id)
+        setLines((l) => [...l, ...queued.map((x) => x.line)])
+      }
       // The agents panel is rebuilt from the engine's own record (the app's local history keeps text, not tool calls), so
       // the subagents this chat already ran are still listed after a restart or when an older chat is opened.
       if (Array.isArray(j.subagents)) setSubagents(j.subagents)
       else {
         try {
-          const s = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`)).json()
+          const s = await (await fetch(`/api/sessions?id=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(15_000) })).json()
           if (Array.isArray(s.subagents)) setSubagents(s.subagents)
           if (typeof s.model === "string") setSessionModel(s.model)
         } catch { /* the panel is an addition; the chat still opens */ }
       }
       if (typeof j.model === "string") setSessionModel(j.model)
-    } catch { setLines([{ who: "assistant", text: "kell could not read this session.", at: Date.now() }]) }
-    loadChanges(id)
+    } catch { if (seq === sessionSeq.current) setLines([{ who: "assistant", text: "kell could not read this session.", at: Date.now() }]) }
+    finally { if (seq === sessionSeq.current) setSessLoading(null) }
+    if (seq === sessionSeq.current) loadChanges(id)
+    // A forced reload (the turn ended, or a blocking card brought us back) takes the stream again only once the
+    // chat it belongs to is on screen.
+    if (force && seq === sessionSeq.current) { detached.current = false; setDetachedView(false) }
+  }
+
+  // A new session: an empty chat in this project. Every per-turn and per-search state goes with it. Without that, the
+  // last chat's picker, delegation, queue, or "opening" state stayed over the empty chat, and the `+` looked like it did
+  // nothing while an Ask-mode picker was open (2026-11-16). A turn still running keeps running in its own chat.
+  const newSession = () => {
+    if (busyRef.current) { detached.current = true; setDetachedView(true) }
+    else { detached.current = false; setDetachedView(false) }
+    sessionSeq.current++                                  // a chat still loading must not fill this one
+    planSeq.current++                                     // a procedure search still running must not land here
+    turnGen.current++                                     // nor may its picker open over the new chat
+    onScreen.current = null
+    setSessionID(null)
+    setLines([])
+    setSteps([])
+    setSubagents([]); subagentIds.current.clear()
+    setSessionModel(null); setLedger([]); setSpend(0)
+    setDelegateLog([]); setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateAsk("")
+    setDelegation(null); planRef.current = null; planErr.current = ""
+    setDelegateOptions([]); setDelegateGoals([]); setPendingTurn(null); setDelegateStatus("")
+    setQueued([]); setStopNote(""); setSessLoading(null)
+    setAgentView("main")
+    loadChanges(null)
   }
 
   // A rooms ask running in a session (lib/remote.ts): followed live when it is the chat on screen, and when it finishes that chat
@@ -905,6 +942,16 @@ export default function Home() {
   const remoteSeen = useRef(0)
   const onScreen = useRef<string | null>(null)
   onScreen.current = sessionID
+  // The running turn's session, and whether the person has switched to another chat. The engine keeps answering;
+  // the pane stops taking that stream's events so another chat can be read, and the finished answer is read back when
+  // the turn ends (2026-11-16). A blocking event (a permission, credit, or an error) brings the chat back, because
+  // without the person's answer that turn would wait forever.
+  const runningSid = useRef<string | null>(null)
+  const detached = useRef(false)
+  const pendingLines = useRef<Array<{ sid: string; line: Line }>>([])   // a blocking event seen while another chat was open
+  const [runningSession, setRunningSession] = useState<string | null>(null)
+  const [detachedView, setDetachedView] = useState(false)
+  const streamLive = () => !detached.current && (runningSid.current === null || runningSid.current === onScreen.current)
   useEffect(() => {
     const tick = async () => {
       try {
@@ -942,22 +989,11 @@ export default function Home() {
 
   const sessionRow = (x: { id: string; title: string; updated: number }) => (
     <button type="button" key={x.id} className="dk-sess-row" data-here={x.id === sessionID || undefined} title={x.title || "Untitled session"}
-      disabled={busy} onClick={() => void openSession(x.id)}>
+      onClick={() => void openSession(x.id)}>
       <span className="nm">{x.title || "Untitled session"}</span>
       <span className="when">{x.updated ? when(x.updated) : ""}</span>
     </button>
   )
-
-  const loadTools = async (need: string) => {
-    setCardsNote("Finding tools…")
-    try {
-      const r = await fetch("/api/tools", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ need }) })
-      const j = await r.json()
-      if (!r.ok) { setCards([]); setCardsNote(j.error || "the tool router did not answer"); return }
-      setCards(j.tools || [])
-      setCardsNote((j.tools || []).length ? "" : "No outside tool needed")
-    } catch (err: any) { setCards([]); setCardsNote(String(err?.message || err)) }
-  }
 
   // Open project: with no folder typed, the system's folder picker first (in the app). Says what it is doing and what happened:
   // it used to change nothing on screen when it worked, so it looked broken (2026-11-06).
@@ -968,6 +1004,7 @@ export default function Home() {
       if (!chosen) return
       dir = chosen; setDirectory(chosen)
     }
+    setSideView("project")                                  // an open project shows its sessions, not the project list
     setEngine(null); setOpening(true)
     // The callbacks below read the folder from a ref: set it now, so a fast engine failure cannot leave the previous
     // project's directory in place when loadSessions asks for the list.
@@ -981,20 +1018,24 @@ export default function Home() {
     setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
     if (j.up) remember(dir)
     if (j.up) {
-      setQueued([]); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null)
+      setQueued([]); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setSessionID(null); setSpend(0); setDelegateLog([]); loadChanges(null)
       // The folder (and the chat to reopen, when the app is restoring the last one) is kept in the app's store.
       void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir, sessionID: session ?? null }) }).catch(() => undefined)
     }
-    // The app's own store is read even when the engine is down: the chats are still there to read.
+    // The app's own store is read even when the engine is down: the chats are still there to read, and the last chat
+    // opens from that store without waiting for an engine that may never come up.
     await loadSessions()
-    if (j.up && session) void openSession(session)
+    if (session) void openSession(session)
   }
 
-  const appendAssistant = (delta: string) => setLines((l) => {
-    const last = l.at(-1)
-    if (last?.who === "assistant") { const c = l.slice(0, -1); c.push({ who: "assistant", text: last.text + delta, at: last.at }); return c }
-    return [...l, { who: "assistant", text: delta, at: Date.now() }]
-  })
+  const appendAssistant = (delta: string) => {
+    if (!streamLive()) return
+    setLines((l) => {
+      const last = l.at(-1)
+      if (last?.who === "assistant") { const c = l.slice(0, -1); c.push({ who: "assistant", text: last.text + delta, at: last.at }); return c }
+      return [...l, { who: "assistant", text: delta, at: Date.now() }]
+    })
+  }
 
   // The prompt an answer came from, for "Ask again".
   const lastUserBefore = (i: number) => { for (let k = i - 1; k >= 0; k--) if (lines[k].who === "user") return lines[k].text; return undefined }
@@ -1194,7 +1235,7 @@ export default function Home() {
   // Ask the router for the task's Goal and the Ways it offers. The route streams its progress, so the panel shows
   // "asking the router" instead of going silent. Nothing runs yet: the person picks a Way from the cards (or chooses to
   // run without one), and only then does the turn start.
-  const planFor = async (text: string): Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null> => {
+  const planFor = async (text: string, sid: string | null): Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null> => {
     const seq = ++planSeq.current
     planErr.current = ""
     let settle: (p: { goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null) => void = () => undefined
@@ -1221,7 +1262,7 @@ export default function Home() {
             if (!part.startsWith("data: ")) continue
             let ev: any
             try { ev = JSON.parse(part.slice(6)) } catch { continue }
-            if (ev.type === "status" && seq === planSeq.current) setDelegateStatus(String(ev.text || ""))
+            if (ev.type === "status" && seq === planSeq.current && onScreen.current === sid) setDelegateStatus(String(ev.text || ""))
             else if (ev.type === "plan" && ev.plan) {
               routed = { goal: ev.plan.goal ?? null,
                 options: Array.isArray(ev.options) ? ev.options as WayOption[] : [],
@@ -1230,6 +1271,7 @@ export default function Home() {
               if (seq === planSeq.current) {
                 planRef.current = ev.plan as Delegation
                 setDelegation(null)                    // nothing is applied until the person picks
+                setDelegateLog([])                     // direct answers belonged to the plan being replaced
                 setDelegateOptions(routed.options)
                 setDelegateGoals(routed.goals)
                 setDelegateNote("")
@@ -1277,12 +1319,13 @@ export default function Home() {
       return
     }
     const sent = body
+    const gen = turnGen.current
     // The procedure search starts now, before the model, unless the person chose Direct or this is small talk. When it
     // runs, every task shows the Goals/Ways it found, even when none has a written Way. The model never starts the
     // search itself (2026-11-16). JEV decides whether the prompt asks for a procedure at all; ordinary work skips the
     // picker inside /api/delegate.
     const skipSearch = procMode === "direct" || CHAT_ONLY.test(sent.trim())
-    const routedP = skipSearch ? null : planFor(sent)
+    const routedP = skipSearch ? null : planFor(sent, sessionID)
     if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
     else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
@@ -1291,35 +1334,38 @@ export default function Home() {
     setBusy(true); busyRef.current = true
     setStopNote("")
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
-    setCards([]); setCardsNote(""); loadTools(sent || outgoing.map((f) => f.name).join(" "))
     if (skipSearch) { await runTurn(sent, outgoing, null); return }
     const routed = await routedP
+    // A new session was started while the search ran: its picker, card, or error belongs to the chat the person left.
+    if (turnGen.current !== gen) { setBusy(false); busyRef.current = false; return }
     // JEV judged this ordinary work: no picker, no card, the model starts as if kell held nothing.
-    if (routed?.skip) { setDelegateStatus(""); await runTurn(sent, outgoing, null); return }
+    if (routed?.skip) { if (onScreen.current === sessionID) setDelegateStatus(""); await runTurn(sent, outgoing, null); return }
     if (routed && procMode === "auto") {
       // Auto: the best-fitting Way is applied without a click. No Way means the model does the work, with no card.
       const best = routed.options[0] ?? null
       const plan = planFromOption(sent, settings?.models || {}, routed.goal, best)
-      planRef.current = plan
-      setDelegation(plan)
       setDelegateOptions(routed.options)
       setDelegateGoals(routed.goals)
       setPendingTurn(null)
-      setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
-      setDelegateStatus(best
-        ? `Auto: using the best fit, ${best.name}`
-        : "Auto: no stored procedure fits - the model does the work")
+      if (onScreen.current === sessionID) {
+        planRef.current = plan
+        setDelegation(plan)
+        setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
+        setDelegateStatus(best
+          ? `Auto: using the best fit, ${best.name}`
+          : "Auto: no stored procedure fits - the model does the work")
+      }
       await runTurn(sent, outgoing, plan)
       return
     }
     if (routed) {
       // Nothing runs yet: the chat shows the Ways, or the Goals that matched with no written Way. The person picks a
       // Way or says to work on it without one.
-      setPendingTurn({ text: sent, files: outgoing, asGoal, goal: routed.goal })
+      setPendingTurn({ text: sent, files: outgoing, asGoal, goal: routed.goal, sid: sessionID })
       setDelegateOptions(routed.options)
       setDelegateGoals(routed.goals)
       setBusy(false); busyRef.current = false
-      setDelegateStatus(routed.options.length
+      if (onScreen.current === sessionID) setDelegateStatus(routed.options.length
         ? `${routed.options.length} ${routed.options.length === 1 ? "Way" : "Ways"} found - choose one in the chat`
         : "No stored procedure for this task - kell can still work on it")
       return
@@ -1328,20 +1374,25 @@ export default function Home() {
     // searched: say what happened and offer the sign-in / retry in the chat.
     setBusy(false); busyRef.current = false
     const why = planErr.current || "kell could not search the procedure catalog"
-    setLines((l) => [...l, { who: "catalog", text: sent, server: why, at: Date.now() }])
+    if (onScreen.current === sessionID) setLines((l) => [...l, { who: "catalog", text: sent, server: why, at: Date.now() }])
     setDelegateStatus("")
     setDelegateNote("")
   }
 
   // Run one turn on the chosen Way (or on the engine's default when plan is null). The user's line is already in the
   // chat; this owns the stream and the post-turn refresh.
-  const runTurn = async (sent: string, outgoing: Attachment[], plan: Delegation | null) => {
+  const runTurnInner = async (sent: string, outgoing: Attachment[], plan: Delegation | null) => {
     if (plan) { setDelegateAnswer(""); setDelegateErr("") }
+    runningSid.current = sessionID
+    setRunningSession(sessionID)
+    // If the person switched during the procedure search, this turn belongs to the chat they left: stay detached.
+    // If they are still on (or back on) its chat, the stream owns the pane.
+    if (onScreen.current === sessionID) { detached.current = false; setDetachedView(false) }
     const payload = { sessionID, directory, text: sent, model: plan?.model ?? undefined, plan: plan ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })
     if (!r.ok || !r.body) {
       const err = await r.text()
-      setLines((l) => [...l, { who: "assistant", text: `kell could not reach the engine: ${err.slice(0, 200)}`, at: Date.now() }])
+      if (streamLive()) setLines((l) => [...l, { who: "assistant", text: `kell could not reach the engine: ${err.slice(0, 200)}`, at: Date.now() }])
       setBusy(false); busyRef.current = false; return
     }
     let sid = sessionID
@@ -1351,6 +1402,19 @@ export default function Home() {
     const before = lines.length
     const reader = r.body.getReader()
     const dec = new TextDecoder()
+    // A blocking event (a permission, missing credit, an error) seen while another chat is open: load this turn's
+    // chat again, put the card back with its lines, and only then let the stream write to the pane.
+    const bringBack = (lineSid: string, line: Line) => {
+      const psid = lineSid || sid || ""
+      if (!psid) return
+      pendingLines.current.push({ sid: psid, line })
+      detached.current = true
+      onScreen.current = psid
+      setSessionID(psid)
+      setRunningSession(psid)
+      setDetachedView(true)
+      void openSession(psid, true)
+    }
     for (;;) {
       const { value, done } = await reader.read()
       if (done) break
@@ -1364,25 +1428,32 @@ export default function Home() {
         const t = ev.type as string
         const d = ev.data || {}
         if (t === "session") {
-          sid = ev.sessionID; setSessionID(ev.sessionID)
+          sid = ev.sessionID
+          runningSid.current = sid
+          setRunningSession(sid)
+          // A new session's id belongs to the chat the turn was started in. If the person has already switched away,
+          // the pane keeps their chat; the stream writes nowhere until the turn ends.
+          if (!detached.current) { onScreen.current = sid; setSessionID(sid) }
           void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: ev.sessionID }) }).catch(() => undefined)
         }
         else if (t === "session.text.delta") appendAssistant(d.delta ?? d.text ?? "")
         else if (t === "session.tool.input.started") {
           // The tool's name comes only here; the called / success / failed events carry the call's id (2026-11-07: every chip read "tool").
           const id = String(d.id || ""), label = String(d.name || "tool")
-          setSteps((s) => s.some((x) => x.id === id) ? s : [...s, { kind: "tool", label, id, state: "running" }])
-          // A subagent shows in the agents panel from its first moment; `called` below fills in what it was asked to do.
-          if (SUBAGENT_TOOL.test(label) && id) {
-            subagentIds.current.add(id)
-            setSubagents((a) => a.some((x) => x.id === id) ? a : [...a, { id, title: "Subagent", state: "running" }])
+          if (streamLive()) {
+            setSteps((s) => s.some((x) => x.id === id) ? s : [...s, { kind: "tool", label, id, state: "running" }])
+            // A subagent shows in the agents panel from its first moment; `called` below fills in what it was asked to do.
+            if (SUBAGENT_TOOL.test(label) && id) {
+              subagentIds.current.add(id)
+              setSubagents((a) => a.some((x) => x.id === id) ? a : [...a, { id, title: "Subagent", state: "running" }])
+            }
           }
         }
         else if (t === "session.tool.called" || t === "session.tool.success" || t === "session.tool.failed") {
           const id = String(d.id || "")
           const state = t === "session.tool.called" ? "running" : t === "session.tool.success" ? "done" : "failed"
           const hint = t === "session.tool.called" ? hintOf(d.input) : undefined
-          setSteps((s) => s.some((x) => x.id === id)
+          if (streamLive()) setSteps((s) => s.some((x) => x.id === id)
             ? s.map((x) => (x.id === id ? { ...x, state, hint: hint ?? x.hint, note: state === "failed" ? "failed" : x.note } : x))
             : [...s, { kind: "tool", label: String(d.name || "tool"), id, state, hint, note: state === "failed" ? "failed" : undefined }])
           // The subagent's row: its one-line task while it runs, its answer (or failure) when it ends. The call's name is
@@ -1392,7 +1463,7 @@ export default function Home() {
             if (at || /"status":\s*"(done|failed|cancelled)"/.test(contentText(d.content))) lastRun.current = at
           }
           if (id && SUBAGENT_TOOL.test(String(d.name || ""))) subagentIds.current.add(id)
-          if (id && subagentIds.current.has(id)) {
+          if (streamLive() && id && subagentIds.current.has(id)) {
             if (t === "session.tool.called") {
               const title = subagentTitle(d.input)
               const brief = typeof d.input?.prompt === "string" ? d.input.prompt : undefined
@@ -1406,58 +1477,88 @@ export default function Home() {
                 : x)))
             }
           }
-          const need = t === "session.tool.called" ? null : signInFrom(JSON.stringify(d))
-          if (need) setLines((l) => l.some((x) => x.who === "signin" && x.text === need.link) ? l
-            : [...l, { who: "signin", text: need.link, server: need.server, state: "ready", at: Date.now() }])
         }
         else if (t === "session.step.started") {
           const id = String(d.assistantMessageID || "")
-          if (id && d.model?.id) setLedger((rows) => [...rows.filter((r) => r.id !== id), { id, model: d.model.id, providerID: d.model.providerID }])
+          if (streamLive() && id && d.model?.id) setLedger((rows) => [...rows.filter((r) => r.id !== id), { id, model: d.model.id, providerID: d.model.providerID }])
         }
         else if (t === "session.step.ended") {
           const id = String(d.assistantMessageID || "")
           const patch = { tokens: tokensOf(d), cost: d.cost != null ? Number(d.cost) : undefined }
-          if (id) setLedger((rows) => rows.some((r) => r.id === id) ? rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) : [...rows, { id, ...patch }])
+          if (streamLive() && id) setLedger((rows) => rows.some((r) => r.id === id) ? rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) : [...rows, { id, ...patch }])
           if (d.cost != null) setSpend((c) => c + Number(d.cost))
         }
         else if (t === "permission.asked") {
           // the engine waits for this answer (reading a .env file asks first); without it the turn hung (2026-11-08, the e2e test)
           const what = [d.action, ...(Array.isArray(d.resources) ? d.resources.slice(0, 3) : [])].filter(Boolean).join(" ")
-          setLines((l) => l.some((x) => x.requestID === d.id) ? l
-            : [...l, { who: "permission", text: String(d.message || what || "a tool call"), sessionID: d.sessionID, requestID: String(d.id), at: Date.now() }])
+          const line: Line = { who: "permission", text: String(d.message || what || "a tool call"), sessionID: d.sessionID, requestID: String(d.id), at: Date.now() }
+          if (streamLive()) setLines((l) => l.some((x) => x.requestID === d.id) ? l : [...l, line])
+          else bringBack(String(d.sessionID || sid || ""), line)
         }
         else if (t === "need_plan") {
           failed = true
           const run = lastRun.current ?? undefined
-          setLines((l) => [...l, { who: "plan", text: "", at: Date.now(), ...(run ? { run } : {}) }]); setBusy(false)
+          const line: Line = { who: "plan", text: "", at: Date.now(), ...(run ? { run } : {}) }
+          if (streamLive()) setLines((l) => [...l, line])
+          else bringBack(sid || "", line)
+          setBusy(false)
         }
         else if (t === "low_balance") {
-          setLines((l) => [...l, { who: "plan", text: "", at: Date.now(), low: { left: Number(ev.left) || 0, steps: Number(ev.steps) || 0 } }])
+          const line: Line = { who: "plan", text: "", at: Date.now(), low: { left: Number(ev.left) || 0, steps: Number(ev.steps) || 0 } }
+          if (streamLive()) setLines((l) => [...l, line])
+          else bringBack(sid || "", line)
         }
         else if (t === "error") {
           failed = true
-          if (needsWebSignIn(ev.error)) { setEngine({ up: false, error: String(ev.error) }); appendAssistant("Sign in to run models: the buttons are on the left.") }
-          else appendAssistant(`\n(error: ${ev.error})`)
+          if (needsWebSignIn(ev.error)) setEngine({ up: false, error: String(ev.error) })
+          const line: Line = { who: "assistant", text: needsWebSignIn(ev.error) ? "Sign in to run models: the buttons are on the left." : `\n(error: ${ev.error})`, at: Date.now() }
+          if (streamLive()) setLines((l) => [...l, line])
+          else bringBack(sid || "", line)
           setBusy(false)
         }
         else if (t === "done") ended = true
       }
     }
     // A turn that ends with nothing said is never silent: say so (2026-11-06: a failed model call showed an empty turn).
-    setLines((l) => l.slice(before).some((x) => x.who === "assistant" || x.who === "signin" || x.who === "permission" || x.who === "plan") ? l
+    if (streamLive()) setLines((l) => l.slice(before).some((x) => x.who === "assistant" || x.who === "permission" || x.who === "plan") ? l
       : [...l, { who: "assistant", text: ended ? "kell got no answer from the model for this. Try again, or check Settings > Models."
                                                : "The connection to the engine ended before an answer came. Try again.", at: Date.now() }])
     setBusy(false)
     busyRef.current = false
     // Let React flush the last line, then let an active goal judge the turn (app/api/goal). A failed turn pauses it.
-    setTimeout(() => goalAfterTurn.current(sid, failed), 80)
+    setTimeout(() => { if (onScreen.current === sid) goalAfterTurn.current(sid, failed) }, 80)
     // The session's snapshot record lands shortly after the last stream event, and how long is not fixed: check now, then
-    // poll a few times, so the panel fills itself instead of waiting for a Refresh click.
-    loadChanges(sid)
-    for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (!busyRef.current) loadChanges(sid) }, ms)
+    // poll a few times, so the panel fills itself instead of waiting for a Refresh click. Only for the chat on screen:
+    // the panel belongs to the visible session, not to a turn that finished in the background.
+    if (onScreen.current === sid) loadChanges(sid)
+    for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (onScreen.current === sid && !busyRef.current) loadChanges(sid) }, ms)
     loadSessions()
     setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
     setDelegateStatus("")
+  }
+
+  // A turn always ends. A stream that failed mid-read used to leave `busy` true, which disabled every session row and
+  // the composer until the app was restarted (2026-11-16). The inner function keeps the success path; this only adds the
+  // guarantee that the app is usable again, and says what happened when the connection broke.
+  const runTurn = async (sent: string, outgoing: Attachment[], plan: Delegation | null) => {
+    try { await runTurnInner(sent, outgoing, plan) }
+    catch (err) {
+      appendAssistant(`The connection to the engine broke: ${String((err as any)?.message || err).slice(0, 200)}`)
+    }
+    finally {
+      const ranSid = runningSid.current
+      const wasDetached = detached.current
+      runningSid.current = null
+      setRunningSession(null)
+      detached.current = false
+      setDetachedView(false)
+      // A permission card for a turn that has ended is stale. A credit/plan or error notice is still worth showing
+      // when the person returns to that chat.
+      if (ranSid) pendingLines.current = pendingLines.current.filter((x) => x.sid !== ranSid || x.line.who !== "permission")
+      setBusy(false); busyRef.current = false; setDelegateStatus("")
+      // The chat that was answering in the background catches up with the finished answer.
+      if (wasDetached && ranSid && onScreen.current === ranSid) void openSession(ranSid, true)
+    }
   }
 
   // The person picked one of the Ways: build its plan (model rung, brief) and run the waiting turn.
@@ -1471,7 +1572,7 @@ export default function Home() {
     setDelegateOptions([])
     setDelegateGoals([])
     setPendingTurn(null)
-    setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
+    setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateLog([])
     setBusy(true); busyRef.current = true
     setDelegateStatus(`Working with ${plan.model?.id || "the engine's default"}…`)
     void runTurn(pending.text, pending.files, plan)
@@ -1489,7 +1590,7 @@ export default function Home() {
     setDelegateOptions([])
     setDelegateGoals([])
     setPendingTurn(null)
-    setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
+    setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateLog([])
     setBusy(true); busyRef.current = true
     setDelegateStatus("Running without a Way — the engine's model does the work")
     void runTurn(pending.text, pending.files, plan)
@@ -1623,10 +1724,12 @@ export default function Home() {
 
   /** Stop the turn at its next safe point (reqs §5). Work that already ran is not undone, and the note says so. */
   const stop = async () => {
-    if (!sessionID || stopping) return
+    // The turn may belong to the chat that was open when it started, not the one now on screen.
+    const sid = runningSid.current || sessionID
+    if (!sid || stopping) return
     setStopping(true)
     try {
-      const r = await fetch("/api/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID }) })
+      const r = await fetch("/api/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: sid }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(j.error || `stop failed (${r.status})`)
       setStopNote("Stopped. Steps that already ran stay; nothing is undone.")
@@ -1759,68 +1862,14 @@ export default function Home() {
     setSigninNote(r?.error ? String(r.error) : "Signed out.")
   }
 
-  // One click: the sign-in opens in the person's own browser (electron/signin.ts). No callback comes back, so the page asks
-  // kell whether it really finished (lib/tools.ts toolSignInStatus, /api/tools/signin): while the card says "open" and
-  // whenever the app regains focus. A closed browser is not a sign-in; only kell saying the token or grant is there is.
-  const openToolSignIn = (link: string) => {
-    setLines((l) => l.map((x) => (x.who === "signin" && x.text === link ? { ...x, state: "open" } : x)))
-    const d = desktop()
-    if (!d) { window.open(link, "_blank", "noopener"); return }
-    void d.openSignIn(link).then((ok) => {
-      if (!ok) setLines((l) => l.map((x) => (x.who === "signin" && x.text === link ? { ...x, state: "failed" } : x)))
-    })
-  }
-  const [resume, setResume] = useState<string | null>(null)
-  // The tools whose card is open right now; a change restarts the watch. Only a server kell named can be checked.
-  const openSignIns = lines.filter((l) => l.who === "signin" && l.state === "open" && l.server)
-  const openKey = openSignIns.map((l) => l.server).join("|")
+  // The next waiting message goes out once the turn has ended.
   useEffect(() => {
-    const servers = openKey ? openKey.split("|") : []
-    if (!servers.length) return
-    let live = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const until = Date.now() + 15 * 60_000           // a sign-in link lasts 10 minutes; stop asking after 15
-    const check = async () => {
-      // The link says which kind it was (a consent page or an OAuth flow); the server uses it to read the grant or a usable token.
-      const open = linesRef.current.filter((l) => l.who === "signin" && l.state === "open" && l.server)
-      const done: string[] = []
-      for (const l of open) {
-        const server = l.server
-        if (!server) continue
-        const ok = await fetch("/api/tools/signin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ server, link: l.text }) })
-          .then((r) => r.json()).then((j) => j?.signedIn === true).catch(() => false)
-        if (!live) return
-        if (ok) done.push(server)
-      }
-      if (done.length) {
-        setLines((l) => l.map((x) => (x.who === "signin" && x.server && done.includes(x.server) && x.state === "open" ? { ...x, state: "done" } : x)))
-        setResume(`I signed in to ${done.join(", ")}. Carry on with what I asked.`)
-      }
-      if (!live) return
-      if (Date.now() > until) {
-        setLines((l) => l.map((x) => (x.who === "signin" && x.state === "open" ? { ...x, state: "failed" } : x)))
-        return
-      }
-      timer = setTimeout(check, 4000)
-    }
-    const onFocus = () => { void check() }
-    window.addEventListener("focus", onFocus)
-    void check()
-    return () => { live = false; if (timer) clearTimeout(timer); window.removeEventListener("focus", onFocus) }
-  }, [openKey])
-  useEffect(() => {
-    if (resume && !busy) { const t = resume; setResume(null); void send(t) }
-    // send is recreated each render; the resume only needs to fire once the turn has ended
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resume, busy])
-  // The next waiting message goes out once the turn has ended (a sign-in resume goes first: it finishes what was asked).
-  useEffect(() => {
-    if (busy || resume || !queued.length) return
+    if (busy || !queued.length) return
     const [next, ...rest] = queued
     setQueued(rest)
     void send(next.text, next.files)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queued, busy, resume])
+  }, [queued, busy])
 
   // Ctrl/Cmd-K opens the command palette from anywhere in the app (reqs §1: "same shortcut in every context").
   useEffect(() => {
@@ -1954,7 +2003,7 @@ export default function Home() {
     run()
   }
   const commands = [
-    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: () => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setCards([]); setCardsNote(""); setSpend(0); setStopNote(""); loadChanges(null) } },
+    { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: newSession },
     { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); setSideView("project"); void openProject(d) } }) } },
     { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
     { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
@@ -2022,7 +2071,7 @@ export default function Home() {
 
   // The graph in the right sidebar: the chosen Way, or a preview of the best Way while the choice is open in the chat.
   // The cards themselves live in the middle chat now (2026-11-16); the sidebar is always the procedure, never a list.
-  const previewPlan = !delegation && pendingTurn
+  const previewPlan = !delegation && pendingTurn && pendingTurn.sid === sessionID
     ? planFromOption(pendingTurn.text, settings?.models || {}, pendingTurn.goal, delegateOptions[0] ?? null)
     : null
   const shownPlan = delegation ?? previewPlan
@@ -2245,8 +2294,8 @@ export default function Home() {
                 <button type="button" className="dk-fold" aria-expanded={showSessions} onClick={() => setShowSessions((o) => !o)}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg><h2>Sessions</h2>{sessions.length > 0 && <span className="dk-count">{sessions.length}</span>}
                 </button>
-                <button type="button" className="dk-icon dk-icon-sm" aria-label="New session" title="New session" disabled={busy}
-                  onClick={() => { setSessionID(null); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); loadChanges(null) }}>
+                <button type="button" className="dk-icon dk-icon-sm" aria-label="New session" title="New session"
+                  onClick={newSession}>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                 </button>
               </div>
@@ -2478,7 +2527,13 @@ export default function Home() {
                   </div>
                 ) : (
                 <>
-                {lines.length === 0 && !busy && (
+                {sessLoading && lines.length === 0 && !busy && (
+                  // A switch reads the app's store, then the engine: say so, so a slow read is not a blank chat.
+                  <div className="dk-empty" role="status" aria-live="polite">
+                    <p className="dk-empty-line">Opening the chat…</p>
+                  </div>
+                )}
+                {!sessLoading && lines.length === 0 && !busy && (
                   // The empty state is not a blank box (reqs §8): one line states the boundary, and three prompts that
                   // are known to work here fill the composer rather than a highlight reel.
                   <div className="dk-empty">
@@ -2569,27 +2624,6 @@ export default function Home() {
                       </div>
                     )
                   }
-                  if (l.who === "signin") {
-                    return (
-                      <div className="dg-run" data-agent="true" key={i}>
-                        <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
-                        <div className="dg-col">
-                          <div className="dg-meta"><b>Kell</b><span className="dg-badge">sign-in</span><time>{time(l.at)}</time></div>
-                          <div className="dk-signin" data-state={l.state}>
-                            <p>{l.state === "done" ? <>Signed in to <b>{l.server || "the tool"}</b>. Carrying on.</>
-                              : l.state === "failed" ? <>The sign-in to <b>{l.server || "the tool"}</b> did not finish. Try again.</>
-                                : l.state === "open" ? <>Finish signing in to <b>{l.server || "the tool"}</b> in your browser, then come back here.</>
-                                  : <><b>{l.server || "This tool"}</b> needs you to sign in once. It opens in your browser; kell keeps the sign-in for next time.</>}</p>
-                            {l.state !== "done" && (
-                              <div className="dk-row">
-                                <button type="button" className="btn-ink" onClick={() => openToolSignIn(l.text)}>{l.state === "failed" ? "Try again" : `Sign in to ${l.server || "the tool"}`}</button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  }
                   if (l.who === "goal") {
                     return (
                       <div className="dg-run" data-agent="true" key={i}>
@@ -2623,7 +2657,7 @@ export default function Home() {
                     </div>
                   )
                 })}
-                {pendingTurn && (
+                {pendingTurn && pendingTurn.sid === sessionID && (
                   // The procedure search result, in the conversation itself: the Ways, or the Goals that matched with
                   // no written Way. kell is stopped until the person picks one or says to work without one (2026-11-16).
                   <div className="dg-run dk-pick-run" data-agent="true">
@@ -2658,7 +2692,7 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-                {busy && lines.at(-1)?.who !== "assistant" && (
+                {busy && streamLive() && lines.at(-1)?.who !== "assistant" && (
                   <div className="dg-run" data-agent="true">
                     <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
                     <div className="dg-col">
@@ -2671,7 +2705,7 @@ export default function Home() {
                 )}
               </div>
             </div>
-            {!atEnd && (
+            {agentView === "main" && !atEnd && (
               <button type="button" className="dg-jump" onClick={() => scrollToEnd()} aria-label="Scroll to the latest message" title="Scroll to the latest message">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7" /></svg>
                 Latest
@@ -2803,20 +2837,21 @@ export default function Home() {
               </span>
             </div>
           )}
-          {approvals.length > 0 && (
-            <div role="region" aria-label="Tool approvals" style={{ padding: "0 4px 8px" }}>
-              {approvals.slice(0, 3).map((a) => (
-                <ApprovalCard key={a.id} approval={a} busy={approvalBusy}
-                  onApprove={(id) => void decideApproval(id, "approve")}
-                  onDeny={(id) => void decideApproval(id, "deny")} />
-              ))}
-            </div>
-          )}
           {delegateStatus && (
             // The delegated worker reporting in, in the chat: visible even when the right panel is closed.
             <div className="dk-delegate-live" role="status" aria-live="polite">
               <span className="dg-pulse" aria-hidden="true" />
               {delegateStatus}
+            </div>
+          )}
+          {detachedView && runningSession && (
+            // A turn is still answering in the engine while the person reads another chat. Stop works from here; the
+            // finished answer is read back when they return (or when the turn ends, if it is the chat on screen).
+            <div className="dk-delegate-live" role="status" aria-live="polite">
+              <span className="dg-pulse" aria-hidden="true" />
+              {runningSession === sessionID
+                ? "This chat is still answering in the background. It catches up when the turn ends."
+                : "Another chat is still answering. Use Stop here, or open that chat when it finishes."}
             </div>
           )}
           {delegation?.model && (
@@ -2845,6 +2880,29 @@ export default function Home() {
                 ))}
               </ul>
             )}
+            <div className="dk-composer-top">
+              <div className="dk-mode" role="group" aria-label="Procedure mode" data-mode={procMode}>
+                <span className="dk-mode-thumb" aria-hidden="true" />
+                {PROC_MODES.map((m) => (
+                  <button key={m.id} type="button" className="dk-mode-btn" data-on={procMode === m.id || undefined}
+                    data-tip={m.hint} aria-pressed={procMode === m.id} aria-label={`${m.label}: ${m.hint}`}
+                    title={m.hint} onClick={() => chooseProcMode(m.id)}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              {busy && (
+                // The stop sits with the mode choice, above the message box: the turn it stops is the one the mode
+                // applies to, and it stays reachable without taking the send button's place.
+                <button type="button" className="dk-stop" onClick={() => void stop()} disabled={stopping || !(runningSession || sessionID)}
+                  aria-label="Stop kell"
+                  title={runningSession && runningSession !== sessionID
+                    ? "Stop the turn still running in the other chat. Steps that already ran stay; nothing is undone."
+                    : "Stop the turn. Steps that already ran stay; nothing is undone."}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+                </button>
+              )}
+            </div>
             <textarea ref={textRef} rows={1} data-big={big || undefined} value={text}
               role="combobox" aria-autocomplete="list" aria-expanded={slashCmds.length > 0}
               aria-controls={slashCmds.length ? "dk-slash" : undefined}
@@ -2886,16 +2944,6 @@ export default function Home() {
                 else { histPos.current += 1; setText(promptHistory[histPos.current]) }
               }} />
             <div className="dg-composer-meta">
-              <div className="dk-mode" role="group" aria-label="Procedure mode" data-mode={procMode}>
-                <span className="dk-mode-thumb" aria-hidden="true" />
-                {PROC_MODES.map((m) => (
-                  <button key={m.id} type="button" className="dk-mode-btn" data-on={procMode === m.id || undefined}
-                    data-tip={m.hint} aria-pressed={procMode === m.id} aria-label={`${m.label}: ${m.hint}`}
-                    title={m.hint} onClick={() => chooseProcMode(m.id)}>
-                    {m.label}
-                  </button>
-                ))}
-              </div>
               {text.trim() && <span className="dg-count" aria-live="off">{words} {words === 1 ? "word" : "words"}</span>}
               <button type="button" className="dg-attach dg-attach-file" onClick={() => void pickAttachments()}
                 disabled={!directory || (engine != null && !engine.up)} aria-label="Attach files" title="Attach files">
@@ -2906,13 +2954,6 @@ export default function Home() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
               </button>
             </div>
-            {busy && (
-              // Always reachable while a turn runs (reqs §5). Stopping does not undo what already ran, and the title says so.
-              <button type="button" className="dk-stop" onClick={() => void stop()} disabled={stopping || !sessionID}
-                aria-label="Stop kell" title="Stop the turn. Steps that already ran stay; nothing is undone.">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
-              </button>
-            )}
             <button type="submit" className="dk-send" disabled={(!text.trim() && !attachments.length) || !directory || (engine != null && !engine.up)}
               aria-label={busy ? "Queue this message" : "Send"} title={busy ? "kell is working: this waits and goes out when it finishes" : "Send"}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>

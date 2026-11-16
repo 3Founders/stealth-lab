@@ -238,10 +238,12 @@
    side call. Motion is the same kit as the rest of the panel -- an 8 px rise on --dg-smooth, transform and opacity only. */
 @keyframes dk-delegate-in { from { opacity: 0; transform: translateY(8px); } }
 .dk-delegate-body { display: flex; flex-direction: column; gap: 4px; margin: 2px 6px 0; animation: dk-delegate-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
-.dk-delegate-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; font-size: 12.5px; }
-.dk-delegate-row > span { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--grey); }
-.dk-delegate-row > b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-delegate-row > i { font-style: normal; font-size: 10.5px; color: var(--grey); }
+/* A plan row reads label, value, then its tier right beside the value: the tier used to be pushed to the far edge of a
+   wide panel, where it looked detached from the model it describes (2026-11-16). */
+.dk-delegate-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12.5px; }
+.dk-delegate-row > span { flex: 0 0 44px; white-space: nowrap; font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--grey); }
+.dk-delegate-row > b { flex: 0 1 auto; min-width: 0; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-delegate-row > i { flex: none; font-style: normal; font-size: 10.5px; color: var(--grey); }
 .dk-delegate-row > i[data-rung="strong"] { color: var(--ink); }
 .dk-delegate-row > i[data-rung="cheap"] { color: var(--cobalt); }
 .dk-brief { margin-top: 2px; }
@@ -463,9 +465,14 @@
 /* Direct / Auto / Ask: the procedure mode, in the row above the message box (chat.css already floats
    .dg-composer-meta there). The thumb slides between the three labels on the smooth spring; transform only, and the
    reduced-motion block at the end of this file removes it (docs/ios_animation.md). */
-.dg-composer .dg-composer-meta { left: 18px; justify-content: flex-end; }
-.dk-mode { margin-right: auto; position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+.dk-mode { margin: 0; flex: none; position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr;
   gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: 999px; background: var(--paper); }
+/* The mode choice is its own row above the message box; Stop joins that row, at its right (2026-11-16). The row is
+   always there, so starting or ending a turn does not move the textarea. */
+.dk-composer-top { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dk-composer-top .dk-mode { align-self: center; }
+.dg-composer .dk-composer-top .dk-stop { width: 28px; height: 28px; border-radius: 999px; }
+.dg-composer .dk-composer-top .dk-stop svg { width: 12px; height: 12px; }
 .dk-mode-thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 8px) / 3);
   border-radius: 999px; background: var(--ink); pointer-events: none; transform: translateX(0);
   transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
@@ -479,14 +486,13 @@
 .dg-composer .dk-mode-btn[data-on]:not(:disabled):hover { color: var(--paper); }
 .dk-mode-btn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
 /* The description on hover/focus: a small dark tip under the label, so Direct / Auto / Ask explain themselves. */
-.dk-mode-btn::after { content: attr(data-tip); position: absolute; top: calc(100% + 7px); left: 0; z-index: 6;
+.dk-mode-btn::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 7px); left: 0; z-index: 6;
   width: max-content; max-width: 240px; padding: 5px 8px; border-radius: 7px; background: var(--ink); color: var(--paper);
-  font-size: 10.5px; line-height: 1.35; font-weight: 400; text-align: left; opacity: 0; transform: translateY(-3px);
+  font-size: 10.5px; line-height: 1.35; font-weight: 400; text-align: left; opacity: 0; transform: translateY(3px);
   pointer-events: none; transition: opacity var(--dg-micro-d) var(--dg-micro), transform var(--dg-micro-d) var(--dg-micro); }
 .dk-mode-btn:hover::after, .dk-mode-btn:focus-visible::after { opacity: 1; transform: translateY(0); }
 @media (hover: none) { .dk-mode-btn::after { display: none; } }
 @media (max-width: 760px) {
-  .dg-composer .dg-composer-meta { left: 12px; }
   .dg-composer .dk-mode-btn { padding-inline: 8px; }
 }
 @media (prefers-reduced-motion: reduce) { .dk-mode-thumb, .dg-composer .dk-mode-btn, .dk-mode-btn::after { transition: none !important; } }
@@ -503,7 +509,7 @@
 .dk-agent[aria-selected="true"] { background: var(--surface); border-color: var(--rule-strong); }
 .dk-agent > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dk-agent b { font-weight: 500; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-agent small { font-size: 10.5px; color: var(--grey); }
+.dk-agent small { font-size: 10.5px; color: var(--grey); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-agent-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cobalt); flex: none; }
 .dk-agent-dot[data-rung="strong"] { background: var(--ink); }
 /* A subagent's state: a ring while it works, filled when it answered, a cross-coloured dot when it failed (never colour
@@ -516,22 +522,54 @@
 .dk-agent-empty { cursor: default; opacity: .65; }
 .dk-agent-empty:hover { background: transparent; }
 
-/* The delegated agent's own view in the middle: the plan, its last turn, and every direct answer. */
+/* The delegated agent's own view in the middle: the plan, its last turn, and every direct answer. It is a report, not a
+   chat row, so it is one column that starts at the top and never widens the pane: every part truncates or wraps inside
+   the panel, at any width (2026-11-16). */
 .dk-agent-content { justify-content: flex-start; }
-.dk-agent-view { display: flex; flex-direction: column; gap: 12px; padding: 2px 0 12px;
+.dk-agent-view { display: flex; flex-direction: column; gap: 12px; padding: 2px 0 12px; min-width: 0; max-width: 100%;
   animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
-.dk-agent-view-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
-.dk-agent-view-head b { font-size: 14px; font-weight: 500; }
-.dk-agent-view-sub { color: var(--grey); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-agent-view-head .dg-mini { margin-left: auto; }
-.dk-agent-plan { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
-.dk-agent-turn, .dk-agent-qa { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); padding: 10px 12px; }
+.dk-agent-view-head { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; min-width: 0; }
+.dk-agent-view-head > b { font-size: 14px; font-weight: 500; min-width: 0; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-agent-view-sub { color: var(--grey); font-size: 12px; flex: 1 1 8ch; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-agent-view-head .dg-mini { margin-left: auto; flex: none; }
+/* The chat clears every border colour (chat.css), so these blocks are tinted paper with a soft inner edge, not outlines. */
+.dk-agent-plan { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px;
+  background: var(--paper); box-shadow: inset 0 0 0 1px rgba(23, 23, 23, .05); }
+.dk-agent-turn, .dk-agent-qa { min-width: 0; border-radius: 10px; background: var(--paper);
+  box-shadow: inset 0 0 0 1px rgba(23, 23, 23, .05); padding: 10px 12px; }
+:root[data-theme="dark"] .dk-agent-plan, :root[data-theme="dark"] .dk-agent-turn, :root[data-theme="dark"] .dk-agent-qa {
+  box-shadow: inset 0 0 0 1px rgba(241, 238, 229, .08); }
+.dk-agent-plan, .dk-agent-turn, .dk-agent-qa { overflow-wrap: anywhere; }
+.dk-agent-turn > .dg-md, .dk-agent-a, .dk-agent-a > .dg-md { min-width: 0; }
 .dk-agent-turn-label { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); margin-bottom: 4px; }
-.dk-agent-q { font-size: 12.5px; font-weight: 500; color: var(--ink); margin-bottom: 3px; }
+.dk-agent-q { font-size: 12.5px; font-weight: 500; color: var(--ink); margin-bottom: 3px; overflow-wrap: anywhere; }
 .dk-agent-a { font-size: 14px; line-height: 1.55; }
 .dk-agent-a > :first-child { margin-top: 0; } .dk-agent-a > :last-child { margin-bottom: 0; }
-.dk-agent-log { display: flex; flex-direction: column; gap: 8px; }
+.dk-agent-log { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .dk-agent-turn .dg-md p, .dk-agent-a .dg-md p { font-weight: 300; }
+/* The chat's own notes and live status carry a side margin for a chat row; inside this view they sit on the column. */
+.dk-agent-view .dk-note, .dk-agent-view .dk-delegate-status { margin-inline: 0; overflow-wrap: anywhere; }
+/* Phones: the header keeps the name on one line and lets the way back take the next; the plan's label column tightens. */
+@media (max-width: 620px) {
+  .dk-agent-view { gap: 10px; }
+  .dk-agent-view-head > b { flex: 1 1 0; order: 2; }
+  .dk-agent-view-head .dk-agent-dot { order: 1; }
+  .dk-agent-view-sub { flex: 1 1 100%; order: 3; }
+  .dk-agent-view-head .dg-mini { order: 4; margin-left: 0; }
+  .dk-agent-plan { padding: 8px 10px; }
+  .dk-agent-turn, .dk-agent-qa { padding: 8px 10px; }
+  /* On a phone the plan is read, not scanned: the value wraps under its label and the tier stays on the first line,
+     instead of a one-line ellipsis that hides most of a Goal. */
+  .dk-delegate-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 2px 6px; }
+  .dk-delegate-row > b { grid-column: 2; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+  .dk-delegate-row > i { grid-column: 2; justify-self: start; }
+}
+/* The live line is a sentence, not a row of chips: block layout lets the model id wrap, and keeps the pulse on its
+   first line instead of floating in the middle of a wrapped line. */
+.dk-agent-view .dk-delegate-status { display: block; }
+.dk-agent-view .dk-delegate-status .dg-pulse { display: inline-block; vertical-align: middle; margin-right: 6px; }
 
 :root[data-theme="dark"] .dk-diff .add { color: #8fd3a8; } :root[data-theme="dark"] .dk-diff .del { color: #e6a0a0; }
 :root[data-theme="dark"] .dk-file .stat .add { color: #6ee7a0; } :root[data-theme="dark"] .dk-file .stat .del { color: #ff8a80; }

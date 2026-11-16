@@ -1586,6 +1586,8 @@ span.dg-replyq { cursor: default; }
 /* Direct / Auto / Ask: the procedure mode above the message box (the desktop app has the same switch). The thumb
    slides on the smooth spring; transform and opacity only, and the reduced-motion rule below removes it. */
 .dg-composer .dg-composer-meta { left: 18px; justify-content: flex-end; }
+/* The mode switch is its own row above the message box (the desktop app's place), not beside the text box. */
+.dg-composer .dg-mode-row { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; min-height: 26px; }
 .dg-mode { margin-right: auto; position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr;
   gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: 999px; background: var(--paper); }
 .dg-mode-thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 8px) / 3);

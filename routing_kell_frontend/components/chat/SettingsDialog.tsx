@@ -62,7 +62,6 @@ export interface SettingsProps {
     /** A folder on this computer that keeps a copy (only where the browser allows it). */
     folder?: { supported: boolean; name: string | null; onChoose: () => void; onRestore: () => void; onStop: () => void } };
   agents: { modelText: string; modelReady: boolean; count: number; paused: boolean; onPause: (p: boolean) => void; maxHops: number;
-    allowSignInTools: boolean; onAllowSignInTools: (v: boolean) => void;
     /** Instructions for every chat; without onInstructions the box is not drawn. */
     instructions?: string; onInstructions?: (text: string) => void };
   account: { name: string; onSignOut: () => void };
@@ -188,7 +187,6 @@ export default function SettingsDialog(p: SettingsProps) {
                   </label>
                 )}
                 <label className="dg-set-row"><input type="checkbox" checked={p.agents.paused} onChange={(e) => p.agents.onPause(e.target.checked)} /><span><b>Pause agents</b><small>Kell and its instances will not answer until you resume. Messages you send are still saved.</small></span></label>
-                <label className="dg-set-row"><input type="checkbox" checked={p.agents.allowSignInTools} onChange={(e) => p.agents.onAllowSignInTools(e.target.checked)} /><span><b>Tools that need a sign-in</b><small>When off, kell will not offer a tool that asks you to sign in to another service. Tools that need no sign-in still work. You can also just say &quot;don&apos;t use tools that need a sign-in&quot;.</small></span></label>
                 <p className="small dim">Agents hand off to each other at most {p.agents.maxHops} times before a person must step in.</p>
               </section>
             )}

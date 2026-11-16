@@ -5,8 +5,6 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
-import { ApprovalCard } from "@/components/tools/ApprovalCard";
-import { approvalsApi, type ToolApproval } from "@/lib/tools/approvals";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
 import { quoteText, withReplyContext } from "@/lib/chat/reply";
 import { tempLabel, toTurns } from "@/lib/chat/temporary";
@@ -31,7 +29,7 @@ import { describeBacking, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
 import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask, relayKey } from "@/lib/chat/relay-client";
 import { DEFAULT_ROOM, freeRoomName, newRoomName, readAgents, readInstructions, readPresets, readRooms, withoutRoom, writeAgents, writeInstructions, writePresets, writeRooms, type RoomList } from "@/lib/chat/rooms";
-import { RoomsApiError, roomsApi, toolLabel, type GoalChoice, type RoomMember, type ToolSignIn, type WayChoice } from "@/lib/chat/rooms-api";
+import { RoomsApiError, roomsApi, type GoalChoice, type RoomMember, type WayChoice } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
 import { memoryApi } from "@/lib/chat/memory-api";
@@ -48,7 +46,6 @@ import { desktopApi } from "@/lib/chat/desktop-api";
 import { submissionsApi } from "@/lib/submissions-api";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import type { SectionId } from "@/components/chat/SettingsDialog";
-import { getToolPrefs, setToolPrefs } from "@/lib/chat/tool-prefs";
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
 import { fallbackName, personHandle } from "@/lib/chat/events";
 import MessageText from "@/components/chat/MessageText";
@@ -74,9 +71,6 @@ const STATUS: Record<RelayTask["status"], string> = {
   needs_approval: "Waiting for your approval", queued: "Waiting for the agent", claimed: "Working", done: "Done", failed: "Failed", cancelled: "Cancelled",
 };
 
-// A notice with `signIns` is the tools that asked for your sign-in, shown to you only: one button per tool, each opening its sign-in in
-// a small window, not a raw link. `done` marks one you finished.
-type SignInItem = ToolSignIn & { done?: boolean };
 // The Ways the router offered for a task, shown in the chat: kell waits until one is picked (or the person runs
 // without one). `state` is the live run: which step is going, the run ending, or a failure.
 type WayLine = {
@@ -84,7 +78,7 @@ type WayLine = {
   goal: { id: string; name: string } | null; ways: WayChoice[]; goals?: GoalChoice[];
   state?: { picked?: string; running?: boolean; step?: number; of?: number; title?: string; done?: boolean; waiting?: boolean; error?: string };
 };
-type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number; signIns?: SignInItem[] } | WayLine;
+type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number } | WayLine;
 
 /** A notice's text with any http(s) link made clickable: the sign-in and consent links are meant to be opened. */
 function withLinks(text: string) {
@@ -94,16 +88,6 @@ function withLinks(text: string) {
       : part);
 }
 
-/** A sign-in card's title: the card's own title, else the registry name in people's words. */
-const signInTitle = (x: ToolSignIn) => x.title || toolLabel(x.server);
-/** A tile monogram, for a card with no avatar (or while its avatar loads). */
-const signInInitial = (x: ToolSignIn) => signInTitle(x).trim().slice(0, 1).toUpperCase() || "?";
-/** A stable hue per tool, so the tile is its own colour without an image. */
-const signInHue = (x: ToolSignIn) => {
-  let h = 0;
-  for (const ch of `${x.server}${x.title || ""}`) h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return h;
-};
 /** A stable hue per Way, so each procedure's tile is its own colour without an image (the sign-in card's recipe). */
 const wayHue = (name: string) => {
   let h = 0;
@@ -190,14 +174,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [, bump] = useState(0);
   const lineStore = useRef<Record<string, Line[]>>({});
   const [activity, setActivity] = useState<Record<string, AgentActivity>>({});
-  // Whether the sign-in cards show how often each tool has been used. A person can hide it; the choice is per machine.
-  const [showUses, setShowUses] = useState(true);
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("kell.rooms.showUses");
-      if (saved === "on" || saved === "off") setShowUses(saved === "on");
-    } catch { /* storage can be blocked; the default stands */ }
-  }, []);
   const [streaming, setStreaming] = useState<Record<string, { room: string; text: string; final?: GroupMessage }>>({});
   const [kellBusy, setKellBusy] = useState<Record<string, boolean>>({});
   const streamingRef = useRef(streaming);
@@ -295,28 +271,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // SERVER room id (the label here is the title, e.g. #general), which arrives with the first sync.
   const roomsAgent = useMemo(() => roomsApi({ token: getAccessToken }), []);
   const filesClient = useMemo(() => filesApi({ token: getAccessToken }), []);
-  const approvalApi = useMemo(() => approvalsApi({ token: getAccessToken }), []);
-  const [approvals, setApprovals] = useState<ToolApproval[]>([]);
-  const [approvalBusy, setApprovalBusy] = useState(false);
-  const refreshApprovals = useCallback(async () => {
-    try { setApprovals(await approvalApi.list()); } catch { /* not signed in, or the server is restarting */ }
-  }, [approvalApi]);
-  const decideApproval = useCallback(async (id: string, action: "approve" | "deny") => {
-    setApprovalBusy(true);
-    try {
-      if (action === "approve") await approvalApi.approve(id); else await approvalApi.deny(id);
-      await refreshApprovals();
-    } catch (err) {
-      note(err instanceof Error ? err.message : "That approval did not reach kell. Try again.");
-    } finally { setApprovalBusy(false); }
-  }, [approvalApi, refreshApprovals, note]);
-  useEffect(() => {
-    void refreshApprovals();
-    const t = window.setInterval(() => void refreshApprovals(), 15_000);
-    const onFocus = () => void refreshApprovals();
-    window.addEventListener("focus", onFocus);
-    return () => { window.clearInterval(t); window.removeEventListener("focus", onFocus); };
-  }, [refreshApprovals]);
   const [sendingFiles, setSendingFiles] = useState("");
   const askingKell = useRef<Set<string>>(new Set());
   const queues = useRef<Queues>({});
@@ -339,8 +293,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     window.setTimeout(() => el.classList.remove("dg-flash"), 1600);
   }, []);
   const askKellRef = useRef<((r: string, text: string, who?: string, opts?: { skipRoute?: boolean }) => Promise<void>) | null>(null);
-  /** The request that hit a sign-in wall: run it again by itself when the person comes back from signing in. */
-  const signInRetry = useRef<{ room: string; text: string; who: string } | null>(null);
   /** Way cards whose run is already starting: a double click must not start two runs. */
   const wayRuns = useRef<Set<string>>(new Set());
   /** Direct / Auto / Ask before the procedure picker: the same switch as the desktop app. Kept per browser, so a
@@ -359,9 +311,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, []);
   /** pickWay is declared after askKell (it needs the line store); the ref lets Auto call it without a re-wiring loop. */
   const pickWayRef = useRef<((r: string, line: WayLine, way: WayChoice) => Promise<void>) | null>(null);
-  /** The sign-in card of the newest request (room and line id), and the sign-in the person opened last. */
-  const signInCard = useRef<{ room: string; id: string } | null>(null);
-  const signInOpened = useRef<string | null>(null);
   /** Your thumbs on the agent's answers, by message id: sent to the server (it moves the tools those answers used) and kept on this
    *  device so the buttons show what you chose. */
   const [votes, setVotes] = useState<Record<string, -1 | 1>>({});
@@ -379,31 +328,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     });
     try { await roomsAgent.vote(id, messageId, vote); } catch { note("That vote didn't reach keळ. Try again in a moment.", r); }
   }, [roomsAgent, note]);
-  /** Tools that asked for a sign-in: added to this request's card (made on the first), in the order they were tried. An older
-   *  request's card goes: its links are stale. Earlier this kept only the newest link, so two tools showed one button (2026-11-05). */
-  const addSignIns = useCallback((r: string, text: string, who: string, tools: ToolSignIn[]) => {
-    if (!tools.length) return;
-    signInRetry.current = { room: r, text, who };                       // back from the sign-ins, the same request runs again
-    const cur = lineStore.current[r] ?? [];
-    const card = signInCard.current?.room === r ? cur.find((l) => l.kind === "notice" && l.id === signInCard.current?.id) : undefined;
-    if (card && card.kind === "notice" && card.signIns) {
-      const items = [...card.signIns];
-      for (const t of tools) {
-        const at = items.findIndex((x) => (x.server || x.link) === (t.server || t.link));
-        if (at < 0) items.push(t);
-        // Tried again: the newer link, and it still needs a sign-in. A tool that asks after its card said "Signed in" was
-        // not signed in after all, so the tick goes and the button comes back (2026-11-14: a card with no way to sign in).
-        else items[at] = { ...items[at], link: t.link, done: false };
-      }
-      lineStore.current = { ...lineStore.current, [r]: cur.map((l) => (l === card ? { ...card, signIns: items } : l)) };
-      bump((n) => n + 1);
-      return;
-    }
-    lineStore.current = { ...lineStore.current, [r]: cur.filter((l) => !(l.kind === "notice" && l.signIns)) };
-    const id = broker.newId();
-    signInCard.current = { room: r, id };
-    push(r, { kind: "notice", id, text: "", t: Date.now(), signIns: tools.map((t) => ({ ...t })) });
-  }, [broker, push]);
   /** Copy a message's text: to the clipboard, with a small notice as feedback. */
   const copyRoomText = useCallback(async (t: string): Promise<boolean> => {
     if (!t) return true;
@@ -476,7 +400,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (!id) { note("This room could not be set up on the server yet, so the question was not sent. Check your connection and send it again.", r); done(); return; }
     const ctl = new AbortController();
     let held = false;
-    signInCard.current = null;                           // this request's sign-ins get a card of their own
     controllers.current.set(who, ctl);
     if (who !== "@kell") setStreaming((p) => ({ ...p, [who]: { room: r, text: "" } }));
     try {
@@ -485,14 +408,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
       }, ctl.signal, who, [everyChatRef.current.trim() && `What the person wants in every chat: ${everyChatRef.current.trim()}`, presetsRef.current[who]].filter(Boolean).join(" ") || undefined,
       temp ? { history: toTurns((lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])), who) } : undefined,
-      canvasOpenRef.current && r === roomRef.current && canvasContextRef.current ? { ...canvasContextRef.current, ...(selectionRef.current ? { selection: selectionRef.current } : {}) } : null,
-      (tool) => addSignIns(r, text, who, [tool]));   // a tool asked for your sign-in: its button shows now, while the answer is written   // the canvas you have open (and the part you highlighted), so "make it shorter" edits it
+      canvasOpenRef.current && r === roomRef.current && canvasContextRef.current ? { ...canvasContextRef.current, ...(selectionRef.current ? { selection: selectionRef.current } : {}) } : null);
       selectionRef.current = "";
       if (out.memory.remembered.length) note(`Remembered: ${out.memory.remembered.map((l) => l.replace(/^- /, "").replace(/ \[source:.*$/, "")).join("; ")}. Settings, Memory and knowledge, to edit or undo.`, r);
       else if (out.memory.used.length) note(`Used your memory: ${out.memory.used.join(", ")}`, r);
       for (const link of out.consent) note(`Allow ${nameOf(who)} to use that tool here (15 minutes): ${link}`, r); // shown to you only, never posted into the room
-      // the ones not shown while streaming (an older server sends only links)
-      addSignIns(r, text, who, out.sign_in_tools.length ? out.sign_in_tools : (out.sign_in ?? []).map((link) => ({ server: "", link })));
       if (out.event?.id || temp) {
         // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text
         // has been revealed (so a reply that arrives all at once still animates), then this message takes its place.
@@ -523,7 +443,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         window.setTimeout(() => void askKellRef.current?.(r, followUp, who), 0);
       }
     }
-  }, [roomsAgent, note, push, broker, addSignIns]);
+  }, [roomsAgent, note, push, broker]);
   askKellRef.current = askKell;
 
   /** Replace one Way card's live state in place (which step is going, done, failed), without touching the message stream. */
@@ -573,131 +493,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     bump((n) => n + 1);
     void askKellRef.current?.(r, line.text, "@kell", { skipRoute: true });
   }, []);
-  // One click, like the app: a tool's sign-in opens in a small window. When it is done (the window closes, or the kell app says its own
-  // sign-in window finished) the tool is ticked only if kell says the sign-in really finished: closing the window, or coming back to
-  // the tab, without signing in used to tick it anyway (2026-11-09). Once every tool on the card is, the request that hit the sign-in
-  // wall runs again, once ("Run it now" does it sooner, with the ones you did). Only a sign-in you opened counts: coming back to the
-  // tab without one ran the request again by itself, and the room got the same answer twice (2026-11-05).
-  const signInWindow = useRef<Window | null>(null);
-  const retrySignIn = useCallback(() => {
-    const p = signInRetry.current;
-    if (!p) return;
-    signInRetry.current = null;
-    signInOpened.current = null;
-    const card = signInCard.current;
-    if (card) lineStore.current = { ...lineStore.current, [card.room]: (lineStore.current[card.room] ?? []).filter((l) => !(l.kind === "notice" && l.id === card.id)) };
-    bump((n) => n + 1);
-    window.setTimeout(() => {
-      if (roomRef.current === p.room) void askKellRef.current?.(p.room, p.text, p.who);
-    }, 900);
-  }, []);
-  /** Ask kell whether the sign-in (or the consent) really finished. The callback may still be sealing the token when the window closes,
-   *  so a few short waits. Nothing is ticked unless kell says the token or the grant is there: a closed window, or a check that
-   *  could not be made, is never a sign-in. */
-  const verifySignIn = useCallback(async (server: string, link: string): Promise<boolean> => {
-    if (!server) return false;
-    for (let i = 0; i < 6; i++) {
-      try {
-        if ((await roomsAgent.toolSignInStatus(server, link)).signedIn) return true;
-      } catch { /* not signed in yet, or the check failed: keep the card, never tick it */ }
-      if (i < 5) await new Promise((resolve) => setTimeout(resolve, 700));
-    }
-    return false;
-  }, [roomsAgent]);
-  const signedIn = useCallback(async (link: string) => {
-    signInOpened.current = null;
-    const card = signInCard.current;
-    const cur = card ? lineStore.current[card.room] ?? [] : [];
-    const line = cur.find((l) => l.kind === "notice" && l.id === card?.id);
-    const item = line && line.kind === "notice" ? line.signIns?.find((x) => x.link === link) : undefined;
-    if (!card || !line || line.kind !== "notice" || !line.signIns || !item) { retrySignIn(); return; }
-    // A tool with no server name (an older server) cannot be checked: keep the old behaviour for it.
-    if (item.server && !(await verifySignIn(item.server, item.link))) {
-      note(`Not signed in to ${toolLabel(item.server)} yet. Press Sign in again when you are done.`, card.room);
-      return;
-    }
-    // Re-read the card: it may have changed while the check ran (a fresh link, or a second sign-in).
-    const now = lineStore.current[card.room] ?? [];
-    const cardNow = now.find((l) => l.kind === "notice" && l.id === card.id);
-    if (!cardNow || cardNow.kind !== "notice" || !cardNow.signIns) return;
-    const items = cardNow.signIns.map((x) => (x.link === link || (item.server && x.server === item.server) ? { ...x, done: true } : x));
-    lineStore.current = { ...lineStore.current, [card.room]: now.map((l) => (l === cardNow ? { ...cardNow, signIns: items } : l)) };
-    bump((n) => n + 1);
-    if (items.every((x) => x.done)) retrySignIn();
-  }, [retrySignIn, verifySignIn, note]);
-  const openToolSignIn = useCallback((link: string) => {
-    signInOpened.current = link;
-    const w = window.open(link, "kell-tool-signin", "popup,width=520,height=720");
-    // Inside the kell app the app opens the person's own browser instead (w is null) and the page checks the sign-in on focus.
-    if (!w) {
-      if (!(window as unknown as { __kellDesktop?: boolean }).__kellDesktop) {
-        signInOpened.current = null;
-        note(`Your browser blocked the sign-in window. Allow pop-ups for keळ, or open this link: ${link}`);
-      }
-      return;
-    }
-    signInWindow.current = w;
-    const t = window.setInterval(() => {
-      if (!w.closed) return;
-      window.clearInterval(t);
-      signInWindow.current = null;
-      if (signInOpened.current === link) void signedIn(link);
-    }, 600);
-  }, [note, signedIn]);
-  /** The card's action, always available: open the tool's link, or ask kell for a fresh one when the card has none (an
-   *  older server, or a link that was used up). A sign-in card with no button is a dead end (2026-11-14). */
-  const signInFor = useCallback(async (item: SignInItem) => {
-    if (item.link) { openToolSignIn(item.link); return; }
-    if (!item.server) { note("This tool gave no sign-in link. Ask kell to try again.", roomRef.current); return; }
-    try {
-      const fresh = await roomsAgent.toolSignIn(item.server);
-      if (fresh.signedIn) { retrySignIn(); return; }
-      if (!fresh.link) { note(`kell could not make a sign-in link for ${toolLabel(item.server)}. Try again in a moment.`, roomRef.current); return; }
-      const card = signInCard.current;
-      const cur = card ? lineStore.current[card.room] ?? [] : [];
-      lineStore.current = { ...lineStore.current, [card?.room ?? roomRef.current]: cur.map((l) => (l.kind === "notice" && l.id === card?.id && l.signIns
-        ? { ...l, signIns: l.signIns.map((x) => (x.server && x.server === item.server ? { ...x, link: fresh.link!, done: false } : x)) } : l)) };
-      bump((n) => n + 1);
-      openToolSignIn(fresh.link);
-    } catch { note("That sign-in link could not be made. Try again in a moment.", roomRef.current); }
-  }, [openToolSignIn, retrySignIn, note, roomsAgent]);
-  // A link that expired (they last 10 minutes): the sign-in window says so and tells this page, which makes a new link and loads it in the SAME
-  // window, so the person never has to ask again. If they were already signed in to that tool, the window closes and it is ticked.
-  useEffect(() => {
-    const onMessage = async (e: MessageEvent) => {
-      if ((e.data as { type?: string } | null)?.type !== "kell:tool-signin-expired" || !signInOpened.current) return;
-      const old = signInOpened.current;
-      const card = signInCard.current;
-      const line = card ? (lineStore.current[card.room] ?? []).find((l) => l.kind === "notice" && l.id === card.id) : undefined;
-      const item = line && line.kind === "notice" ? line.signIns?.find((x) => x.link === old) : undefined;
-      if (!card || !item?.server) return;
-      try {
-        const fresh = await roomsAgent.toolSignIn(item.server);
-        if (fresh.signedIn) { signInWindow.current?.close(); void signedIn(old); return; }
-        if (!fresh.link) return;
-        const cur = lineStore.current[card.room] ?? [];
-        lineStore.current = { ...lineStore.current, [card.room]: cur.map((l) => (l.kind === "notice" && l.id === card.id && l.signIns
-          ? { ...l, signIns: l.signIns.map((x) => (x.link === old ? { ...x, link: fresh.link! } : x)) } : l)) };
-        signInOpened.current = fresh.link;
-        if (signInWindow.current && !signInWindow.current.closed) signInWindow.current.location.href = fresh.link;
-        bump((n) => n + 1);
-      } catch { note("That sign-in link expired and a new one could not be made. Press Sign in again.", card.room); }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [roomsAgent, signedIn, note]);
-  useEffect(() => {
-    const back = () => {
-      if (document.visibilityState === "hidden" || !signInOpened.current) return;
-      if (signInWindow.current && !signInWindow.current.closed) return;   // still signing in: the window's close will check it
-      void signedIn(signInOpened.current);
-    };
-    const fromApp = () => { if (signInOpened.current) void signedIn(signInOpened.current); };
-    document.addEventListener("visibilitychange", back);
-    window.addEventListener("focus", back);
-    window.addEventListener("kell:tool-signin-done", fromApp);
-    return () => { document.removeEventListener("visibilitychange", back); window.removeEventListener("focus", back); window.removeEventListener("kell:tool-signin-done", fromApp); };
-  }, [signedIn]);
   /** The streamed bubble has been fully revealed: the posted message takes its place. Safe to call twice. */
   const flushFinal = useCallback((who: string) => {
     const e = streamingRef.current[who];
@@ -730,22 +525,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [settings, setSettings] = useState<{ open: boolean; section: SectionId }>({ open: false, section: "preferences" });
   const [chatPrefs, setChatPrefsState] = useState<ChatPrefs>(DEFAULT_CHAT_PREFS);
   useEffect(() => { setChatPrefsState(loadChatPrefs(subject)); }, [subject]);
-  // Tools that need a sign-in: on unless the person turned them off; the server stores it per account, so the room agent agrees.
-  // Read again each time Settings opens: a read made before the session was ready used to be skipped, and the switch then showed its
-  // default (on) while the account had it off, so "turning it on" changed nothing (2026-11-04). A save that cannot reach the server
-  // puts the switch back and says so, instead of looking saved.
-  const [allowSignInTools, setAllowSignInTools] = useState(true);
-  const readToolPrefs = useCallback(() => {
-    void getAccessToken().then((t) => (t ? getToolPrefs(t).then(setAllowSignInTools).catch(() => undefined) : undefined));
-  }, []);
-  useEffect(() => { readToolPrefs(); }, [subject, readToolPrefs]);
-  useEffect(() => { if (settings.open) readToolPrefs(); }, [settings.open, readToolPrefs]);
-  const setAllowSignInToolsSaved = (v: boolean) => {
-    setAllowSignInTools(v);
-    const failed = (why: string) => { setAllowSignInTools(!v); note(`That setting was not saved: ${why}`); };
-    void getAccessToken().then((t) => (t ? setToolPrefs(t, v).then((saved) => setAllowSignInTools(saved)).catch((e: unknown) => failed(e instanceof Error ? e.message : "try again."))
-      : failed("sign in again, then try."))).catch(() => failed("try again."));
-  };
   const setChatPrefs = useCallback((p: ChatPrefs) => { setChatPrefsState(p); saveChatPrefs(subject, p); }, [subject]);
   const [accountName, setAccountName] = useState("");
   useEffect(() => { void import("@/lib/device-profile").then((m) => m.loadDeviceProfile()).then((p) => { if (p) setAccountName(p.name || (p.email ?? "")); }); }, [subject]);
@@ -1086,63 +865,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           ) });
           continue;
         }
-        out.push({ t: l.t, key: l.id, node: l.signIns?.length
-          ? (
-            <MessageScroller.Item key={l.id} className="dg-signin-card" role="status">
-              <div className="dg-signin-head">
-                <div className="dg-signin-head-row">
-                  <b>{l.signIns.length === 1
-                    ? (l.signIns[0].server ? `Sign in to ${signInTitle(l.signIns[0])} to continue` : "Sign in to continue")
-                    : `You can use these ${l.signIns.length} options. Sign in to continue.`}</b>
-                  <label className="dg-signin-uses-toggle" title="Show how often each tool has been used">
-                    <input type="checkbox" checked={showUses} onChange={(e) => {
-                      const on = e.target.checked; setShowUses(on);
-                      try { localStorage.setItem("kell.rooms.showUses", on ? "on" : "off"); } catch { /* the state still changes */ }
-                    }} />
-                    <span>Show uses</span>
-                  </label>
-                </div>
-                <span>Once per tool, only you see this. Your request runs again by itself after.</span>
-              </div>
-              <ol>
-                {l.signIns.map((x, i) => (
-                  <li key={x.link}>
-                    <span className="dg-signin-icon" aria-hidden="true"
-                      style={{ background: `linear-gradient(145deg, hsl(${signInHue(x)} 62% 42%), hsl(${signInHue(x) + 38} 62% 30%))` }}>
-                      <span className="dg-signin-mono">{signInInitial(x)}</span>
-                      {x.icon && <img src={x.icon} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} />}
-                    </span>
-                    <span className="dg-signin-text">
-                      <span className="dg-signin-name">{signInTitle(x)}</span>
-                      {x.description && <span className="dg-signin-desc">{x.description}</span>}
-                      {showUses && typeof x.uses === "number" && (
-                        <span className="dg-signin-uses">{x.uses > 0 ? `${x.uses} ${x.uses === 1 ? "use" : "uses"}` : "No uses yet"}</span>
-                      )}
-                    </span>
-                    {i === 0 && l.signIns!.length > 1 ? <span className="dg-signin-best">Best fit</span> : null}
-                    {x.done
-                      ? (
-                        <span className="dg-signin-actions">
-                          <span className="dg-signin-done">Signed in</span>
-                          <button type="button" className="dg-signin-again" onClick={() => void signInFor(x)}>Sign in again</button>
-                        </span>
-                      )
-                      : (
-                        // Always a button: a card whose link is missing asks kell for a fresh one instead of leaving the
-                        // person with no way to sign in (2026-11-14).
-                        <button type="button" className="dg-signin-btn" onClick={() => void signInFor(x)}>
-                          <span>{x.link ? "Sign in" : "Get a link"}</span><span className="sq" aria-hidden="true">→</span>
-                        </button>
-                      )}
-                  </li>
-                ))}
-              </ol>
-              {l.signIns.some((x) => x.done) && !l.signIns.every((x) => x.done)
-                ? <button type="button" className="dg-signin-run" onClick={retrySignIn}>Run it now with the ones you signed in to</button>
-                : null}
-            </MessageScroller.Item>
-          )
-          : <MessageScroller.Item key={l.id} className="dg-notice" role="status">{withLinks(l.text)}</MessageScroller.Item> });
+        out.push({ t: l.t, key: l.id, node: <MessageScroller.Item key={l.id} className="dg-notice" role="status">{withLinks(l.text)}</MessageScroller.Item> });
         continue;
       }
       const run = s.run;
@@ -1953,15 +1676,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <span className="dim">Replying to {replyingTo.sender.handle === HUMAN.handle ? "yourself" : nameOf(replyingTo.sender.handle)}:</span> <span className="dg-queued-text">{quoteText(replyingTo.payload.text)}</span>
             <button type="button" aria-label="Cancel the reply" title="Cancel the reply" onClick={() => setReplyingTo(null)}>×</button>
           </div>)}
-        {approvals.length > 0 && (
-          <div className="dg-approvals" style={{ padding: "0 16px 8px" }}>
-            {approvals.slice(0, 3).map((a) => (
-              <ApprovalCard key={a.id} approval={a} busy={approvalBusy}
-                onApprove={(id) => void decideApproval(id, "approve")}
-                onDeny={(id) => void decideApproval(id, "deny")} />
-            ))}
-          </div>
-        )}
         <Composer onEscape={replyingTo ? () => setReplyingTo(null) : editing ? () => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); } : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} procedureMode={procMode} onProcedureMode={chooseProcMode} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
@@ -1974,7 +1688,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           memory={{ api: mapi }}
           data={{ encrypted: { onDownload: () => void downloadEncrypted(), onImport: () => encFile.current?.click() }, onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe(),
             folder: { supported: folderBackupSupported(), name: folder, onChoose: () => void chooseBackupFolder(), onRestore: () => void restoreFromFolder(), onStop: () => { void forgetFolder(folderStore, subject); setFolder(null); } } }}
-          agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH, allowSignInTools, onAllowSignInTools: setAllowSignInToolsSaved, instructions: everyChat, onInstructions: saveEveryChat }}
+          agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH, instructions: everyChat, onInstructions: saveEveryChat }}
           account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}
         />
       )}

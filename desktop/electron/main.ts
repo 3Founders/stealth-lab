@@ -110,7 +110,6 @@ if (!app.requestSingleInstanceLock()) {
       if (isSignInLink(url)) void openSignIn(url)
       else if (/^https?:/.test(url)) void shell.openExternal(url)
     })
-    ipcMain.handle("kell:open-signin", (_e, url: string) => openSignIn(String(url)))
     ipcMain.on("kell:menu-popup", () => popupAppMenu(win))    // The team rooms (electron/rooms.ts) and the one account sign-in shared by the coding lane and the rooms.
     // The page owns the saved typeface; the menu only shows which one is checked and sends a click back to the page.
     ipcMain.on("kell:font-choice", (_e, font: string) => setFontChoice(font === "inter" || font === "poppins" ? font : "default"))

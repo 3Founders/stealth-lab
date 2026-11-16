@@ -182,6 +182,27 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
           ))}
         </ul>
       )}
+      {/* Direct / Auto / Ask, the same switch as the desktop app: its own row above the message box, never beside it. */}
+      {procedureMode && onProcedureMode && (
+        <div className="dg-mode-row">
+          <div className="dg-mode" role="group" aria-label="Procedure mode" data-mode={procedureMode}>
+            <span className="dg-mode-thumb" aria-hidden="true" />
+            {([["direct", "Direct"], ["auto", "Auto"], ["ask", "Ask"]] as const).map(([id, label]) => (
+              <button key={id} type="button" className="dg-mode-btn" data-on={procedureMode === id || undefined}
+                data-tip={id === "direct" ? "Straight to the model, no procedure search (/direct)"
+                  : id === "auto" ? "Search for a procedure and use the best fit automatically (/auto)"
+                    : "Search for a procedure and show the ways to pick from (/ask)"}
+                aria-pressed={procedureMode === id} aria-label={`${label}: ${id === "direct" ? "straight to the model, no procedure search"
+                  : id === "auto" ? "search for a procedure and use the best fit automatically"
+                    : "search for a procedure and show the ways to pick from"}`}
+                title={id === "direct" ? "Straight to the model, no procedure search (/direct)"
+                  : id === "auto" ? "Search for a procedure and use the best fit automatically (/auto)"
+                    : "Search for a procedure and show the ways to pick from (/ask)"}
+                onClick={() => onProcedureMode(id)}>{label}</button>
+            ))}
+          </div>
+        </div>
+      )}
       <textarea
         ref={ref} rows={1} data-big={big || undefined} value={text} disabled={disabled} maxLength={MAX_MESSAGE}
         role="combobox" aria-label="Message" aria-autocomplete="list" aria-expanded={open}
@@ -193,26 +214,6 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
         onKeyDown={onKeyDown}
       />
       <div className="dg-composer-meta">
-      {procedureMode && onProcedureMode && (
-        // Direct / Auto / Ask, the same switch as the desktop app. The thumb slides on the smooth spring; transform
-        // and opacity only, and chat.css removes it under prefers-reduced-motion (docs/ios_animation.md).
-        <div className="dg-mode" role="group" aria-label="Procedure mode" data-mode={procedureMode}>
-          <span className="dg-mode-thumb" aria-hidden="true" />
-          {([["direct", "Direct"], ["auto", "Auto"], ["ask", "Ask"]] as const).map(([id, label]) => (
-            <button key={id} type="button" className="dg-mode-btn" data-on={procedureMode === id || undefined}
-              data-tip={id === "direct" ? "Straight to the model, no procedure search (/direct)"
-                : id === "auto" ? "Search for a procedure and use the best fit automatically (/auto)"
-                  : "Search for a procedure and show the ways to pick from (/ask)"}
-              aria-pressed={procedureMode === id} aria-label={`${label}: ${id === "direct" ? "straight to the model, no procedure search"
-                : id === "auto" ? "search for a procedure and use the best fit automatically"
-                  : "search for a procedure and show the ways to pick from"}`}
-              title={id === "direct" ? "Straight to the model, no procedure search (/direct)"
-                : id === "auto" ? "Search for a procedure and use the best fit automatically (/auto)"
-                  : "Search for a procedure and show the ways to pick from (/ask)"}
-              onClick={() => onProcedureMode(id)}>{label}</button>
-          ))}
-        </div>
-      )}
       {text.trim() && <span className="dg-count" aria-live="off">{wordCount(text)} {wordCount(text) === 1 ? "word" : "words"}{text.length >= MAX_MESSAGE - 1000 ? ` · ${text.length} / ${MAX_MESSAGE}` : ""}</span>}
         <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); if (ref.current) ref.current.style.height = ""; ref.current?.focus(); }} aria-pressed={big} aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
