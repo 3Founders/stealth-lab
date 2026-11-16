@@ -1169,6 +1169,7 @@ export default function Home() {
     let settle: (p: { goal: Delegation["goal"]; options: WayOption[] } | null) => void = () => undefined
     const planP = new Promise<{ goal: Delegation["goal"]; options: WayOption[] } | null>((ok) => { settle = ok })
     void (async () => {
+      let routed: { goal: Delegation["goal"]; options: WayOption[] } | null = null
       try {
         const r = await fetch("/api/delegate", {
           method: "POST",
@@ -1179,7 +1180,6 @@ export default function Home() {
         const reader = r.body.getReader()
         const dec = new TextDecoder()
         let buf = ""
-        let routed: { goal: Delegation["goal"]; options: WayOption[] } | null = null
         for (;;) {
           const { value, done } = await reader.read()
           if (done) break
@@ -1207,10 +1207,10 @@ export default function Home() {
         }
         settle(routed)
       } catch { settle(null) }
-      finally { if (seq === planSeq.current) setDelegateStatus("") }
+      finally { if (seq === planSeq.current && !routed) setDelegateStatus("") }
     })()
     // The router can take ~20 s cold; the turn is waiting on the choice anyway, so give it the full window.
-    return await Promise.race([planP, new Promise<null>((ok) => setTimeout(() => ok(null), 25_000))])
+    return await Promise.race([planP, new Promise<null>((ok) => setTimeout(() => ok(null), 60_000))])
   }
 
   const send = async (again?: string, filesOverride?: Attachment[], asGoal = false) => {

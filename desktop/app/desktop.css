@@ -433,6 +433,7 @@
 .dk-pick-meta i[data-approval="approved"], .dk-pick-meta i[data-approval="ai_approved"],
 .dk-pick-meta i[data-approval="verified"] { color: var(--ink); border-color: var(--rule-strong); }
 .dk-pick-meta i.dk-pick-tool { color: var(--cobalt); border-color: color-mix(in oklab, var(--cobalt) 40%, rgba(0,0,0,0)); }
+.dk-pick-meta i.dk-pick-goal { color: var(--ink); border-color: var(--rule-strong); }
 .dk-pick-meta i.dk-pick-id { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; }
 .dk-pick-cta { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 4px 4px 4px 10px; border-radius: 8px;
   background: var(--ink); color: var(--paper); font-size: 11px; white-space: nowrap; }

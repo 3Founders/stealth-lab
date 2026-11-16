@@ -241,6 +241,7 @@ export type ToolSignIn = {
 /** One Way the router offered for a room message (the same shape as the desktop's picker cards). */
 export type WayChoice = {
   id: string; name: string; approval: string; review?: string; why?: string; tool?: string;
+  goal?: { id: string; name: string };
   steps: Array<{ order: number; title: string; kind?: string }>;
 };
 

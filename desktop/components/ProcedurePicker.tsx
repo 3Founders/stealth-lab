@@ -60,6 +60,7 @@ export default function ProcedurePicker({ goal, options, onPick, onSkip }: {
                 </span>
                 {o.why && <span className="dk-pick-why" title={o.why}>{o.why}</span>}
                 <span className="dk-pick-meta">
+                  {o.goal?.name && <i className="dk-pick-goal" title={o.goal.name}>{o.goal.name}</i>}
                   <i data-approval={o.approval}>{o.approval}</i>
                   {o.review && o.review !== o.approval && <i data-approval={o.review}>{o.review.replace(/_/g, " ")}</i>}
                   <i>{o.steps.length} {o.steps.length === 1 ? "step" : "steps"}</i>

@@ -983,6 +983,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                         <span className="dg-way-name" title={w.name}>{w.name}</span>
                         {w.why && <span className="dg-way-desc">{w.why}</span>}
                         <span className="dg-way-meta">
+                          {w.goal?.name && <i className="dg-way-goal" title={w.goal.name}>{w.goal.name}</i>}
                           <i data-approval={w.approval}>{w.approval.replace(/_/g, " ")}</i>
                           <i>{w.steps.length} {w.steps.length === 1 ? "step" : "steps"}</i>
                           {w.tool && <i className="dg-way-tool" title={w.tool}>{w.tool}</i>}

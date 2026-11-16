@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     try {
       const routed = await routeTask(text, timeoutMs)
       const plan = planFromRoute(text, models, routed)
-      remember(key, plan, routed.options)
+      if (routed.options.length) remember(key, plan, routed.options)
       return NextResponse.json({ ...plan, options: routed.options })
     } catch (err: any) {
       return NextResponse.json({ error: String(err?.message || err) }, { status: err?.status || 502 })
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
         const plan = planFromRoute(text, models, routed)
         status("model", plan.model ? `Model: ${plan.model.id} (${plan.rung}) — ${plan.why}` : `Model: the engine's default — ${plan.why}`,
                { model: plan.model, rung: plan.rung })
-        remember(key, plan, routed.options)
+        if (routed.options.length) remember(key, plan, routed.options)
         send({ type: "plan", plan, options: routed.options })
         send({ type: "done" })
       } catch (err: any) {

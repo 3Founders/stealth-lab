@@ -117,6 +117,9 @@ export type WayOption = {
   approval: string
   review: string
   why: string
+  /** The Goal this Way serves. Options can come from several Goals, so the card and the graph follow the picked Way's
+   *  Goal rather than the first Goal in the catalog answer. */
+  goal?: Delegation["goal"]
   tool: { name: string; server: string } | null
   steps: DelegationStep[]
 }
@@ -130,7 +133,7 @@ export function planFromOption(task: string, models: Models, goal: Delegation["g
   const picked = chooseModel(text, models, option ? { approval: option.approval } : null)
   const plan: Delegation = {
     task: text,
-    goal,
+    goal: option?.goal ?? goal,
     way: option ? { id: option.id, name: option.name, approval: option.approval } : null,
     tool: option?.tool ?? null,
     steps: option?.steps ?? [],

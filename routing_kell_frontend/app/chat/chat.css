@@ -1544,6 +1544,7 @@ span.dg-replyq { cursor: default; }
 .dg-way-meta i[data-approval="approved"], .dg-way-meta i[data-approval="ai_approved"],
 .dg-way-meta i[data-approval="verified"] { color: var(--ink); border-color: var(--rule-strong); }
 .dg-way-meta i.dg-way-tool { color: var(--ink); border-color: color-mix(in oklab, var(--ink) 30%, rgba(0,0,0,0)); }
+.dg-way-meta i.dg-way-goal { color: var(--ink); border-color: var(--rule-strong); }
 .dg-way-best { font-size: .72em; letter-spacing: .06em; text-transform: uppercase; background: var(--yellow);
   color: #171717; border-radius: 3px; padding: 2px 6px 1px; flex: none; }
 .dg-way-btn { display: inline-flex; align-items: center; gap: 10px; background: var(--ink); color: var(--paper);

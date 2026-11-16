@@ -20,7 +20,7 @@ import json
 from contextvars import ContextVar
 import logging
 import re
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
@@ -230,38 +230,56 @@ def _sse(obj: Any) -> str:
     return f"data: {json.dumps(obj, default=str)}\n\n"
 
 
-def _way_cards(answer: dict[str, Any], limit: int = 6) -> dict[str, Any]:
-    """The route answer as the chat's Way cards: the best Goal that has a written Way, then its Ways (name, approval,
-    step count and bound tool). The same shape the desktop picker uses, so both surfaces read the same answer."""
+def _way_cards(answer: dict[str, Any], limit: int = 8) -> dict[str, Any]:
+    """The route answer as the chat's Way cards: every Goal with a written Way contributes (a task often matches more
+    than one), deduped and capped. A Goal with no Way is not a runnable procedure and is skipped; the best Goal's score
+    sets the floor so a low-scoring Goal far down the catalog does not fill the strip. Each card keeps its own Goal."""
     goals = [g for g in (answer.get("goals") or []) if isinstance(g, dict)]
-    goal = next((g for g in goals if isinstance(g.get("ways"), list) and g["ways"]), goals[0] if goals else None)
+    top = float(goals[0].get("score") or 0) if goals else 0.0
+    floor = max(0.35, top * 0.5)
+    seen: set[str] = set()
     ways: list[dict[str, Any]] = []
-    for w in (goal.get("ways") if isinstance(goal, dict) else []) or []:
-        if not isinstance(w, dict) or len(ways) >= limit:
-            continue
-        steps = [s for s in (w.get("steps") or []) if isinstance(s, dict)]
-        cards = [c for c in (w.get("cards") or []) if isinstance(c, dict)]
-        tool = ""
-        for s in steps:
-            b = s.get("binding") if isinstance(s.get("binding"), dict) else None
-            if b and b.get("name"):
-                tool = str(b.get("name"))
+    first_goal: Optional[dict[str, Any]] = None
+    for g in goals:
+        if len(ways) >= limit:
+            break
+        score = float(g.get("score") or 0)
+        for w in (g.get("ways") or []):
+            if len(ways) >= limit:
                 break
-        ways.append({
-            "id": str(w.get("procedure_id") or ""),
-            "name": str(w.get("name") or ""),
-            "approval": str(w.get("verification_state") or w.get("approval_status") or "candidate"),
-            "review": str(w.get("approval_status") or ""),
-            "why": str((goal.get("description") or goal.get("matched_by") or "") if isinstance(goal, dict) else ""),
-            "tool": tool or (str(cards[0].get("name") or "") if cards else ""),
-            "steps": [{"order": int(s.get("order") or i + 1),
-                       "title": str(s.get("title") or s.get("do") or s.get("description") or f"Step {i + 1}"),
-                       "kind": str(s.get("kind") or ("tool" if s.get("binding") else "prompt"))}
-                      for i, s in enumerate(steps)],
-        })
+            if not isinstance(w, dict):
+                continue
+            way_id = str(w.get("procedure_id") or "")
+            if not way_id or way_id in seen or score < floor:
+                continue
+            seen.add(way_id)
+            if first_goal is None:
+                first_goal = g
+            steps = [s for s in (w.get("steps") or []) if isinstance(s, dict)]
+            cards = [c for c in (w.get("cards") or []) if isinstance(c, dict)]
+            tool = ""
+            for s in steps:
+                b = s.get("binding") if isinstance(s.get("binding"), dict) else None
+                if b and b.get("name"):
+                    tool = str(b.get("name"))
+                    break
+            ways.append({
+                "id": way_id,
+                "name": str(w.get("name") or ""),
+                "approval": str(w.get("verification_state") or w.get("approval_status") or "candidate"),
+                "review": str(w.get("approval_status") or ""),
+                "why": str(w.get("why_chosen") or g.get("description") or g.get("matched_by") or ""),
+                "goal": {"id": str(g.get("goal_id") or ""), "name": str(g.get("canonical_name") or "")},
+                "tool": tool or (str(cards[0].get("name") or "") if cards else ""),
+                "steps": [{"order": int(s.get("order") or i + 1),
+                           "title": str(s.get("title") or s.get("do") or s.get("description") or f"Step {i + 1}"),
+                           "kind": str(s.get("kind") or ("tool" if s.get("binding") else "prompt"))}
+                          for i, s in enumerate(steps)],
+            })
+    named = first_goal or (goals[0] if goals else None)
     return {
-        "goal": ({"id": str(goal.get("goal_id") or ""), "name": str(goal.get("canonical_name") or "")}
-                 if isinstance(goal, dict) else None),
+        "goal": ({"id": str(named.get("goal_id") or ""), "name": str(named.get("canonical_name") or "")}
+                 if isinstance(named, dict) else None),
         "ways": ways,
     }
 
@@ -445,7 +463,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         if not agent.wants_work(text) or agent.plainly_answerable(text):
             return _json(request, {"goal": None, "ways": []})
         from app.tool_routing.route_api import route_payload
-        answer = await route_payload(pool, text, limit=5, owner_id=subject)
+        answer = await route_payload(pool, text, limit=10, owner_id=subject)
         return _json(request, _way_cards(answer))
 
     @server.custom_route("/v1/rooms/{room_id}/way", methods=["POST", "OPTIONS"], include_in_schema=False)
