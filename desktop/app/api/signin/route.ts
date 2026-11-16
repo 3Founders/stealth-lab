@@ -11,24 +11,19 @@
 //   DELETE      `kell logout`: forget the saved token (the page signs the rooms out too).
 //
 // The token is never read, returned or logged here: the route only checks that config.json has one.
-import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 import { NextResponse } from "next/server"
 import { kellCommand } from "@/lib/cli"
+import { readKellConfig, tokenLive } from "@/lib/token"
 
 export const dynamic = "force-dynamic"
 
 const kellHome = () => process.env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab")
 
 function signedIn(): boolean {
-  try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(kellHome(), "config.json"), "utf8"))
-    return Boolean(cfg?.token)   // no saved url is fine: the CLI falls back to its default server
-  } catch {
-    return false
-  }
+  return tokenLive(readKellConfig())
 }
 
 const run = (args: string[], detached: boolean) => {
