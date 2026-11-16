@@ -2890,7 +2890,8 @@ export default function Home() {
                 <span className="dk-mode-thumb" aria-hidden="true" />
                 {PROC_MODES.map((m) => (
                   <button key={m.id} type="button" className="dk-mode-btn" data-on={procMode === m.id || undefined}
-                    aria-pressed={procMode === m.id} title={m.hint} onClick={() => chooseProcMode(m.id)}>
+                    data-tip={m.hint} aria-pressed={procMode === m.id} aria-label={`${m.label}: ${m.hint}`}
+                    title={m.hint} onClick={() => chooseProcMode(m.id)}>
                     {m.label}
                   </button>
                 ))}

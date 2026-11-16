@@ -1600,11 +1600,18 @@ span.dg-replyq { cursor: default; }
 .dg-composer .dg-mode-btn:not(:disabled):hover { background: none; color: var(--ink); }
 .dg-composer .dg-mode-btn[data-on]:not(:disabled):hover { color: var(--paper); }
 .dg-mode-btn:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+/* The description on hover/focus: a small dark tip under the label, so Direct / Auto / Ask explain themselves. */
+.dg-mode-btn::after { content: attr(data-tip); position: absolute; top: calc(100% + 7px); left: 0; z-index: 6;
+  width: max-content; max-width: 240px; padding: 5px 8px; border-radius: 7px; background: var(--ink); color: var(--paper);
+  font-size: .68rem; line-height: 1.35; font-weight: 400; text-align: left; opacity: 0; transform: translateY(-3px);
+  pointer-events: none; transition: opacity var(--dg-micro-d) var(--dg-micro), transform var(--dg-micro-d) var(--dg-micro); }
+.dg-mode-btn:hover::after, .dg-mode-btn:focus-visible::after { opacity: 1; transform: translateY(0); }
+@media (hover: none) { .dg-mode-btn::after { display: none; } }
 @media (max-width: 760px) {
   .dg-composer .dg-composer-meta { left: 12px; }
   .dg-composer .dg-mode-btn { padding-inline: 8px; }
 }
-@media (prefers-reduced-motion: reduce) { .dg-mode-thumb, .dg-composer .dg-mode-btn { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .dg-mode-thumb, .dg-composer .dg-mode-btn, .dg-mode-btn::after { transition: none !important; } }
 
 /* The sidebar's own Search (Ctrl K was the only way in), "+ New room" beside Manage rooms, and its inline name box. */
 .dg-side-search { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 6px 10px; padding: 7px 10px; font: inherit; font-size: .9em;

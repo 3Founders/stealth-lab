@@ -478,11 +478,18 @@
 .dg-composer .dk-mode-btn:not(:disabled):hover { background: none; color: var(--ink); }
 .dg-composer .dk-mode-btn[data-on]:not(:disabled):hover { color: var(--paper); }
 .dk-mode-btn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+/* The description on hover/focus: a small dark tip under the label, so Direct / Auto / Ask explain themselves. */
+.dk-mode-btn::after { content: attr(data-tip); position: absolute; top: calc(100% + 7px); left: 0; z-index: 6;
+  width: max-content; max-width: 240px; padding: 5px 8px; border-radius: 7px; background: var(--ink); color: var(--paper);
+  font-size: 10.5px; line-height: 1.35; font-weight: 400; text-align: left; opacity: 0; transform: translateY(-3px);
+  pointer-events: none; transition: opacity var(--dg-micro-d) var(--dg-micro), transform var(--dg-micro-d) var(--dg-micro); }
+.dk-mode-btn:hover::after, .dk-mode-btn:focus-visible::after { opacity: 1; transform: translateY(0); }
+@media (hover: none) { .dk-mode-btn::after { display: none; } }
 @media (max-width: 760px) {
   .dg-composer .dg-composer-meta { left: 12px; }
   .dg-composer .dk-mode-btn { padding-inline: 8px; }
 }
-@media (prefers-reduced-motion: reduce) { .dk-mode-thumb, .dg-composer .dk-mode-btn { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .dk-mode-thumb, .dg-composer .dk-mode-btn, .dk-mode-btn::after { transition: none !important; } }
 
 /* The right panel's Agents list: the session itself and the model the router delegated this turn to. Selecting one
    swaps the middle column (main chat vs that agent's own output). */

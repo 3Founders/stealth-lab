@@ -16,7 +16,12 @@ from typing import Any, Optional
 
 import httpx
 
-SERVERS = ("registry:ai.exa/exa", "ai.exa/exa", "exa")
+SERVERS = ("registry:ai.exa/exa", "ai.exa/exa", "exa",
+           "https://mcp.exa.ai/mcp", "https://mcp.exa.ai", "mcp.exa.ai")
+# Exa has its own MCP server, but kell's key is the no-sign-in path (P1-08): the gateway lists and calls this adapter
+# instead of a registry card, so `discover_tools(server="exa")` works even when the registry has no Exa row.
+ADAPTER_ONLY = True
+GOALS = ("web",)
 RISK = "R0"
 BASE_URL = os.environ.get("EXA_BASE_URL", "https://api.exa.ai")
 TIMEOUT_S = 30.0

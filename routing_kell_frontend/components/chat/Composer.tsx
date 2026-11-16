@@ -200,7 +200,12 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
           <span className="dg-mode-thumb" aria-hidden="true" />
           {([["direct", "Direct"], ["auto", "Auto"], ["ask", "Ask"]] as const).map(([id, label]) => (
             <button key={id} type="button" className="dg-mode-btn" data-on={procedureMode === id || undefined}
-              aria-pressed={procedureMode === id}
+              data-tip={id === "direct" ? "Straight to the model, no procedure search (/direct)"
+                : id === "auto" ? "Search for a procedure and use the best fit automatically (/auto)"
+                  : "Search for a procedure and show the ways to pick from (/ask)"}
+              aria-pressed={procedureMode === id} aria-label={`${label}: ${id === "direct" ? "straight to the model, no procedure search"
+                : id === "auto" ? "search for a procedure and use the best fit automatically"
+                  : "search for a procedure and show the ways to pick from"}`}
               title={id === "direct" ? "Straight to the model, no procedure search (/direct)"
                 : id === "auto" ? "Search for a procedure and use the best fit automatically (/auto)"
                   : "Search for a procedure and show the ways to pick from (/ask)"}

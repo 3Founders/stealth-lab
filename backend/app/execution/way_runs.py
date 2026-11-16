@@ -280,13 +280,12 @@ async def your_turn(step: dict, run: dict) -> dict:
         turn["earlier"] = ctx
     if step["kind"] == "tool":
         loc = step["locator"]
-        server, name = loc.get("server") or loc["value"], loc.get("tool")
-        call = (f'use_tool(server="{server}", name="{name}", arguments={{...}})' if name else "use_tool(...)")
-        turn["do"] = (f"Call {'the tool ' + name + ' of ' if name else 'the tool '}{server} through kell: "
-                      f'discover_tools(server="{server}") to see its tools and input schemas, then {call} with '
-                      f"the arguments this step needs"
-                      + (f": {step['prompt']}" if step["prompt"] else f" ({step['title']})")
-                      + ". Report the tool's answer as the output. If the tool cannot do it, report failed=<why>; do "
+        server = loc.get("server") or loc["value"]
+        turn["do"] = (f"Use {server} through kell to do this step: discover_tools(server=\"{server}\") to see its tools "
+                      f"and input schemas, then call use_tool(server=\"{server}\", name=<tool>, arguments={{...}}) for "
+                      f"each call the step needs -- several searches or page reads in one turn are fine. "
+                      + (f"The step: {step['prompt']}." if step["prompt"] else f"The step: {step['title']}.")
+                      + " Report the tools' answers as the output. If the tool cannot do it, report failed=<why>; do "
                         "not do the work another way. " + SIDE_EFFECTS)
     else:
         if step["kind"] == "fetch":
