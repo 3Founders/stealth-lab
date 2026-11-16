@@ -1,7 +1,7 @@
 // The MCP/engine half of the delegation plan. The pure types and planning functions live in lib/plan.ts, so the page
 // can import them without pulling node:fs (lib/mcp.ts) into the browser bundle.
 import { callMcpTool } from "./mcp"
-import { planFromRoute, stepsOf, toolOf, type Delegation, type Models, type Routed, type WayOption } from "./plan"
+import { planFromRoute, stepsOf, toolOf, type Delegation, type GoalOption, type Models, type Routed, type WayOption } from "./plan"
 
 export * from "./plan"
 
@@ -12,6 +12,7 @@ function fromFindWays(found: any): Routed {
   const asGoal = goal ? { id: String(goal.goal_id || ""), name: String(goal.name || goal.canonical_name || "") } : null
   return {
     goal: asGoal,
+    goals: asGoal ? [{ ...asGoal, score: 1, hasWay: ways.length > 0 }] : [],
     options: ways.map((way: any) => ({
       id: String(way.procedure_id || way.version_id || ""),
       name: String(way.name || ""),
@@ -68,6 +69,12 @@ function fromCatalog(answer: any, limit = 8): Routed {
   const named = firstGoal ?? goals[0]
   return {
     goal: named?.goal_id ? { id: String(named.goal_id), name: String(named.canonical_name || "") } : null,
+    goals: goals.slice(0, 8).map((g: any) => ({
+      id: String(g?.goal_id || ""),
+      name: String(g?.canonical_name || ""),
+      score: Number(g?.score ?? 0),
+      hasWay: Array.isArray(g?.ways) && g.ways.some((w: any) => w?.procedure_id),
+    })),
     options,
   }
 }
@@ -90,7 +97,9 @@ export async function routeTask(task: string, timeoutMs = 20_000): Promise<Route
     ...(researchAsk ? [catalogRead("research literature novelty")] : []),
   ]).then((results) => {
     const options: WayOption[] = []
+    const goals: GoalOption[] = []
     const seen = new Set<string>()
+    const seenGoals = new Set<string>()
     let goal: Delegation["goal"] = null
     for (const r of results) {
       if (r.status !== "fulfilled") {
@@ -99,23 +108,36 @@ export async function routeTask(task: string, timeoutMs = 20_000): Promise<Route
       }
       const part = fromCatalog(r.value)
       if (!goal) goal = part.goal
+      for (const g of part.goals ?? []) {
+        if (!g.id || seenGoals.has(g.id)) continue
+        seenGoals.add(g.id)
+        goals.push(g)
+      }
       for (const o of part.options) {
         if (seen.has(o.id)) continue
         seen.add(o.id)
         options.push(o)
       }
     }
-    return { goal, options: options.slice(0, 10) }
+    return { goal, options: options.slice(0, 10), goals: goals.slice(0, 8) }
   })
   let routed: Routed = { goal: null, options: [] }
   try {
     routed = fromFindWays(await callMcpTool("find_ways", { query: text }, timeoutMs))
   } catch (err) { firstErr = err }
   const catalog = await catalogP
-  if (catalog.options.length) {
+  if (catalog.options.length || (catalog.goals?.length ?? 0)) {
     const seen = new Set(routed.options.map((o) => o.id))
+    const goals = [...(routed.goals ?? [])]
+    const seenGoals = new Set(goals.map((g) => g.id))
+    for (const g of catalog.goals ?? []) {
+      if (seenGoals.has(g.id)) continue
+      seenGoals.add(g.id)
+      goals.push(g)
+    }
     routed = {
       goal: routed.goal ?? catalog.goal,
+      goals: goals.slice(0, 8),
       options: [...routed.options, ...catalog.options.filter((o) => !seen.has(o.id))].slice(0, 10),
     }
   }

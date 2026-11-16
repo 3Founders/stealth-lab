@@ -14,7 +14,7 @@ import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
 import { applyFont, readFont, saveFont } from "@/lib/font"
 import type { ToolApproval } from "@/lib/tools"
-import type { Delegation, WayOption } from "@/lib/plan"
+import type { Delegation, GoalOption, WayOption } from "@/lib/plan"
 import { planFromOption } from "@/lib/plan"
 import ProcedureGraph from "@/components/ProcedureGraph"
 import ProcedurePicker from "@/components/ProcedurePicker"
@@ -182,6 +182,9 @@ function TreeFolder({ entry, directory, depth, onOpen, selected }: {
 
 /** A model call refused for want of a website session (lib/websession.ts SIGN_IN_TO_RUN): the page offers the sign-in instead of an error. */
 const needsWebSignIn = (e?: string | null) => !!e && /sign in to run models/i.test(e)
+
+/** Small talk does not need the catalog; everything else is searched for a Goal/Way first (2026-11-16). */
+const CHAT_ONLY = /^\s*(hi|hello|hey|thanks|thank you|ok|okay|yes|no|yep|nope|cool|great|good|nice|lol|sure|bye)\b[\s!.?]*$/i
 const desktop = () => (typeof window !== "undefined" ? (window as unknown as { kellDesktop?: KellDesktop }).kellDesktop : undefined)
 
 // A tool that needs a sign-in comes back from kell's gateway as JSON inside the tool's result:
@@ -195,7 +198,7 @@ const signInFrom = (raw: string): { server: string; link: string } | null => {
   return { server, link }
 }
 
-type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission" | "goal"; text: string; at?: number; server?: string
+type Line = { who: "user" | "assistant" | "signin" | "plan" | "permission" | "goal" | "catalog"; text: string; at?: number; server?: string
               state?: "ready" | "open" | "done" | "failed"; sessionID?: string; requestID?: string; answer?: string
               files?: Attachment[]
               /** plan lines: the Way run the missing credit paused, or (low) the balance before a long Way starts */
@@ -645,9 +648,12 @@ export default function Home() {
   const [delegation, setDelegation] = useState<Delegation | null>(null)
   const planRef = useRef<Delegation | null>(null)
   const planSeq = useRef(0)
+  const planErr = useRef("")                              // why the procedure search could not run (sign-in, server)
   // The Ways the router offered for the message waiting on the person's choice. The turn does not run until one is
   // picked (or the person chooses to run without a Way).
   const [delegateOptions, setDelegateOptions] = useState<WayOption[]>([])
+  // The Goals the search matched, even when none has a written Way: the chat shows the result before the model runs.
+  const [delegateGoals, setDelegateGoals] = useState<GoalOption[]>([])
   const [pendingTurn, setPendingTurn] = useState<{ text: string; files: Attachment[]; asGoal: boolean; goal: Delegation["goal"] } | null>(null)
   const [delegateAsk, setDelegateAsk] = useState("")
   const [delegateAnswer, setDelegateAnswer] = useState("")
@@ -1164,19 +1170,20 @@ export default function Home() {
   // Ask the router for the task's Goal and the Ways it offers. The route streams its progress, so the panel shows
   // "asking the router" instead of going silent. Nothing runs yet: the person picks a Way from the cards (or chooses to
   // run without one), and only then does the turn start.
-  const planFor = async (text: string): Promise<{ goal: Delegation["goal"]; options: WayOption[] } | null> => {
+  const planFor = async (text: string): Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[] } | null> => {
     const seq = ++planSeq.current
-    let settle: (p: { goal: Delegation["goal"]; options: WayOption[] } | null) => void = () => undefined
-    const planP = new Promise<{ goal: Delegation["goal"]; options: WayOption[] } | null>((ok) => { settle = ok })
+    planErr.current = ""
+    let settle: (p: { goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[] } | null) => void = () => undefined
+    const planP = new Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[] } | null>((ok) => { settle = ok })
     void (async () => {
-      let routed: { goal: Delegation["goal"]; options: WayOption[] } | null = null
+      let routed: { goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[] } | null = null
       try {
         const r = await fetch("/api/delegate", {
           method: "POST",
           headers: { "content-type": "application/json", accept: "text/event-stream" },
           body: JSON.stringify({ text, models: settings?.models || {}, timeoutMs: 20_000 }),
         })
-        if (!r.ok || !r.body) { settle(null); return }
+        if (!r.ok || !r.body) { planErr.current = `the procedure search answered ${r.status}`; settle(null); return }
         const reader = r.body.getReader()
         const dec = new TextDecoder()
         let buf = ""
@@ -1192,21 +1199,25 @@ export default function Home() {
             try { ev = JSON.parse(part.slice(6)) } catch { continue }
             if (ev.type === "status" && seq === planSeq.current) setDelegateStatus(String(ev.text || ""))
             else if (ev.type === "plan" && ev.plan) {
-              routed = { goal: ev.plan.goal ?? null, options: Array.isArray(ev.options) ? ev.options as WayOption[] : [] }
+              routed = { goal: ev.plan.goal ?? null,
+                options: Array.isArray(ev.options) ? ev.options as WayOption[] : [],
+                goals: Array.isArray(ev.goals) ? ev.goals as GoalOption[] : [] }
               if (seq === planSeq.current) {
                 planRef.current = ev.plan as Delegation
                 setDelegation(null)                    // nothing is applied until the person picks
                 setDelegateOptions(routed.options)
+                setDelegateGoals(routed.goals)
                 setDelegateNote("")
               }
               settle(routed)
             } else if (ev.type === "error" && seq === planSeq.current) {
-              setDelegateNote(String(ev.error || "the router did not answer"))
+              planErr.current = String(ev.error || "the router did not answer")
+              setDelegateNote(planErr.current)
             }
           }
         }
         settle(routed)
-      } catch { settle(null) }
+      } catch (err) { planErr.current = err instanceof Error ? err.message : "the procedure search could not run"; settle(null) }
       finally { if (seq === planSeq.current && !routed) setDelegateStatus("") }
     })()
     // The router can take ~20 s cold; the turn is waiting on the choice anyway, so give it the full window.
@@ -1226,8 +1237,10 @@ export default function Home() {
       return
     }
     const sent = body
-    // The router starts now; the message waits for the person to choose one of the Ways it finds.
-    const routedP = planFor(sent)
+    // The procedure search starts now, before the model: every task shows the Goals/Ways it found, even when none has
+    // a written Way. Small talk is the only exception. The model never starts the search itself (2026-11-16).
+    const skipSearch = CHAT_ONLY.test(sent.trim())
+    const routedP = skipSearch ? null : planFor(sent)
     if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
     else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
@@ -1237,15 +1250,27 @@ export default function Home() {
     setStopNote("")
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
     setCards([]); setCardsNote(""); loadTools(sent || outgoing.map((f) => f.name).join(" "))
+    if (skipSearch) { await runTurn(sent, outgoing, null); return }
     const routed = await routedP
-    if (routed?.options.length) {
-      // Nothing runs yet: the panel shows the Ways as cards, and the person picks one (or runs without one).
+    if (routed) {
+      // Nothing runs yet: the chat shows the Ways, or the Goals that matched with no written Way. The person picks a
+      // Way or says to work on it without one.
       setPendingTurn({ text: sent, files: outgoing, asGoal, goal: routed.goal })
+      setDelegateOptions(routed.options)
+      setDelegateGoals(routed.goals)
       setBusy(false); busyRef.current = false
-      setDelegateStatus(`${routed.options.length} ${routed.options.length === 1 ? "Way" : "Ways"} found - choose one in the chat`)
+      setDelegateStatus(routed.options.length
+        ? `${routed.options.length} ${routed.options.length === 1 ? "Way" : "Ways"} found - choose one in the chat`
+        : "No stored procedure for this task - kell can still work on it")
       return
     }
-    await runTurn(sent, outgoing, null)
+    // The search could not run (a signed-out token, the server, the network). Do not let the model answer as if it
+    // searched: say what happened and offer the sign-in / retry in the chat.
+    setBusy(false); busyRef.current = false
+    const why = planErr.current || "kell could not search the procedure catalog"
+    setLines((l) => [...l, { who: "catalog", text: sent, server: why, at: Date.now() }])
+    setDelegateStatus("")
+    setDelegateNote("")
   }
 
   // Run one turn on the chosen Way (or on the engine's default when plan is null). The user's line is already in the
@@ -1384,6 +1409,7 @@ export default function Home() {
     planRef.current = plan
     setDelegation(plan)
     setDelegateOptions([])
+    setDelegateGoals([])
     setPendingTurn(null)
     setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
     setBusy(true); busyRef.current = true
@@ -1401,6 +1427,7 @@ export default function Home() {
     planRef.current = plan
     setDelegation(plan)
     setDelegateOptions([])
+    setDelegateGoals([])
     setPendingTurn(null)
     setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
     setBusy(true); busyRef.current = true
@@ -1935,8 +1962,8 @@ export default function Home() {
 
   // The graph in the right sidebar: the chosen Way, or a preview of the best Way while the choice is open in the chat.
   // The cards themselves live in the middle chat now (2026-11-16); the sidebar is always the procedure, never a list.
-  const previewPlan = !delegation && pendingTurn && delegateOptions.length
-    ? planFromOption(pendingTurn.text, settings?.models || {}, pendingTurn.goal, delegateOptions[0])
+  const previewPlan = !delegation && pendingTurn
+    ? planFromOption(pendingTurn.text, settings?.models || {}, pendingTurn.goal, delegateOptions[0] ?? null)
     : null
   const shownPlan = delegation ?? previewPlan
 
@@ -2418,6 +2445,25 @@ export default function Home() {
                   </div>
                 )}
                 {lines.map((l, i) => {
+                  if (l.who === "catalog") {
+                    const canSignIn = /sign in|401|expired/i.test(l.server || "")
+                    return (
+                      <div className="dg-run" data-agent="true" key={i}>
+                        <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                        <div className="dg-col">
+                          <div className="dg-meta"><b>Kell</b><span className="dg-badge">procedure search</span><time>{time(l.at)}</time></div>
+                          <div className="dk-signin" data-state="ready">
+                            <p>{canSignIn ? "kell's sign-in expired, so the procedure search could not run. Sign in, then search again."
+                              : `The procedure search could not run: ${l.server}`}</p>
+                            <div className="dk-row">
+                              {canSignIn && <button type="button" className="btn-ink" onClick={() => void signIn()}>Sign in to kell</button>}
+                              <button type="button" className="btn-line" onClick={() => void send(l.text)}>Search again</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }
                   if (l.who === "plan") {
                     return (
                       <div className="dg-run" data-agent="true" key={i}>
@@ -2517,9 +2563,9 @@ export default function Home() {
                     </div>
                   )
                 })}
-                {pendingTurn && delegateOptions.length > 0 && (
-                  // The Ways the router found, in the conversation itself: after the person's line, before anything
-                  // runs. kell is stopped until one is picked; several Ways scroll sideways (2026-11-16).
+                {pendingTurn && (
+                  // The procedure search result, in the conversation itself: the Ways, or the Goals that matched with
+                  // no written Way. kell is stopped until the person picks one or says to work without one (2026-11-16).
                   <div className="dg-run dk-pick-run" data-agent="true">
                     <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
                     <div className="dg-col">
@@ -2527,7 +2573,7 @@ export default function Home() {
                         <b>Kell</b><span className="dg-badge">procedure</span>
                         <time>{time(lines.at(-1)?.at || Date.now())}</time>
                       </div>
-                      <ProcedurePicker goal={pendingTurn.goal} options={delegateOptions}
+                      <ProcedurePicker goal={pendingTurn.goal} options={delegateOptions} goals={delegateGoals}
                         onPick={applyOption} onSkip={runWithoutWay} />
                     </div>
                   </div>
@@ -2902,7 +2948,9 @@ export default function Home() {
             </section>
           )}
           {/* The procedure graph: the chosen Way, or a preview of the best fit while the chat shows the choice. */}
-          <ProcedureGraph plan={shownPlan} preview={!!previewPlan} glass={glassGraph} onToggleGlass={toggleGlassGraph} />
+          <ProcedureGraph plan={shownPlan} preview={!!previewPlan}
+            previewLabel={delegateOptions.length ? "Preview · pick in the chat" : "Search result · no Way"}
+            glass={glassGraph} onToggleGlass={toggleGlassGraph} />
         </aside>
         <div className="dk-scrim-right" onClick={() => setRightOpen(false)} aria-hidden="true" />
       </div>

@@ -402,6 +402,14 @@
 .dk-pick-head h2 { margin: 0 0 3px; }
 .dk-pick-sub { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--grey); }
 .dk-pick-sub b { font-weight: 500; color: var(--ink); }
+.dk-pick-empty { display: grid; gap: 8px; }
+.dk-pick-empty-goal { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--grey); }
+.dk-pick-empty-goal b { font-weight: 500; color: var(--ink); }
+.dk-pick-goals { display: flex; flex-wrap: wrap; gap: 4px; }
+.dk-pick-goal-chip { font-size: 10.5px; line-height: 17px; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--rule); color: var(--grey); max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.dk-pick-goal-chip[data-has-way] { color: var(--ink); border-color: var(--rule-strong); }
 .dk-pick-strip { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
   padding: 2px 2px 8px; margin: 0 -2px; scrollbar-width: thin; }
 .dk-pick-strip::-webkit-scrollbar { height: 6px; }

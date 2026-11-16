@@ -98,7 +98,7 @@ export function roomsApi(deps: RoomsDeps) {
     /** Which Ways fit this message (the Goal catalog, the same answer as the desktop picker). An empty list means the
      *  message goes to the agent as before; a Way means the chat shows the cards and the agent waits for a pick. */
     route: (id: string, text: string) =>
-      call<{ goal: { id: string; name: string } | null; ways: WayChoice[] }>("POST", `/${e(id)}/route`, { text }),
+      call<{ goal: { id: string; name: string } | null; ways: WayChoice[]; goals?: GoalChoice[] }>("POST", `/${e(id)}/route`, { text }),
     /** Run the Way the person picked, headless, and post its result into the room. `onEvent` hears each step start and
      *  end (`step`), the run ending (`run`), the result being posted (`posted`) and a failure (`error`). */
     runWay: async (
@@ -237,6 +237,9 @@ export type RoomsApi = ReturnType<typeof roomsApi>;
 export type ToolSignIn = {
   server: string; link: string; title?: string; description?: string; uses?: number; icon?: string
 };
+
+/** A Goal the search matched, even when it has no written Way: the room shows the result before the agent runs. */
+export type GoalChoice = { id: string; name: string; score?: number; hasWay?: boolean };
 
 /** One Way the router offered for a room message (the same shape as the desktop's picker cards). */
 export type WayChoice = {

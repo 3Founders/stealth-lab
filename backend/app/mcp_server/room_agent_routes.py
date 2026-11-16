@@ -280,6 +280,10 @@ def _way_cards(answer: dict[str, Any], limit: int = 8) -> dict[str, Any]:
     return {
         "goal": ({"id": str(named.get("goal_id") or ""), "name": str(named.get("canonical_name") or "")}
                  if isinstance(named, dict) else None),
+        "goals": [{"id": str(g.get("goal_id") or ""), "name": str(g.get("canonical_name") or ""),
+                   "score": float(g.get("score") or 0),
+                   "hasWay": any(isinstance(w, dict) and w.get("procedure_id") for w in (g.get("ways") or []))}
+                  for g in goals[:8]],
         "ways": ways,
     }
 

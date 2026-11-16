@@ -31,7 +31,7 @@ import { describeBacking, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
 import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask, relayKey } from "@/lib/chat/relay-client";
 import { DEFAULT_ROOM, freeRoomName, newRoomName, readAgents, readInstructions, readPresets, readRooms, withoutRoom, writeAgents, writeInstructions, writePresets, writeRooms, type RoomList } from "@/lib/chat/rooms";
-import { RoomsApiError, roomsApi, toolLabel, type RoomMember, type ToolSignIn, type WayChoice } from "@/lib/chat/rooms-api";
+import { RoomsApiError, roomsApi, toolLabel, type GoalChoice, type RoomMember, type ToolSignIn, type WayChoice } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
 import { memoryApi } from "@/lib/chat/memory-api";
@@ -81,7 +81,7 @@ type SignInItem = ToolSignIn & { done?: boolean };
 // without one). `state` is the live run: which step is going, the run ending, or a failure.
 type WayLine = {
   kind: "ways"; id: string; text: string; t: number;
-  goal: { id: string; name: string } | null; ways: WayChoice[];
+  goal: { id: string; name: string } | null; ways: WayChoice[]; goals?: GoalChoice[];
   state?: { picked?: string; running?: boolean; step?: number; of?: number; title?: string; done?: boolean; waiting?: boolean; error?: string };
 };
 type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number; signIns?: SignInItem[] } | WayLine;
@@ -415,18 +415,25 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
     const temp = tempRef.current.has(r);
     const known = () => engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
-    // The choice, before the agent starts: the same catalog answer the desktop's picker reads. A message with no Way (or
-    // small talk, or a canvas edit) goes to the agent exactly as before; routing trouble never blocks an answer.
+    // The choice, before the agent starts: the same catalog answer the desktop's picker reads. A message with no Goal
+    // (small talk, or a canvas edit) goes to the agent as before; when the search itself fails, the person is told and
+    // the model does not answer as if it had searched (2026-11-16).
     if (!opts?.skipRoute && who === "@kell" && !temp && !canvasOpenRef.current) {
       const rid = known();
       if (rid) {
         try {
           const routed = await roomsAgent.route(rid, text);
-          if (routed.ways.length) {
-            push(r, { kind: "ways", id: crypto.randomUUID(), text, t: Date.now(), goal: routed.goal, ways: routed.ways });
+          if (routed.ways.length || (routed.goals?.length ?? 0)) {
+            push(r, { kind: "ways", id: crypto.randomUUID(), text, t: Date.now(), goal: routed.goal,
+              ways: routed.ways, goals: routed.goals ?? [] });
             return;
           }
-        } catch { /* best effort: the agent answers as before */ }
+        } catch (err) {
+          // The search is the first step: when it cannot run, say so instead of letting the model answer as if it
+          // had searched (the model's "tools aren't available" is exactly the confusion this prevents, 2026-11-16).
+          note(`Could not search the procedure catalog: ${err instanceof Error ? err.message : "the server did not answer"}. Sign in again if it says the sign-in expired.`, r);
+          return;
+        }
       }
     }
     askingKell.current.add(key);
@@ -956,19 +963,35 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           // sideways; the card is the rooms' tool sign-in card with the Way's own tile, name, one line and action.
           const st = l.state || {};
           const running = !!st.running;
+          const empty = l.ways.length === 0;
           out.push({ t: l.t, key: l.id, node: (
-            <MessageScroller.Item key={l.id} className="dg-way-card" role="group" aria-label="Choose a procedure">
+            <MessageScroller.Item key={l.id} className="dg-way-card" role="group" aria-label={empty ? "Procedure search result" : "Choose a procedure"}>
               <div className="dg-way-head">
                 <div className="dg-way-head-row">
-                  <b>{l.ways.length === 1 ? "One procedure fits this task" : `${l.ways.length} procedures fit this task`}</b>
+                  <b>{empty ? "No stored procedure for this task"
+                    : l.ways.length === 1 ? "One procedure fits this task" : `${l.ways.length} procedures fit this task`}</b>
                   {l.goal?.name && <span className="dg-way-goal" title={l.goal.name}>{l.goal.name}</span>}
                 </div>
-                <span>{st.error ? `That Way stopped: ${st.error}`
-                  : st.done ? "Done. The result is in the room."
-                    : st.waiting ? "It needs you at one step; the room message says what."
-                      : running ? "kell is running it now; the result comes into the room."
-                        : "Pick one and kell continues. It waits until you do."}</span>
+                <span>{empty ? "kell can still work on it: the model runs only after you say so."
+                  : st.error ? `That Way stopped: ${st.error}`
+                    : st.done ? "Done. The result is in the room."
+                      : st.waiting ? "It needs you at one step; the room message says what."
+                        : running ? "kell is running it now; the result comes into the room."
+                          : "Pick one and kell continues. It waits until you do."}</span>
               </div>
+              {empty ? (
+                <div className="dg-way-empty">
+                  {(l.goals ?? []).length > 0 && (
+                    <div className="dg-way-goals" aria-label="Goals the search matched">
+                      {(l.goals ?? []).slice(0, 6).map((g) => (
+                        <span key={g.id} className="dg-way-goal-chip" data-has-way={g.hasWay || undefined} title={g.name}>
+                          {g.name}{g.hasWay ? "" : " · no Way"}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
               <ol className="dg-way-strip">
                 {l.ways.map((w, i) => {
                   const picked = st.picked === w.id;
@@ -1026,8 +1049,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                   );
                 })}
               </ol>
+              )}
               {!st.picked && !st.done && (
-                <button type="button" className="dg-way-skip" onClick={() => skipWay(roomRef.current, l)}>Run without a Way</button>
+                <button type="button" className="dg-way-skip" onClick={() => skipWay(roomRef.current, l)}>
+                  {empty ? "Let kell work on it" : "Run without a Way"}
+                </button>
               )}
             </MessageScroller.Item>
           ) });

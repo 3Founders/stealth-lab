@@ -6,7 +6,7 @@
 // a gradient icon tile, a title, one line of supporting text, a metadata row, a "Best fit" badge on the first, and one
 // dark action with the yellow arrow. Several Ways scroll sideways, one snap per card, instead of growing the sidebar
 // downwards (2026-11-16). The whole card is the target.
-import type { Delegation, WayOption } from "@/lib/plan"
+import type { Delegation, GoalOption, WayOption } from "@/lib/plan"
 
 const short = (id?: string) => (id ? id.slice(0, 8) : "")
 
@@ -27,53 +27,79 @@ function WayIcon() {
   )
 }
 
-export default function ProcedurePicker({ goal, options, onPick, onSkip }: {
+export default function ProcedurePicker({ goal, options, goals = [], onPick, onSkip }: {
   goal: Delegation["goal"]
   options: WayOption[]
+  /** The Goals the search matched, shown when none has a written Way: the result is visible before the model runs. */
+  goals?: GoalOption[]
   onPick: (option: WayOption) => void
   onSkip: () => void
 }) {
+  const empty = options.length === 0
   return (
-    <section className="dk-pick" aria-label="Choose a procedure">
+    <section className="dk-pick" aria-label={empty ? "Procedure search result" : "Choose a procedure"}>
       <div className="dk-pick-head">
-        <h2>Choose a procedure</h2>
+        <h2>{empty ? "Procedure search" : "Choose a procedure"}</h2>
         <p className="dk-pick-sub">
-          {options.length === 1 && goal?.name ? <>For <b>{goal.name}</b>. </> : null}
-          {options.length} {options.length === 1 ? "Way" : "Ways"} found for this task. kell is waiting: pick one and it continues.
+          {empty ? (
+            <>No stored Way matches this task. kell can still work on it: the model runs only after you say so.</>
+          ) : (
+            <>
+              {options.length === 1 && goal?.name ? <>For <b>{goal.name}</b>. </> : null}
+              {options.length} {options.length === 1 ? "Way" : "Ways"} found for this task. kell is waiting: pick one and it continues.
+            </>
+          )}
         </p>
       </div>
-      <div className="dk-pick-strip" role="group" aria-label="Ways to apply">
-        {options.map((o, i) => {
-          const hue = hueOf(o.name || o.id)
-          return (
-            <button key={`${o.id}-${i}`} type="button" className="dk-pick-card"
-              style={{ ["--i" as any]: i }}
-              onClick={() => onPick(o)} aria-label={`Use ${o.name}`}>
-              <span className="dk-pick-icon" aria-hidden="true"
-                style={{ background: `linear-gradient(145deg, hsl(${hue} 62% 42%), hsl(${hue + 38} 62% 30%))` }}>
-                <WayIcon />
-              </span>
-              <span className="dk-pick-body">
-                <span className="dk-pick-title">
-                  <b title={o.name}>{o.name}</b>
-                  {i === 0 && <span className="dk-pick-best">Best fit</span>}
+      {empty ? (
+        <div className="dk-pick-empty">
+          {goal?.name && <p className="dk-pick-empty-goal">Closest Goal: <b>{goal.name}</b></p>}
+          {goals.length > 0 && (
+            <div className="dk-pick-goals" aria-label="Goals the search matched">
+              {goals.slice(0, 6).map((g) => (
+                <span key={g.id} className="dk-pick-goal-chip" data-has-way={g.hasWay || undefined} title={g.name}>
+                  {g.name}{g.hasWay ? "" : " · no Way"}
                 </span>
-                {o.why && <span className="dk-pick-why" title={o.why}>{o.why}</span>}
-                <span className="dk-pick-meta">
-                  {o.goal?.name && <i className="dk-pick-goal" title={o.goal.name}>{o.goal.name}</i>}
-                  <i data-approval={o.approval}>{o.approval}</i>
-                  {o.review && o.review !== o.approval && <i data-approval={o.review}>{o.review.replace(/_/g, " ")}</i>}
-                  <i>{o.steps.length} {o.steps.length === 1 ? "step" : "steps"}</i>
-                  {o.tool && <i className="dk-pick-tool" title={o.tool.server || o.tool.name}>{o.tool.name}</i>}
-                  {o.id && <i className="dk-pick-id">{short(o.id)}</i>}
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="dk-pick-strip" role="group" aria-label="Ways to apply">
+          {options.map((o, i) => {
+            const hue = hueOf(o.name || o.id)
+            return (
+              <button key={`${o.id}-${i}`} type="button" className="dk-pick-card"
+                style={{ ["--i" as any]: i }}
+                onClick={() => onPick(o)} aria-label={`Use ${o.name}`}>
+                <span className="dk-pick-icon" aria-hidden="true"
+                  style={{ background: `linear-gradient(145deg, hsl(${hue} 62% 42%), hsl(${hue + 38} 62% 30%))` }}>
+                  <WayIcon />
                 </span>
-              </span>
-              <span className="dk-pick-cta" aria-hidden="true">Use<span className="sq">→</span></span>
-            </button>
-          )
-        })}
-      </div>
-      <button type="button" className="dk-pick-skip" onClick={onSkip}>Run without a Way</button>
+                <span className="dk-pick-body">
+                  <span className="dk-pick-title">
+                    <b title={o.name}>{o.name}</b>
+                    {i === 0 && <span className="dk-pick-best">Best fit</span>}
+                  </span>
+                  {o.why && <span className="dk-pick-why" title={o.why}>{o.why}</span>}
+                  <span className="dk-pick-meta">
+                    {o.goal?.name && <i className="dk-pick-goal" title={o.goal.name}>{o.goal.name}</i>}
+                    <i data-approval={o.approval}>{o.approval}</i>
+                    {o.review && o.review !== o.approval && <i data-approval={o.review}>{o.review.replace(/_/g, " ")}</i>}
+                    <i>{o.steps.length} {o.steps.length === 1 ? "step" : "steps"}</i>
+                    {o.tool && <i className="dk-pick-tool" title={o.tool.server || o.tool.name}>{o.tool.name}</i>}
+                    {o.id && <i className="dk-pick-id">{short(o.id)}</i>}
+                  </span>
+                </span>
+                <span className="dk-pick-cta" aria-hidden="true">Use<span className="sq">→</span></span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+      <button type="button" className="dk-pick-skip" onClick={onSkip}>
+        {empty ? "Let kell work on it without a procedure" : "Run without a Way"}
+      </button>
     </section>
   )
 }

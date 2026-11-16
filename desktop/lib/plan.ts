@@ -124,8 +124,11 @@ export type WayOption = {
   steps: DelegationStep[]
 }
 
+/** A Goal the catalog matched, even when it has no written Way. The search result is shown before the model runs. */
+export type GoalOption = { id: string; name: string; score?: number; hasWay?: boolean }
+
 /** What the router resolved, before a model is picked or a Way is chosen. */
-export type Routed = { goal: Delegation["goal"]; options: WayOption[] }
+export type Routed = { goal: Delegation["goal"]; options: WayOption[]; goals?: GoalOption[] }
 
 /** Turn one chosen Way into the plan: the model rung, the reason, and the least-privilege brief. */
 export function planFromOption(task: string, models: Models, goal: Delegation["goal"], option: WayOption | null): Delegation {

@@ -1556,6 +1556,12 @@ span.dg-replyq { cursor: default; }
 .dg-way-btn:disabled .sq { transform: none; }
 .dg-way-actions { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 4px; flex: none; }
 .dg-way-run { font-size: .8em; color: var(--grey); text-align: right; max-width: 118px; }
+.dg-way-empty { display: grid; gap: 8px; }
+.dg-way-goals { display: flex; flex-wrap: wrap; gap: 4px; }
+.dg-way-goal-chip { font-size: .72em; line-height: 17px; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--rule); color: var(--grey); max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.dg-way-goal-chip[data-has-way] { color: var(--ink); border-color: var(--rule-strong); }
 /* The picked Way's steps, in the card: the same Goal -> Way -> steps shape as the desktop graph, compact. The dot of the
    step kell is on pulses; finished steps are inked. */
 .dg-way-steps { grid-column: 1 / -1; list-style: none; margin: 2px 0 0; padding: 4px 0 0; display: flex;

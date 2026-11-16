@@ -16,10 +16,11 @@ const KIND: Record<string, string> = {
 
 const short = (id?: string) => (id ? id.slice(0, 8) : "")
 
-export default function ProcedureGraph({ plan, preview = false, glass, onToggleGlass }: {
+export default function ProcedureGraph({ plan, preview = false, previewLabel, glass, onToggleGlass }: {
   plan: Delegation | null
   /** The best fit while the choice is open in the chat: the same graph, marked as a preview so it never reads as running. */
   preview?: boolean
+  previewLabel?: string
   glass: boolean
   onToggleGlass: () => void
 }) {
@@ -53,7 +54,7 @@ export default function ProcedureGraph({ plan, preview = false, glass, onToggleG
     <section className="dk-proc" data-glass={glass ? "on" : "off"} aria-label="Procedure graph">
       <div className="dk-proc-head">
         <h2>Procedure</h2>
-        {preview && <span className="dk-proc-preview">Preview · pick in the chat</span>}
+        {preview && <span className="dk-proc-preview">{previewLabel || "Preview · pick in the chat"}</span>}
         <button type="button" className="dk-icon dk-proc-toggle" aria-pressed={glass}
           aria-label={glass ? "Turn the glass effect off" : "Turn the glass effect on"}
           title={glass ? "Glass effect on" : "Glass effect off"} onClick={onToggleGlass}>
