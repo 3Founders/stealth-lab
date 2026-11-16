@@ -38,8 +38,8 @@ export default function ProcedurePicker({ goal, options, onPick, onSkip }: {
       <div className="dk-pick-head">
         <h2>Choose a procedure</h2>
         <p className="dk-pick-sub">
-          {goal?.name ? <>For <b>{goal.name}</b>. </> : null}
-          {options.length} {options.length === 1 ? "Way" : "Ways"} found. kell is waiting: pick one and it continues.
+          {options.length === 1 && goal?.name ? <>For <b>{goal.name}</b>. </> : null}
+          {options.length} {options.length === 1 ? "Way" : "Ways"} found for this task. kell is waiting: pick one and it continues.
         </p>
       </div>
       <div className="dk-pick-strip" role="group" aria-label="Ways to apply">

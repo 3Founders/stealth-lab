@@ -80,19 +80,43 @@ function fromCatalog(answer: any, limit = 8): Routed {
 export async function routeTask(task: string, timeoutMs = 20_000): Promise<Routed> {
   const text = task.trim().slice(0, 4000)
   let firstErr: any = null
-  const catalogP = callMcpTool("route_goal", { query: text, limit: 10 }, Math.min(timeoutMs, 12_000))
-    .then((answer) => fromCatalog(answer))
-    .catch((err) => { if (!firstErr) firstErr = err; return null })
+  // A task that asks for procedures (or is about research) also reads the catalog for the literature/novelty side:
+  // "research" alone does not rank "Search the literature and check novelty" high, and it is one of the Ways people
+  // most often want next to the plan (2026-11-16). Both reads are cached by the catalog and run together.
+  const researchAsk = /\b(research|literature|study|paper|novelty|procedure|procedures|ways?)\b/i.test(text)
+  const catalogRead = (q: string) => callMcpTool("route_goal", { query: q, limit: 10 }, Math.min(timeoutMs, 12_000))
+  const catalogP = Promise.allSettled([
+    catalogRead(text),
+    ...(researchAsk ? [catalogRead("research literature novelty")] : []),
+  ]).then((results) => {
+    const options: WayOption[] = []
+    const seen = new Set<string>()
+    let goal: Delegation["goal"] = null
+    for (const r of results) {
+      if (r.status !== "fulfilled") {
+        if (!firstErr) firstErr = r.reason
+        continue
+      }
+      const part = fromCatalog(r.value)
+      if (!goal) goal = part.goal
+      for (const o of part.options) {
+        if (seen.has(o.id)) continue
+        seen.add(o.id)
+        options.push(o)
+      }
+    }
+    return { goal, options: options.slice(0, 10) }
+  })
   let routed: Routed = { goal: null, options: [] }
   try {
     routed = fromFindWays(await callMcpTool("find_ways", { query: text }, timeoutMs))
   } catch (err) { firstErr = err }
   const catalog = await catalogP
-  if (catalog?.options.length) {
+  if (catalog.options.length) {
     const seen = new Set(routed.options.map((o) => o.id))
     routed = {
       goal: routed.goal ?? catalog.goal,
-      options: [...routed.options, ...catalog.options.filter((o) => !seen.has(o.id))].slice(0, 8),
+      options: [...routed.options, ...catalog.options.filter((o) => !seen.has(o.id))].slice(0, 10),
     }
   }
   if (!routed.goal && !routed.options.length && firstErr) throw firstErr

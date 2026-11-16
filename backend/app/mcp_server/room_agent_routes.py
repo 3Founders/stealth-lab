@@ -464,6 +464,11 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             return _json(request, {"goal": None, "ways": []})
         from app.tool_routing.route_api import route_payload
         answer = await route_payload(pool, text, limit=10, owner_id=subject)
+        # "Research" alone does not rank "Search the literature and check novelty" high; a procedure/research ask
+        # also reads the literature/novelty side, the same supplementary query the desktop makes (2026-11-16).
+        if re.search(r"\b(research|literature|study|paper|novelty|procedure|procedures|ways?)\b", text, re.I):
+            extra = await route_payload(pool, "research literature novelty", limit=10, owner_id=subject)
+            answer = {"goals": (answer.get("goals") or []) + (extra.get("goals") or [])}
         return _json(request, _way_cards(answer))
 
     @server.custom_route("/v1/rooms/{room_id}/way", methods=["POST", "OPTIONS"], include_in_schema=False)
