@@ -458,7 +458,7 @@ export default function Home() {
   // File > Open folder and File > New session from the app's menu bar (electron/menu.ts).
   const menuRef = useRef<(what: string) => void>(() => {})
   menuRef.current = (what) => {
-    if (what === "open-folder" && !busy && !opening) void (async () => { const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); setSideView("project"); void openProject(d) } })()
+    if (what === "open-folder") void openFolder()
     if (what === "new-session") newSession()
   }
   useEffect(() => desktop()?.onMenu?.((w) => menuRef.current(w)), [])
@@ -1004,11 +1004,23 @@ export default function Home() {
       if (!chosen) return
       dir = chosen; setDirectory(chosen)
     }
-    setSideView("project")                                  // an open project shows its sessions, not the project list
+    // The pane belongs to the new folder from this moment: an empty chat and its own sessions, never the last project's,
+    // while the engine boots. Waiting for the engine left the old conversation under the new name and looked like the
+    // folder never opened (2026-11-16). A running turn is ended by the engine switch itself, so say so.
+    const endedTurn = busyRef.current
+    sessionSeq.current++                                  // a chat still loading must not fill the new project
+    planSeq.current++                                     // a procedure search must not open its picker there
+    turnGen.current++
+    onScreen.current = null
+    setSideView("project")                                // an open project shows its sessions, not the project list
     setEngine(null); setOpening(true)
-    // The callbacks below read the folder from a ref: set it now, so a fast engine failure cannot leave the previous
-    // project's directory in place when loadSessions asks for the list.
     dirRef.current = dir
+    setDirectory(dir); setSessionID(null); setSessions([])
+    setQueued([]); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setSpend(0); setDelegateLog([]); loadChanges(null)
+    setPendingTurn(null); setDelegateOptions([]); setDelegateGoals([]); setDelegation(null); planRef.current = null
+    setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateStatus(""); setDelegateAsk(""); setSessLoading(null)
+    setStopNote(endedTurn ? "Opening another folder ended the turn that was running. Steps that already ran stay." : "")
+    setAgentView("main")
     let j: { up?: boolean; error?: string }
     try {
       const r = await fetch("/api/engine", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir }) })
@@ -1018,7 +1030,6 @@ export default function Home() {
     setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
     if (j.up) remember(dir)
     if (j.up) {
-      setQueued([]); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setSessionID(null); setSpend(0); setDelegateLog([]); loadChanges(null)
       // The folder (and the chat to reopen, when the app is restoring the last one) is kept in the app's store.
       void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir, sessionID: session ?? null }) }).catch(() => undefined)
     }
@@ -1026,6 +1037,19 @@ export default function Home() {
     // opens from that store without waiting for an engine that may never come up.
     await loadSessions()
     if (session) void openSession(session)
+  }
+
+  // Open a folder: the picker, a recent project, or File > Open folder. A turn that is still answering is ended by the
+  // engine switch, so the pane detaches first and these buttons are never dead while a model works (2026-11-16).
+  const openFolder = async (dir?: string) => {
+    let d = dir
+    if (!d) {
+      if (!desktop()?.pickFolder) { setSideView("project"); void openProject(); return }
+      d = (await desktop()?.pickFolder?.()) ?? undefined
+      if (!d) return
+    }
+    if (busyRef.current) { detached.current = true; setDetachedView(true) }
+    await openProject(d)
   }
 
   const appendAssistant = (delta: string) => {
@@ -2004,7 +2028,7 @@ export default function Home() {
   }
   const commands = [
     { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: newSession },
-    { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => { if (!desktop()?.pickFolder) { void openProject(); return } void desktop()?.pickFolder?.().then((d) => { if (d) { setDirectory(d); setSideView("project"); void openProject(d) } }) } },
+    { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => void openFolder() },
     { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
     { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
     { id: "fork", title: "Fork this session", hint: "a new session with this whole chat; the original stays as it is", run: () => void fork() },
@@ -2218,11 +2242,8 @@ export default function Home() {
                 </div>
               )}
               <div className="dk-row">
-                <button type="button" className="btn-ink" disabled={busy || opening}
-                  onClick={async () => {
-                    if (!desktop()?.pickFolder) { setSideView("project"); void openProject(); return }
-                    const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); setSideView("project"); void openProject(d) }
-                  }}>{opening ? "Opening…" : "Open folder"}</button>
+                <button type="button" className="btn-ink" disabled={opening}
+                  onClick={() => void openFolder()}>{opening ? "Opening…" : "Open folder"}</button>
               </div>
               {recents.length === 0 ? <p className="dk-note">Projects you open show here.</p> : (
                 <ul className="dk-recents" aria-label="Projects">
@@ -2231,11 +2252,11 @@ export default function Home() {
                     const here = !!directory && d.toLowerCase() === directory.toLowerCase()
                     return (
                       <li key={d} data-here={here || undefined}>
-                        <button type="button" className="dk-recent" title={d} disabled={busy || opening}
+                        <button type="button" className="dk-recent" title={d} disabled={opening}
                           onClick={() => {
                             setSideView("project")
                             if (here && engine?.up) return                 // already open: just show it
-                            setSessionID(null); setDirectory(d); void openProject(d)
+                            void openFolder(d)
                           }}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
                           <span className="nm">{name}</span>
@@ -2550,10 +2571,7 @@ export default function Home() {
                       <>
                         <p className="dk-empty-line">kell works in one folder at a time. Open a folder, then describe the task — the changes come back as a diff you can undo.</p>
                         <div className="dk-row" style={{ margin: 0 }}>
-                          <button type="button" className="btn-ink" onClick={async () => {
-                            if (!desktop()?.pickFolder) { void openProject(); return }
-                            const d = await desktop()?.pickFolder?.(); if (d) { setDirectory(d); setSideView("project"); void openProject(d) }
-                          }}>Open a folder</button>
+                          <button type="button" className="btn-ink" onClick={() => void openFolder()}>Open a folder</button>
                         </div>
                       </>
                     )}
