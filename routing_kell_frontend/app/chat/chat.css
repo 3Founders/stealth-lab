@@ -1524,7 +1524,7 @@ span.dg-replyq { cursor: default; }
 .dg-way-head > span { font-size: .85em; color: var(--grey); }
 .dg-way-goal { flex: none; max-width: 48%; font-size: .75em; color: var(--grey); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
-.dg-way-strip { list-style: none; margin: 0 -16px; padding: 2px 16px 8px; display: flex; gap: 8px; overflow-x: auto;
+.dg-way-strip { list-style: none; margin: 0 -16px; padding: 2px 16px 8px; display: flex; align-items: flex-start; gap: 8px; overflow-x: auto;
   scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: thin; }
 .dg-way-strip::-webkit-scrollbar { height: 6px; }
 .dg-way-strip::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 999px; }
@@ -1547,6 +1547,25 @@ span.dg-replyq { cursor: default; }
 .dg-way-meta i.dg-way-goal { color: var(--ink); border-color: var(--rule-strong); }
 .dg-way-best { font-size: .72em; letter-spacing: .06em; text-transform: uppercase; background: var(--yellow);
   color: #171717; border-radius: 3px; padding: 2px 6px 1px; flex: none; }
+/* The Way's full record: expanded from the card's Details, without choosing it (2026-11-17). */
+.dg-way-item[data-open] { border-color: var(--rule-strong); }
+.dg-way-more { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 0;
+  font: inherit; font-size: .72em; color: var(--grey); background: none; border: 0; cursor: pointer; }
+.dg-way-more:hover { color: var(--ink); }
+.dg-way-more:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
+.dg-way-more svg { transition: transform .16s var(--dg-micro, ease); }
+.dg-way-more svg[data-open] { transform: rotate(180deg); }
+.dg-way-detail { grid-column: 1 / -1; display: grid; gap: 6px; margin-top: 2px; padding-top: 7px; border-top: 1px solid var(--rule);
+  animation: dg-rise 320ms var(--dg-smooth) backwards; }
+.dg-way-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin: 0; font-size: .72em; line-height: 1.4; }
+.dg-way-dl dt { color: var(--grey); }
+.dg-way-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.dg-way-detail-why { margin: 0; font-size: .72em; line-height: 1.4; color: var(--grey); }
+.dg-way-detail-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.dg-way-detail-steps li { display: flex; gap: 5px; font-size: .72em; line-height: 1.35; color: var(--ink); }
+.dg-way-detail-steps .n { flex: none; color: var(--grey); font-variant-numeric: tabular-nums; }
+.dg-way-detail-steps .t { min-width: 0; }
+.dg-way-detail-steps .k { display: block; color: var(--grey); font-size: .68em; }
 .dg-way-btn { display: inline-flex; align-items: center; gap: 10px; background: var(--ink); color: var(--paper);
   font: inherit; font-size: .9em; padding: 5px 5px 5px 12px; border-radius: 8px; border: 0; cursor: pointer; flex: none; }
 .dg-way-btn .sq { display: grid; place-items: center; width: 22px; height: 22px; background: var(--yellow);
@@ -1581,7 +1600,7 @@ span.dg-replyq { cursor: default; }
   .dg-way-item { grid-template-columns: 40px minmax(0, 1fr) auto; }
   .dg-way-best { grid-column: 2; grid-row: 2; justify-self: start; }
 }
-@media (prefers-reduced-motion: reduce) { .dg-way-card, .dg-way-steps li, .dg-way-steps li[data-state="running"] .dg-way-dot { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .dg-way-card, .dg-way-steps li, .dg-way-steps li[data-state="running"] .dg-way-dot, .dg-way-detail, .dg-way-more svg { animation: none !important; transition: none !important; } }
 
 /* Direct / Auto / Ask: the procedure mode above the message box (the desktop app has the same switch). The thumb
    slides on the smooth spring; transform and opacity only, and the reduced-motion rule below removes it. */

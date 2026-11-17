@@ -5,7 +5,9 @@
 // The card follows the rooms' tool sign-in card (components/chat/RoomView.tsx, .dg-signin-* in the website's chat.css):
 // a gradient icon tile, a title, one line of supporting text, a metadata row, a "Best fit" badge on the first, and one
 // dark action with the yellow arrow. Several Ways scroll sideways, one snap per card, instead of growing the sidebar
-// downwards (2026-11-16). The whole card is the target.
+// downwards (2026-11-16). Each card can be expanded to read the Way's full record (id, Goal, approval and review, the
+// tool, why it fits, and every step) without choosing it (2026-11-17). The whole top of the card is the target.
+import { useState } from "react"
 import type { Delegation, GoalOption, WayOption } from "@/lib/plan"
 
 const short = (id?: string) => (id ? id.slice(0, 8) : "")
@@ -27,6 +29,47 @@ function WayIcon() {
   )
 }
 
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" data-open={open || undefined}>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  )
+}
+
+/** One Way's full record: what it is, who approved it, and every step it would run. */
+function WayDetails({ option }: { option: WayOption }) {
+  return (
+    <div className="dk-pick-detail">
+      <dl className="dk-pick-dl">
+        <dt>Way</dt><dd>{option.id}</dd>
+        {option.goal?.name && <><dt>Goal</dt><dd>{option.goal.name}{option.goal.id ? ` · ${option.goal.id}` : ""}</dd></>}
+        <dt>Approval</dt><dd>{option.approval.replace(/_/g, " ")}</dd>
+        {option.review && <><dt>Review</dt><dd>{option.review.replace(/_/g, " ")}</dd></>}
+        {option.tool && <><dt>Tool</dt><dd>{option.tool.name}{option.tool.server ? ` · ${option.tool.server}` : ""}</dd></>}
+        <dt>Steps</dt><dd>{option.steps.length}</dd>
+      </dl>
+      {option.why && <p className="dk-pick-detail-why">{option.why}</p>}
+      {option.steps.length > 0 && (
+        <ol className="dk-pick-steps" aria-label={`${option.steps.length} steps`}>
+          {option.steps.map((s, n) => (
+            <li key={`${s.order}-${n}`}>
+              <span className="n">{s.order}.</span>
+              <span className="t">
+                {s.title}
+                {(s.kind || s.tool || s.note) && (
+                  <span className="k">{[s.kind, s.tool, s.note].filter(Boolean).join(" · ")}</span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  )
+}
+
 export default function ProcedurePicker({ goal, options, goals = [], onPick, onSkip }: {
   goal: Delegation["goal"]
   options: WayOption[]
@@ -36,6 +79,8 @@ export default function ProcedurePicker({ goal, options, goals = [], onPick, onS
   onSkip: () => void
 }) {
   const empty = options.length === 0
+  // One card open at a time: the strip stays short, and the open record is not repeated beside another open one.
+  const [open, setOpen] = useState<string | null>(null)
   return (
     <section className="dk-pick" aria-label={empty ? "Procedure search result" : "Choose a procedure"}>
       <div className="dk-pick-head">
@@ -68,31 +113,40 @@ export default function ProcedurePicker({ goal, options, goals = [], onPick, onS
         <div className="dk-pick-strip" role="group" aria-label="Ways to apply">
           {options.map((o, i) => {
             const hue = hueOf(o.name || o.id)
+            const key = `${o.id}-${i}`
+            const isOpen = open === key
             return (
-              <button key={`${o.id}-${i}`} type="button" className="dk-pick-card"
-                style={{ ["--i" as any]: i }}
-                onClick={() => onPick(o)} aria-label={`Use ${o.name}`}>
-                <span className="dk-pick-icon" aria-hidden="true"
-                  style={{ background: `linear-gradient(145deg, hsl(${hue} 62% 42%), hsl(${hue + 38} 62% 30%))` }}>
-                  <WayIcon />
-                </span>
-                <span className="dk-pick-body">
-                  <span className="dk-pick-title">
-                    <b title={o.name}>{o.name}</b>
-                    {i === 0 && <span className="dk-pick-best">Best fit</span>}
+              <div key={key} className="dk-pick-card" data-open={isOpen || undefined} style={{ ["--i" as any]: i }}>
+                <button type="button" className="dk-pick-main" onClick={() => onPick(o)} aria-label={`Use ${o.name}`}>
+                  <span className="dk-pick-icon" aria-hidden="true"
+                    style={{ background: `linear-gradient(145deg, hsl(${hue} 62% 42%), hsl(${hue + 38} 62% 30%))` }}>
+                    <WayIcon />
                   </span>
-                  {o.why && <span className="dk-pick-why" title={o.why}>{o.why}</span>}
-                  <span className="dk-pick-meta">
-                    {o.goal?.name && <i className="dk-pick-goal" title={o.goal.name}>{o.goal.name}</i>}
-                    <i data-approval={o.approval}>{o.approval}</i>
-                    {o.review && o.review !== o.approval && <i data-approval={o.review}>{o.review.replace(/_/g, " ")}</i>}
-                    <i>{o.steps.length} {o.steps.length === 1 ? "step" : "steps"}</i>
-                    {o.tool && <i className="dk-pick-tool" title={o.tool.server || o.tool.name}>{o.tool.name}</i>}
-                    {o.id && <i className="dk-pick-id">{short(o.id)}</i>}
+                  <span className="dk-pick-body">
+                    <span className="dk-pick-title">
+                      <b title={o.name}>{o.name}</b>
+                      {i === 0 && <span className="dk-pick-best">Best fit</span>}
+                    </span>
+                    {o.why && <span className="dk-pick-why" title={o.why}>{o.why}</span>}
+                    <span className="dk-pick-meta">
+                      {o.goal?.name && <i className="dk-pick-goal" title={o.goal.name}>{o.goal.name}</i>}
+                      <i data-approval={o.approval}>{o.approval}</i>
+                      {o.review && o.review !== o.approval && <i data-approval={o.review}>{o.review.replace(/_/g, " ")}</i>}
+                      <i>{o.steps.length} {o.steps.length === 1 ? "step" : "steps"}</i>
+                      {o.tool && <i className="dk-pick-tool" title={o.tool.server || o.tool.name}>{o.tool.name}</i>}
+                      {o.id && <i className="dk-pick-id">{short(o.id)}</i>}
+                    </span>
                   </span>
-                </span>
-                <span className="dk-pick-cta" aria-hidden="true">Use<span className="sq">→</span></span>
-              </button>
+                  <span className="dk-pick-cta" aria-hidden="true">Use<span className="sq">→</span></span>
+                </button>
+                <div className="dk-pick-foot">
+                  <button type="button" className="dk-pick-toggle" aria-expanded={isOpen}
+                    onClick={() => setOpen(isOpen ? null : key)}>
+                    {isOpen ? "Hide details" : "Details"}<Chevron open={isOpen} />
+                  </button>
+                </div>
+                {isOpen && <WayDetails option={o} />}
+              </div>
             )
           })}
         </div>

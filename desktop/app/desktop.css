@@ -415,21 +415,43 @@
   border: 1px solid var(--rule); color: var(--grey); max-width: 100%; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .dk-pick-goal-chip[data-has-way] { color: var(--ink); border-color: var(--rule-strong); }
-.dk-pick-strip { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+.dk-pick-strip { display: flex; align-items: flex-start; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
   margin-inline: -12px; padding: 2px 12px 8px; scrollbar-width: thin; }
 .dk-pick-strip::-webkit-scrollbar { height: 6px; }
 .dk-pick-strip::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 999px; }
-.dk-pick-card { all: unset; box-sizing: border-box; flex: 0 0 min(300px, 84%); scroll-snap-align: start; cursor: pointer;
-  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 9px; align-items: center;
-  padding: 10px; border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface);
-  color: var(--ink); font: inherit; text-align: left;
+/* The card is a panel, not a button: the top picks the Way, the foot expands its record. */
+.dk-pick-card { box-sizing: border-box; flex: 0 0 min(300px, 84%); scroll-snap-align: start;
+  display: flex; flex-direction: column; padding: 10px; border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface);
+  color: var(--ink);
   transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
               box-shadow var(--dg-micro-d, 160ms) var(--dg-micro, ease);
   animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards;
   animation-delay: calc(var(--i, 0) * 60ms); }
 .dk-pick-card:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.10); }
-.dk-pick-card:active { transform: scale(.99); }
-.dk-pick-card:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dk-pick-card[data-open] { border-color: var(--ink); }
+.dk-pick-main { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 9px; align-items: center; cursor: pointer; border-radius: 8px;
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-pick-main:active { transform: scale(.995); }
+.dk-pick-main:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dk-pick-foot { display: flex; justify-content: flex-end; margin-top: 4px; }
+.dk-pick-toggle { all: unset; display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 5px;
+  font-size: 10.5px; color: var(--grey); cursor: pointer; transition: color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-pick-toggle:hover { color: var(--ink); }
+.dk-pick-toggle:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-pick-toggle svg { transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-pick-toggle svg[data-open] { transform: rotate(180deg); }
+.dk-pick-detail { margin-top: 6px; padding-top: 7px; border-top: 1px solid var(--rule); display: grid; gap: 6px;
+  animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
+.dk-pick-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin: 0; font-size: 10.5px; line-height: 1.4; }
+.dk-pick-dl dt { color: var(--grey); }
+.dk-pick-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.dk-pick-detail-why { margin: 0; font-size: 10.5px; line-height: 1.4; color: var(--grey); }
+.dk-pick-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.dk-pick-steps li { display: flex; gap: 5px; font-size: 10.5px; line-height: 1.35; color: var(--ink); }
+.dk-pick-steps .n { flex: none; color: var(--grey); font-variant-numeric: tabular-nums; }
+.dk-pick-steps .t { min-width: 0; }
+.dk-pick-steps .k { display: block; color: var(--grey); font-size: 9.5px; }
 .dk-pick-icon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: #fff;
   box-shadow: 0 4px 12px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.35) inset; }
 .dk-pick-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -460,7 +482,7 @@
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .dk-pick { background: var(--surface); }
 }
-@media (prefers-reduced-motion: reduce) { .dk-pick, .dk-pick-card { animation: none !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .dk-pick, .dk-pick-card, .dk-pick-detail, .dk-pick-main, .dk-pick-toggle svg { animation: none !important; transition: none !important; } }
 
 /* Direct / Auto / Ask: the procedure mode, in the row above the message box (chat.css already floats
    .dg-composer-meta there). The thumb slides between the three labels on the smooth spring; transform only, and the
@@ -761,25 +783,33 @@
 /* Sessions under their project. */
 .dk-recents li { grid-template-columns: minmax(0, 1fr) auto; }
 .dk-sess { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 1px; padding: 0 4px 6px 22px; }
-/* A row is the open button plus a rename pencil, so the pencil is a real button (a button inside a button is not). */
-.dk-sess-row { box-sizing: border-box; display: flex; align-items: center; gap: 2px; padding: 0 2px 0 0;
+/* A row is the open button plus a rename pencil that only takes room on hover: when hidden it must not leave a gap
+   between the chat's time and the sidebar's edge (2026-11-17). */
+.dk-sess-row { position: relative; box-sizing: border-box; display: flex; align-items: center; padding: 0;
   border-radius: 6px; font-size: 13px; color: var(--text-2, var(--ink)); min-width: 0; }
-.dk-sess-row > .dk-sess-open { all: unset; box-sizing: border-box; flex: 1 1 0; min-width: 0; display: flex; align-items: center;
+.dk-sess-row > .dk-sess-open { all: unset; box-sizing: border-box; flex: 1 1 auto; min-width: 0; display: flex; align-items: center;
   justify-content: space-between; gap: 8px; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .dk-sess-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-sess-row .when { flex: none; color: var(--grey); font-size: 11px; }
+.dk-sess-row .when { flex: none; margin-left: auto; color: var(--grey); font-size: 11px;
+  transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-sess-row:hover { background: var(--paper, rgba(0,0,0,.04)); }
 .dk-sess-row[data-here] { background: var(--paper, rgba(0,0,0,.06)); color: var(--ink); }
 .dk-sess-row:disabled { cursor: default; }
-/* Rename: a pencil on the row, shown on hover or focus, always on touch screens. */
-.dk-sess-rename { all: unset; flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px;
-  color: var(--grey); cursor: pointer; opacity: 0;
-  transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease), background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
-.dk-sess-row:hover .dk-sess-rename, .dk-sess-row:focus-within .dk-sess-rename { opacity: 1; }
+/* Rename: a pencil over the row's right edge, shown on hover or focus; the time fades under it, so the row never keeps
+   an empty 22px column when the pencil is away. */
+.dk-sess-row:hover .when, .dk-sess-row:focus-within .when { opacity: 0; }
+.dk-sess-rename { all: unset; position: absolute; right: 2px; top: 50%; transform: translateY(-50%) translateX(3px);
+  display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; color: var(--grey); cursor: pointer; opacity: 0;
+  transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-sess-row:hover .dk-sess-rename, .dk-sess-row:focus-within .dk-sess-rename { opacity: 1; transform: translateY(-50%) translateX(0); }
 .dk-sess-rename:hover { background: rgba(0,0,0,.07); color: var(--ink); }
-.dk-sess-rename:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; opacity: 1; }
-@media (hover: none) { .dk-sess-rename { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .dk-sess-rename { transition: none; } }
+.dk-sess-rename:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; opacity: 1; transform: translateY(-50%); }
+@media (hover: none) {
+  .dk-sess-rename { opacity: 1; transform: translateY(-50%); }
+  .dk-sess-row .when { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .dk-sess-rename, .dk-sess-row .when { transition: none; } }
 .dk-sess-renaming { padding: 2px 4px; }
 .dk-sess-renaming .dk-sess-name { all: unset; box-sizing: border-box; width: 100%; font: inherit; font-size: 13px; padding: 3px 7px;
   border: 1px solid var(--cobalt); border-radius: 5px; background: var(--surface, #fff); color: var(--ink); }

@@ -311,6 +311,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, []);
   /** pickWay is declared after askKell (it needs the line store); the ref lets Auto call it without a re-wiring loop. */
   const pickWayRef = useRef<((r: string, line: WayLine, way: WayChoice) => Promise<void>) | null>(null);
+  /** The Way cards expanded to their full record, by chat line and card index (2026-11-17). */
+  const [openWays, setOpenWays] = useState<Record<string, true>>({});
+  const toggleWay = useCallback((key: string) => setOpenWays((p) => {
+    const n = { ...p };
+    if (n[key]) delete n[key]; else n[key] = true;
+    return n;
+  }), []);
   /** Your thumbs on the agent's answers, by message id: sent to the server (it moves the tools those answers used) and kept on this
    *  device so the buttons show what you chose. */
   const [votes, setVotes] = useState<Record<string, -1 | 1>>({});
@@ -802,8 +809,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 {l.ways.map((w, i) => {
                   const picked = st.picked === w.id;
                   const hue = wayHue(w.name);
+                  const key = `${l.id}-${i}`;
+                  const open = !!openWays[key];
                   return (
-                    <li key={`${w.id}-${i}`} className="dg-way-item" data-picked={picked || undefined}>
+                    <li key={key} className="dg-way-item" data-picked={picked || undefined} data-open={open || undefined}>
                       <span className="dg-way-icon" aria-hidden="true"
                         style={{ background: `linear-gradient(145deg, hsl(${hue} 62% 42%), hsl(${hue + 38} 62% 30%))` }}>
                         <span className="dg-way-mono">{(w.name || "?").trim().slice(0, 1).toUpperCase()}</span>
@@ -817,6 +826,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                           <i>{w.steps.length} {w.steps.length === 1 ? "step" : "steps"}</i>
                           {w.tool && <i className="dg-way-tool" title={w.tool}>{w.tool}</i>}
                         </span>
+                        <button type="button" className="dg-way-more" aria-expanded={open} onClick={() => toggleWay(key)}>
+                          {open ? "Hide details" : "Details"}
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" data-open={open || undefined}>
+                            <path d="m6 9 6 6 6-6" />
+                          </svg>
+                        </button>
                       </span>
                       {i === 0 && l.ways.length > 1 ? <span className="dg-way-best">Best fit</span> : null}
                       {picked ? (
@@ -851,6 +867,29 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                           ))}
                         </ol>
                       ) : null}
+                      {open && (
+                        <div className="dg-way-detail">
+                          <dl className="dg-way-dl">
+                            <dt>Way</dt><dd>{w.id}</dd>
+                            {w.goal?.name && <><dt>Goal</dt><dd>{w.goal.name}{w.goal.id ? ` · ${w.goal.id}` : ""}</dd></>}
+                            <dt>Approval</dt><dd>{w.approval.replace(/_/g, " ")}</dd>
+                            {w.review && <><dt>Review</dt><dd>{w.review.replace(/_/g, " ")}</dd></>}
+                            {w.tool && <><dt>Tool</dt><dd>{w.tool}</dd></>}
+                            <dt>Steps</dt><dd>{w.steps.length}</dd>
+                          </dl>
+                          {w.why && <p className="dg-way-detail-why">{w.why}</p>}
+                          {!picked && w.steps.length > 0 && (
+                            <ol className="dg-way-detail-steps" aria-label={`${w.steps.length} steps`}>
+                              {w.steps.map((s, n) => (
+                                <li key={`${s.order}-${n}`}>
+                                  <span className="n">{s.order}.</span>
+                                  <span className="t">{s.title}{s.kind ? <span className="k">{s.kind}</span> : null}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          )}
+                        </div>
+                      )}
                     </li>
                   );
                 })}
