@@ -68,7 +68,18 @@
       "maintainer": "kell <https://www.kell.org.in>",
       "synopsis": "kell: the cheapest model that can do it, with the right tool",
       "artifactName": "kell-${version}-${arch}.${ext}",
-      "executableName": "kell"
+      "executableName": "kell",
+      "files": [
+        "!node_modules/@opencode/cli-linux-x64-baseline/**",
+        "!node_modules/@opencode/cli-linux-x64-musl/**",
+        "!node_modules/@opencode/cli-linux-x64-baseline-musl/**",
+        "!node_modules/@opencode/cli-linux-arm64/**",
+        "!node_modules/@opencode/cli-linux-arm64-musl/**",
+        "!node_modules/node-pty/prebuilds/darwin-arm64/**",
+        "!node_modules/node-pty/prebuilds/darwin-x64/**",
+        "!node_modules/node-pty/prebuilds/win32-arm64/**",
+        "!node_modules/node-pty/prebuilds/win32-x64/**"
+      ]
     },
     "deb": {
       "depends": ["libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils", "libatspi2.0-0", "libuuid1", "libsecret-1-0"]
