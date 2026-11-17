@@ -5,6 +5,11 @@ name: Desktop Linux build
 # documents, the app and its features, AppImage, .deb install, the one-line installer). Started by hand.
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Attach the Linux files to this kell-desktop release (e.g. v0.1.29); empty = build and check only"
+        required: false
+        default: ""
   push:
     branches: [desktop-linux]
 
@@ -42,6 +47,22 @@ jobs:
       - name: Check everything a Linux user touches
         working-directory: desktop
         run: bash scripts/linux-smoke.sh
+      # Publishing from here, not from a laptop: the release files are hundreds of MB, and some networks cannot download them back
+      # from GitHub's file storage (2026-11-18). Needs the KELL_RELEASES_TOKEN secret (contents: write on AnujB05/kell-desktop only).
+      - name: Attach to the kell-desktop release
+        if: ${{ success() && github.event.inputs.release_tag != '' }}
+        working-directory: desktop/release
+        env:
+          GH_TOKEN: ${{ secrets.KELL_RELEASES_TOKEN }}
+          TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "KELL_RELEASES_TOKEN is not set: nothing published"; exit 1; }
+          apt-get install -y -qq --no-install-recommends gh >/dev/null 2>&1 || {
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+            apt-get update -qq && apt-get install -y -qq gh >/dev/null; }
+          gh release upload "$TAG" kell-*-x86_64.AppImage kell-*-amd64.deb latest-linux.yml --repo AnujB05/kell-desktop --clobber
+          gh release view "$TAG" --repo AnujB05/kell-desktop --json assets --jq '[.assets[].name]|join(", ")'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
