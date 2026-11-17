@@ -25,7 +25,7 @@ newer. Everything is in place and the last full check passed except for the one 
 | node-pty on 20.04 | **Done.** Rebuilt from source with 20.04's own `g++-10` (Electron 45's headers need C++20; stock g++ 9 has no `-std=gnu++20`). |
 | AppImage + `.deb` + `latest-linux.yml` | **Done.** Built by `npm run dist:linux`, kept as the `kell-linux` artifact. |
 | `desktop/scripts/linux-smoke.sh` | **Done.** The five checks that failed were bugs in this script, not the app; fixed in `da827b7d`. |
-| Package size | **Staged and committed, not yet confirmed by a build.** See section 2. |
+| Package size | **Done (2026-11-18).** Run 44171988029 on `main`: AppImage 437 → 392 MB, `.deb` 549 → 287 MB, all checks green, `PASS node-pty spawns a shell`. |
 
 ## 2. The size item: closed (2026-11-17)
 
