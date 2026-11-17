@@ -40,7 +40,17 @@ async function fileServerLink(id: number): Promise<string> {
   } catch { return ""; }
 }
 
-export async function GET() {
+/** Which installer: Windows' .exe by default; ?os=linux gives the AppImage, ?os=linux&format=deb the Debian/Ubuntu package
+ *  (2026-11-17, Linux builds). */
+function assetPattern(req?: Request): RegExp {
+  const q = new URL(req?.url || "https://www.kell.org.in/download").searchParams;
+  const os = (q.get("os") || "").toLowerCase();
+  if (os === "linux") return (q.get("format") || "").toLowerCase() === "deb" ? /^kell-.*-amd64\.deb$/i : /^kell-.*-x86_64\.AppImage$/i;
+  return /^kell-Setup-.*\.exe$/i;
+}
+
+export async function GET(req?: Request) {
+  const want = assetPattern(req);
   try {
     const r = await fetch(`${API}/releases/latest`, {
       headers: { accept: "application/vnd.github+json", "user-agent": "kell-site" },
@@ -49,7 +59,7 @@ export async function GET() {
     });
     if (r.ok) {
       const j = await r.json();
-      const asset: Asset | undefined = (j?.assets ?? []).find((a: Asset) => /^kell-Setup-.*\.exe$/i.test(a?.name ?? ""));
+      const asset: Asset | undefined = (j?.assets ?? []).find((a: Asset) => want.test(a?.name ?? ""));
       const url = asset?.browser_download_url;
       if (typeof url === "string" && url.startsWith(`https://github.com/${DESKTOP_RELEASES_REPO}/`)) {
         if (await answers(url) || typeof asset?.id !== "number") {

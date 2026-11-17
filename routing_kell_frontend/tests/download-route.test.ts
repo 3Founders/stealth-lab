@@ -45,4 +45,18 @@ describe("/download", () => {
     vi.stubGlobal("fetch", vi.fn(async () => release([{ name: "kell-Setup-1.exe", browser_download_url: "https://evil.example/x.exe" }])));
     expect((await GET()).headers.get("location")).toBe("https://github.com/AnujB05/kell-desktop/releases/latest");
   });
+
+  it("gives Linux the AppImage, or the .deb when asked, and Windows stays the default", async () => {
+    const base = "https://github.com/AnujB05/kell-desktop/releases/download/v0.2.0/"
+    vi.stubGlobal("fetch", vi.fn(async () => release([
+      { name: "kell-Setup-0.2.0.exe", browser_download_url: base + "kell-Setup-0.2.0.exe" },
+      { name: "kell-0.2.0-x86_64.AppImage", browser_download_url: base + "kell-0.2.0-x86_64.AppImage" },
+      { name: "kell-0.2.0-amd64.deb", browser_download_url: base + "kell-0.2.0-amd64.deb" },
+      { name: "latest-linux.yml", browser_download_url: base + "latest-linux.yml" },
+    ])));
+    const at = (q: string) => GET(new Request(`https://www.kell.org.in/download${q}`)).then((r) => r.headers.get("location"));
+    expect(await at("?os=linux")).toBe(base + "kell-0.2.0-x86_64.AppImage");
+    expect(await at("?os=linux&format=deb")).toBe(base + "kell-0.2.0-amd64.deb");
+    expect(await at("")).toBe(base + "kell-Setup-0.2.0.exe");
+  });
 });

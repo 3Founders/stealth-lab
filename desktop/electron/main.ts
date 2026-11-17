@@ -25,6 +25,9 @@ const ROOT = path.join(__dirname, "..", "..") // desktop/ (main.js compiles to e
 // Windows shows a notification under the app's own name only when it has an AppUserModelID; the installed shortcut uses
 // this one, so a finished chat's notice is attributed to kell instead of a generic Electron window (2026-11-17).
 if (process.platform === "win32") app.setAppUserModelId("org.kell.desktop")
+// Linux AppImage: Ubuntu 24.04+ forbids the unprivileged namespaces Chromium's sandbox needs inside an AppImage, so the app would
+// exit at once with a SUID-sandbox error. The .deb installs chrome-sandbox setuid and keeps the sandbox; only the AppImage turns it off.
+if (process.platform === "linux" && process.env.APPIMAGE) app.commandLine.appendSwitch("no-sandbox")
 let win: BrowserWindow | undefined
 let next: ChildProcess | undefined
 

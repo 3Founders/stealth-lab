@@ -10,6 +10,8 @@ export const SETUP_COMMAND = "npx -y kell-mcp setup";
 // and Windows PowerShell 5.1's Invoke-RestMethod does not follow a 308, so the apex would fail for the people most
 // likely to run this. Keep this string and public/desktop.ps1's own default site on the same host.
 export const DESKTOP_INSTALL_COMMAND = "irm https://www.kell.org.in/desktop.ps1 | iex";
+// Linux (x86_64): the AppImage into ~/.local/bin with a menu entry (public/desktop.sh, 2026-11-17).
+export const DESKTOP_INSTALL_COMMAND_LINUX = "curl -fsSL https://www.kell.org.in/desktop.sh | sh";
 
 export function installPrompt(platform: InstallPlatform): string {
   return platform === "windows" ? "PS> " : "$ ";

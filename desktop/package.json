@@ -2,6 +2,8 @@
   "name": "kell-desktop",
   "version": "0.1.28",
   "private": true,
+  "description": "kell desktop: the cheapest model that can do it, with the right tool",
+  "homepage": "https://www.kell.org.in",
   "main": "electron/dist/main.js",
   "scripts": {
     "dev": "next dev -p 3400",
@@ -11,7 +13,8 @@
     "start": "next start -p 3400",
     "electron:build": "tsc -p electron",
     "predist": "node scripts/seed-electron-checksums.mjs",
-    "dist": "npm run build && npm run electron:build && electron-builder --win nsis --publish never"
+    "dist": "npm run build && npm run electron:build && electron-builder --win nsis --publish never",
+    "dist:linux": "npm run build && npm run electron:build && electron-builder --linux AppImage deb --publish never"
   },
   "build": {
     "appId": "org.kell.desktop",
@@ -57,6 +60,17 @@
     ],
     "win": {
       "target": "nsis"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Development",
+      "maintainer": "kell <https://www.kell.org.in>",
+      "synopsis": "kell: the cheapest model that can do it, with the right tool",
+      "artifactName": "kell-${version}-${arch}.${ext}",
+      "executableName": "kell"
+    },
+    "deb": {
+      "depends": ["libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils", "libatspi2.0-0", "libuuid1", "libsecret-1-0"]
     },
     "nsis": {
       "oneClick": true,
