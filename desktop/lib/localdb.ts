@@ -223,6 +223,26 @@ export function renameSession(id: string, title: string): boolean {
   return true
 }
 
+/**
+ * Delete a chat from the app's own store: its messages (the FTS index follows through the triggers), their attachments,
+ * its summaries, then the session row. The engine's copy is removed by the route that calls this (2026-11-17).
+ */
+export function deleteSession(id: string): boolean {
+  const d = open()
+  d.exec("BEGIN")
+  try {
+    d.prepare("delete from attachments where message_id in (select id from messages where session_id = ?)").run(id)
+    d.prepare("delete from summaries where session_id = ?").run(id)
+    d.prepare("delete from messages where session_id = ?").run(id)
+    const info = d.prepare("delete from sessions where id = ?").run(id)
+    d.exec("COMMIT")
+    return Number(info.changes) > 0
+  } catch (e) {
+    try { d.exec("ROLLBACK") } catch { /* already rolled back */ }
+    throw e
+  }
+}
+
 export function messageCount(sessionId: string): number {
   const d = open()
   const r = d.prepare("select count(*) as n from messages where session_id = ?").get(sessionId) as { n: number }

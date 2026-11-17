@@ -1121,6 +1121,29 @@ export default function Home() {
     } finally { renameSaving.current = false }
   }
 
+  // The row's "..." menu: Rename and Delete. It is fixed at the button's place, so the sidebar's own scroll cannot
+  // clip it (2026-11-17).
+  const [sessMenu, setSessMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [sessDelete, setSessDelete] = useState<string | null>(null)
+  const openSessMenu = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setSessMenu({
+      id,
+      x: Math.min(window.innerWidth - 196, Math.max(8, r.right - 184)),
+      y: Math.min(window.innerHeight - 120, r.bottom + 4),
+    })
+    setSessDelete(null)
+  }
+  useEffect(() => {
+    if (!sessMenu) return
+    const away = (e: PointerEvent) => { if (!(e.target as Element | null)?.closest?.(".dk-sess-menu")) setSessMenu(null) }
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { setSessMenu(null); setSessDelete(null) } }
+    document.addEventListener("pointerdown", away)
+    document.addEventListener("keydown", esc)
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc) }
+  }, [sessMenu])
+
   const sessionRow = (x: { id: string; title: string; updated: number }) => (
     renaming?.id === x.id ? (
       <form key={x.id} className="dk-sess-row dk-sess-renaming" onSubmit={(e) => { e.preventDefault(); void commitRename() }}>
@@ -1140,9 +1163,12 @@ export default function Home() {
             ? <span className="dk-sess-live" role="img" aria-label="Answering" title="kell is still answering in this chat"><span className="dg-pulse" aria-hidden="true" /></span>
             : <span className="when">{x.updated ? when(x.updated) : ""}</span>}
         </button>
-        <button type="button" className="dk-sess-rename" aria-label={`Rename ${x.title || "this chat"}`} title="Rename this chat"
-          onClick={(e) => { e.stopPropagation(); startRename(x) }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+        <button type="button" className="dk-sess-more-btn" aria-label={`Actions for ${x.title || "this chat"}`}
+          title="More actions" aria-haspopup="menu" aria-expanded={sessMenu?.id === x.id || undefined}
+          onClick={(e) => openSessMenu(e, x.id)} onDoubleClick={(e) => e.stopPropagation()}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" />
+          </svg>
         </button>
       </div>
     )
@@ -1922,6 +1948,26 @@ export default function Home() {
   }
 
   const appendNote = (text: string) => setLines((l) => [...l, { who: "assistant", text, at: Date.now() }])
+
+  // Delete a chat: stop its turn if it is running, remove it from the app's store and the engine, and leave the pane on
+  // a new chat when it was the one open (2026-11-17).
+  const deleteChat = async (id: string) => {
+    setSessMenu(null); setSessDelete(null)
+    const title = sessionsRef.current.find((s) => s.id === id)?.title || "the chat"
+    if (runningRef.current[id]) {
+      try { await fetch("/api/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: id }) }) } catch { /* it goes anyway */ }
+    }
+    try {
+      const r = await fetch("/api/sessions/delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || `the delete answered ${r.status}`)
+      endTurn(id)
+      if (id === sessionID) newSession()
+      setSessions((list) => list.filter((x) => x.id !== id))   // the sidebar is the app's store; no reload can re-add it
+    } catch (err) {
+      appendNote(`Could not delete ${title}: ${String((err as any)?.message || err)}`)
+    }
+  }
 
   // Undo: put the session's changed files back as they were before its last turn (OpenCode's snapshot of that turn), or
   // `kell undo` for a dispatched answer. A second click only when a file was edited since -- that edit would be dropped.
@@ -3351,6 +3397,26 @@ export default function Home() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {sessMenu && (
+        // A session row's actions: Rename or Delete. Delete asks once, in place, because it cannot be undone.
+        <div className="dk-sess-menu" role="menu" style={{ left: sessMenu.x, top: sessMenu.y }}>
+          {sessDelete === sessMenu.id ? (
+            <div className="dk-sess-confirm">
+              <p>Delete this chat?</p>
+              <span>Its messages are removed from this app and the engine. This cannot be undone.</span>
+              <div>
+                <button type="button" className="btn-line dg-mini" autoFocus onClick={() => setSessDelete(null)}>Cancel</button>
+                <button type="button" className="dk-danger dg-mini" onClick={() => void deleteChat(sessMenu.id)}>Delete</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <button type="button" role="menuitem" autoFocus onClick={() => { const id = sessMenu.id; setSessMenu(null); startRename({ id }) }}>Rename</button>
+              <button type="button" role="menuitem" className="dk-danger" onClick={() => setSessDelete(sessMenu.id)}>Delete</button>
+            </>
+          )}
         </div>
       )}
       {doneNote && (

@@ -832,21 +832,38 @@
 .dk-sess-row:hover { background: var(--paper, rgba(0,0,0,.04)); }
 .dk-sess-row[data-here] { background: var(--paper, rgba(0,0,0,.06)); color: var(--ink); }
 .dk-sess-row:disabled { cursor: default; }
-/* Rename: a pencil over the row's right edge, shown on hover or focus; the time fades under it, so the row never keeps
-   an empty 22px column when the pencil is away. */
+/* More actions: a "..." over the row's right edge, shown on hover or focus; the time fades under it, so the row never
+   keeps an empty column when the button is away. */
 .dk-sess-row:hover .when, .dk-sess-row:focus-within .when { opacity: 0; }
-.dk-sess-rename { all: unset; position: absolute; right: 2px; top: 50%; transform: translateY(-50%) translateX(3px);
+.dk-sess-more-btn { all: unset; position: absolute; right: 2px; top: 50%; transform: translateY(-50%) translateX(3px);
   display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; color: var(--grey); cursor: pointer; opacity: 0;
   transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease),
               background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
-.dk-sess-row:hover .dk-sess-rename, .dk-sess-row:focus-within .dk-sess-rename { opacity: 1; transform: translateY(-50%) translateX(0); }
-.dk-sess-rename:hover { background: rgba(0,0,0,.07); color: var(--ink); }
-.dk-sess-rename:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; opacity: 1; transform: translateY(-50%); }
+.dk-sess-row:hover .dk-sess-more-btn, .dk-sess-row:focus-within .dk-sess-more-btn { opacity: 1; transform: translateY(-50%) translateX(0); }
+.dk-sess-more-btn:hover { background: rgba(0,0,0,.07); color: var(--ink); }
+.dk-sess-more-btn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; opacity: 1; transform: translateY(-50%); }
 @media (hover: none) {
-  .dk-sess-rename { opacity: 1; transform: translateY(-50%); }
+  .dk-sess-more-btn { opacity: 1; transform: translateY(-50%); }
   .dk-sess-row .when { opacity: 0; }
 }
-@media (prefers-reduced-motion: reduce) { .dk-sess-rename, .dk-sess-row .when { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .dk-sess-more-btn, .dk-sess-row .when { transition: none; } }
+
+/* The row's actions: Rename or Delete, at the button's place so the sidebar's scroll cannot clip it. */
+.dk-sess-menu { position: fixed; z-index: 80; min-width: 184px; padding: 4px; border: 1px solid var(--rule-strong);
+  border-radius: 8px; background: var(--surface); color: var(--ink);
+  box-shadow: var(--dg-lift-hover, 0 10px 30px rgba(0,0,0,.18));
+  animation: dg-drop var(--dg-micro-d, 160ms) var(--dg-micro, ease) both; }
+.dk-sess-menu > button { display: block; width: 100%; text-align: left; padding: 7px 10px; border: 0; border-radius: 6px;
+  background: none; font: inherit; font-size: 12.5px; color: var(--ink); cursor: pointer; }
+.dk-sess-menu > button:hover, .dk-sess-menu > button:focus-visible { background: rgba(0,0,0,.06); outline: none; }
+.dk-sess-menu .dk-danger { color: #b42318; }
+.dk-sess-menu .dk-danger:hover { background: rgba(180,35,24,.08); }
+.dk-sess-confirm { display: grid; gap: 6px; padding: 8px 10px; max-width: 230px; }
+.dk-sess-confirm p { margin: 0; font-size: 12.5px; font-weight: 600; }
+.dk-sess-confirm span { font-size: 11px; line-height: 1.4; color: var(--grey); }
+.dk-sess-confirm div { display: flex; justify-content: flex-end; gap: 6px; }
+.dk-danger { color: #b42318; }
+@media (prefers-reduced-motion: reduce) { .dk-sess-menu { animation: none !important; } }
 .dk-sess-renaming { padding: 2px 4px; }
 .dk-sess-renaming .dk-sess-name { all: unset; box-sizing: border-box; width: 100%; font: inherit; font-size: 13px; padding: 3px 7px;
   border: 1px solid var(--cobalt); border-radius: 5px; background: var(--surface, #fff); color: var(--ink); }
@@ -878,13 +895,13 @@
 .dk-sess-more[open] > summary::before { transform: rotate(90deg); }
 /* The website's sidebar button lift (chat.css .dg-side button) is not for these rows; the open project's highlight stays on its own row. */
 .dg-page .dg-side .dk-recent, .dg-page .dg-side .dk-recent-x, .dg-page .dg-side .dk-sess-row,
-.dg-page .dg-side .dk-sess-open, .dg-page .dg-side .dk-sess-rename,
+.dg-page .dg-side .dk-sess-open, .dg-page .dg-side .dk-sess-more-btn,
 .dg-page .dg-side .dk-recent:hover, .dg-page .dg-side .dk-recent-x:hover, .dg-page .dg-side .dk-sess-row:hover,
-.dg-page .dg-side .dk-sess-open:hover, .dg-page .dg-side .dk-sess-rename:hover { box-shadow: none !important;   /* chat.css's rule carries four :not()s, so it outranks a plain override */ }
+.dg-page .dg-side .dk-sess-open:hover, .dg-page .dg-side .dk-sess-more-btn:hover { box-shadow: none !important;   /* chat.css's rule carries four :not()s, so it outranks a plain override */ }
 .dg-page .dg-side .dk-sess-row { background: transparent; border: 0; }
 .dg-page .dg-side .dk-sess-row:hover { background: rgba(0, 0, 0, .045); }
 .dg-page .dg-side .dk-sess-open, .dg-page .dg-side .dk-sess-open:hover { background: transparent; border: 0; }
-.dg-page .dg-side .dk-sess-rename:focus-visible { outline: 2px solid var(--cobalt) !important; }
+.dg-page .dg-side .dk-sess-more-btn:focus-visible { outline: 2px solid var(--cobalt) !important; }
 .dg-page .dg-side .dk-sess-row[data-here] { background: rgba(0, 0, 0, .07); color: var(--ink); }
 .dk-recents li[data-here] { background: none; }
 .dk-recents li[data-here] > .dk-recent { background: var(--soft, rgba(0,0,0,.05)); border-radius: 8px; }
