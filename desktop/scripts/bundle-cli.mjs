@@ -83,3 +83,29 @@ await esbuild({
 fs.writeFileSync(path.join(plug, "package.json"), JSON.stringify({ name: "kell-opencode-plugin", private: true, type: "module",
   main: "index.mjs" }, null, 2) + "\n")
 console.log(`bundle-cli: ${path.relative(path.resolve(here, ".."), plug)} (@opencode/plugin ${PLUGIN_VERSION}, ${Math.round(fs.statSync(path.join(plug, "index.mjs")).size / 1024)} KB)`)
+
+// kell-docs (scripts/kell-docs): Word, Excel, PowerPoint and PDF files for the engine, one self-contained bundle the engine runs through
+// the app's own runtime (lib/docs.ts puts a `kell-docs` command on its PATH). Its libraries are the app's own dependencies.
+const docsOut = path.resolve(here, "..", "vendor", "kell-docs")
+fs.rmSync(docsOut, { recursive: true, force: true })
+fs.mkdirSync(docsOut, { recursive: true })
+// pdfkit loads its 14 standard fonts with a runtime require of "#standard-fonts/<Name>", which a bundle cannot follow: rewrite those
+// calls into static imports so the fonts are inside the bundle.
+const pdfkitFonts = {
+  name: "pdfkit-fonts",
+  setup(b) {
+    b.onLoad({ filter: /pdfkit[\\/]js[\\/]pdfkit\.node\.mjs$/ }, async (args) => {
+      let src = fs.readFileSync(args.path, "utf8")
+      const names = new Set()
+      src = src.replace(/require\$1\('#standard-fonts\/(\w+)'\)/g, (_m, n) => { names.add(n); return `__font_${n}` })
+      const imports = [...names].map((n) => `import __font_${n} from "pdfkit/standard-fonts/${n}";`).join("\n")
+      return { contents: imports + "\n" + src, loader: "js", resolveDir: path.dirname(args.path) }
+    })
+  },
+}
+await esbuild({
+  entryPoints: [path.resolve(here, "kell-docs", "index.mjs")], outfile: path.join(docsOut, "kell-docs.mjs"),
+  bundle: true, platform: "node", format: "esm", target: "node20", logLevel: "warning", plugins: [pdfkitFonts],
+  banner: { js: 'import { createRequire as __kellRequire } from "node:module"; const require = __kellRequire(import.meta.url);' },
+})
+console.log(`bundle-cli: vendor/kell-docs (${Math.round(fs.statSync(path.join(docsOut, "kell-docs.mjs")).size / 1024)} KB)`)

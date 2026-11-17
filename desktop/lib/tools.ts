@@ -5,6 +5,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { freshSignIn } from "./signin"
+import { DOC_RULES } from "./docs"
 
 const config = () => {
   const home = process.env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab")
@@ -77,3 +78,18 @@ export const TOOL_RULES = [
   "If you need something only the person can tell you, ask in your reply and stop there. glob and grep skip files git ignores (.env files, "
   + "build output): before saying a file does not exist, check with the shell.",
 ].join("\n\n")
+
+// The chats folder (lib/home.ts): no project is open, so kell is a general assistant here (P0 #1, 2026-11-17).
+export const CHAT_RULES = [
+  "You are kell, a general assistant in kell's desktop app (not Claude Code and not Claude Desktop). No project is open: this turn runs in "
+  + "the person's chats folder. Answer questions, give advice, explain, write, plan and analyse directly in your reply. Do not explore, "
+  + "list or edit this folder unless the person asks about a file. Attached files may be anywhere on the computer: read them where they are.",
+  "kell looks each new task up before your turn and adds what it knows above (find_ways already ran for it). When this turn's delegation "
+  + "names a Way, run it with kell_run_way as the delegation says, one step at a time.",
+  "If you need something only the person can tell you, ask in your reply and stop there.",
+].join("\n\n")
+
+/** The rules for a turn in `directory`: the chats folder gets the assistant rules, a project the coding rules. */
+export const rulesFor = (isChats: boolean) => `${isChats ? CHAT_RULES : TOOL_RULES}
+
+${DOC_RULES}`

@@ -9,6 +9,7 @@ import path from "node:path"
 import type { OC, Client } from "./oc-types"
 import { pooledEngineConfig, personalEngineConfig, ownKeyLane } from "./pooled"
 import { freshSignIn } from "./signin"
+import { withDocsPath } from "./docs"
 
 export type { Client }
 
@@ -107,7 +108,8 @@ async function startEngine(directory: string): Promise<Engine> {
     state.child = spawn(exe, ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: directory, stdio: [null, "pipe", "pipe"],
       windowsHide: true,        // a console program started from a GUI app opens a visible black window on Windows without this
-      env: {
+      // withDocsPath: the bundled `kell-docs` command first on PATH (lib/docs.ts), so the engine can make real Office files.
+      env: withDocsPath({
         ...process.env,
         ...(pooled ? { ...pooled.env, OPENCODE_CONFIG_CONTENT: pooled.content, OPEN_MODEL_API_KEY: pooled.key } : {}),
         // RAM: a desktop coding session does not need a file watcher, a language server, update checks or sharing. The
@@ -122,7 +124,7 @@ async function startEngine(directory: string): Promise<Engine> {
         OPENCODE_DISABLE_TERMINAL_TITLE: "1",
         OPENCODE_EXPERIMENTAL_INSTANCE_IDLE_TIMEOUT_MS: "3600000",
         SHELLCHECK_EXTERNAL_SOURCES: "false",
-      },
+      }),
     })
     // The first start after an app update migrates the engine's history database (hundreds of MB for a long-used install),
     // which took well over 30 s on the owner's machine (2026-11-14): 30 s gave up on an engine that was still starting.

@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("kellDesktop", {
   pickFiles: (): Promise<string[]> => ipcRenderer.invoke("kell:pick-files"),
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   openPath: (path: string): Promise<string> => ipcRenderer.invoke("kell:open-path", String(path)),
+  showInFolder: (path: string) => ipcRenderer.send("kell:show-in-folder", String(path)),
+  saveCopy: (path: string): Promise<string | null> => ipcRenderer.invoke("kell:save-copy", String(path)),
   // The typeface (View > Font): the page applies it and tells the menu; the menu tells the page when a choice is clicked.
   setFont: (font: string) => ipcRenderer.send("kell:font-choice", String(font)),
   onFont: (cb: (font: string) => void) => {
@@ -36,6 +38,18 @@ contextBridge.exposeInMainWorld("kellDesktop", {
     return () => { ipcRenderer.removeListener("kell:menu", h) }
   },
   showMenu: () => ipcRenderer.send("kell:menu-popup"),
+  // The quick-ask box (electron/presence.ts): it sends a question; the main window receives it and starts a new chat.
+  quick: {
+    ask: (text: string) => ipcRenderer.send("kell:quick-ask", String(text)),
+    hide: () => ipcRenderer.send("kell:quick-hide"),
+    openMain: () => ipcRenderer.send("kell:quick-open-main"),
+    onShown: (cb: () => void) => { const h = () => cb(); ipcRenderer.on("kell:quick-shown", h); return () => { ipcRenderer.removeListener("kell:quick-shown", h) } },
+  },
+  onQuick: (cb: (text: string) => void) => {
+    const h = (_e: unknown, text: string) => cb(String(text))
+    ipcRenderer.on("kell:quick", h)
+    return () => { ipcRenderer.removeListener("kell:quick", h) }
+  },
   // The bottom panel's terminal: a shell in the project folder (electron/terminal.ts).
   term: {
     create: (cwd: string, cols: number, rows: number): Promise<{ id: string } | { error: string }> => ipcRenderer.invoke("kell:term-create", cwd, cols, rows),

@@ -4,7 +4,7 @@
 //   GET /api/local/sessions?id=<id>             one session's messages; a session with no local messages is backfilled
 //                                               from the engine once, then served from the local store
 import path from "node:path"
-import { getSession, listSessions, messageCount } from "@/lib/localdb"
+import { filingOf, getSession, listSessions, messageCount } from "@/lib/localdb"
 import { localLines } from "@/lib/history"
 
 export const dynamic = "force-dynamic"
@@ -20,7 +20,7 @@ export async function GET(req: Request) {
       // One project's chats, not every folder's: the sidebar shows each project's own list.
       const dir = q.get("directory") || ""
       const rows = listSessions().filter((s) => !dir || (s.directory && norm(s.directory) === norm(dir)))
-      return Response.json({ sessions: rows.map((s) => ({ id: s.id, title: s.title || "", updated: s.updated_at, directory: s.directory })) })
+      return Response.json({ sessions: rows.map((s) => ({ id: s.id, title: s.title || "", updated: s.updated_at, directory: s.directory, ...filingOf(s.metadata) })) })
     }
     const session = getSession(id)
     const lines = await localLines(id, session?.directory ?? null, session?.title ?? null)

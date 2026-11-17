@@ -5,7 +5,8 @@ import { pathToFileURL } from "node:url"
 import { engineStatus, clientFor } from "@/lib/engine"
 import { contractOf, type Delegation } from "@/lib/delegate"
 import { pooledEngineConfig, ownKeyLane, walletRemaining, isNeedPlan } from "@/lib/pooled"
-import { TOOL_RULES } from "@/lib/tools"
+import { rulesFor } from "@/lib/tools"
+import { isHome } from "@/lib/home"
 import { appendMessage, ensureSession, getAssistantMessages, getSession } from "@/lib/localdb"
 import { summarize } from "@/lib/summarize"
 
@@ -147,7 +148,7 @@ export async function POST(req: Request) {
         const promptText = contract ? `${text}\n\n${contract}` : text
         try {
           await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools",
-            value: contract ? `${TOOL_RULES}\n\n${contract}` : TOOL_RULES } as any)
+            value: contract ? `${rulesFor(isHome(e.directory))}\n\n${contract}` : rulesFor(isHome(e.directory)) } as any)
         } catch { /* the prompt still runs */ }
         try {
           await client.session.prompt({ sessionID, text: promptText, ...(model ? { model } : {}), ...(attached.files.length ? { files: attached.files } : {}) } as any)

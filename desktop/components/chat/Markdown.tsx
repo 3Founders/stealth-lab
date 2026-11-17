@@ -1,6 +1,38 @@
 "use client";
 import { marked, type Token } from "marked";
 import { useRef, type ReactNode } from "react";
+import { ChartBlock, MathSpan, MermaidBlock } from "@/components/chat/RichBlocks";
+
+// Maths is taken out before the markdown parser sees it (marked would eat its backslashes and underscores) and put back as a
+// placeholder: \u0001<n>\u0001 inline, a paragraph of just \u0002<n>\u0002 for display maths. MATH holds the TeX while one reply renders.
+let MATH: string[] = [];
+const MATH_RE = /\u0001(\d+)\u0001/g;
+function takeMath(src: string): string {
+  MATH = [];
+  // fenced and inline code keep their dollars
+  const parts = src.split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/g);
+  return parts.map((p, k) => {
+    if (k % 2 === 1) return p;
+    return p
+      .replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex) => { MATH.push(tex.trim()); return `\n\n\u0002${MATH.length - 1}\u0002\n\n`; })
+      .replace(/\\\[([\s\S]+?)\\\]/g, (_m, tex) => { MATH.push(tex.trim()); return `\n\n\u0002${MATH.length - 1}\u0002\n\n`; })
+      .replace(/(^|[^\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\w$])/g, (_m, pre, tex) => { MATH.push(tex); return `${pre}\u0001${MATH.length - 1}\u0001`; })
+      .replace(/\\\(([^\n]+?)\\\)/g, (_m, tex) => { MATH.push(tex); return `\u0001${MATH.length - 1}\u0001`; });
+  }).join("");
+}
+function withMath(text: string, key: number | string): ReactNode {
+  if (!text.includes("\u0001")) return text;
+  const out: ReactNode[] = [];
+  let last = 0, m: RegExpExecArray | null;
+  MATH_RE.lastIndex = 0;
+  while ((m = MATH_RE.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(<MathSpan key={`${key}-${m.index}`} tex={MATH[Number(m[1])] ?? ""} display={false} />);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 /**
  * Markdown from a model, rendered as React elements - never as raw HTML. Fenced code, inline code, headings, lists,
@@ -30,7 +62,7 @@ function inline(tokens: Token[] | undefined): ReactNode {
   return tokens.map((t, i) => {
     const x = t as Tok;
     switch (x.type) {
-      case "text": return <span key={i}>{x.tokens?.length ? inline(x.tokens) : (x.text ?? "")}</span>;
+      case "text": return <span key={i}>{x.tokens?.length ? inline(x.tokens) : withMath(x.text ?? "", i)}</span>;
       case "escape": return <span key={i}>{x.text ?? ""}</span>;
       case "strong": return <strong key={i}>{inline(x.tokens)}</strong>;
       case "em": return <em key={i}>{inline(x.tokens)}</em>;
@@ -68,9 +100,18 @@ function block(x: Tok, i: number): ReactNode {
         : (x.depth ?? 1) === 2 ? <h4 key={i} className="dg-md-h">{body}</h4>
           : <h5 key={i} className="dg-md-h">{body}</h5>;
     }
-    case "paragraph": return <p key={i}>{inline(x.tokens)}</p>;
+    case "paragraph": {
+      const d = /^\u0002(\d+)\u0002$/.exec((x.text ?? "").trim());
+      if (d) return <MathSpan key={i} tex={MATH[Number(d[1])] ?? ""} display />;
+      return <p key={i}>{inline(x.tokens)}</p>;
+    }
     case "text": return <p key={i}>{inline(x.tokens) ?? x.text}</p>;
-    case "code": return <pre key={i} className="dg-md-pre"><code>{x.text ?? ""}</code></pre>;
+    case "code": {
+      const lang = String((x as { lang?: string }).lang || "").trim().toLowerCase();
+      if (lang === "mermaid") return <MermaidBlock key={i} code={x.text ?? ""} />;
+      if (lang === "chart") return <ChartBlock key={i} json={x.text ?? ""} />;
+      return <pre key={i} className="dg-md-pre"><code>{x.text ?? ""}</code></pre>;
+    }
     case "blockquote": return <blockquote key={i}>{blocks(x.tokens ?? [])}</blockquote>;
     case "list": {
       const items = (x.items ?? []).map((it, j) => {
@@ -99,11 +140,11 @@ function block(x: Tok, i: number): ReactNode {
 export default function Markdown({ text }: { text: string }) {
   const cache = useRef<Map<string, ReactNode>>(new Map());
   if (!text.trim()) return null;
-  const tokens = marked.lexer(text, { gfm: true, breaks: true }) as Token[];
+  const tokens = marked.lexer(takeMath(text), { gfm: true, breaks: true }) as Token[];
   const nodes = tokens.map((t, i) => {
     const x = t as Tok;
     if (x.type === "space") return null;
-    const key = `${i}:${x.raw ?? JSON.stringify(x)}`;
+    const key = `${i}:${x.raw ?? JSON.stringify(x)}:${MATH.join("\u0003")}`;
     const hit = cache.current.get(key);
     if (hit !== undefined) return hit;
     const node = block(x, i);

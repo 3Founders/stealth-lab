@@ -363,3 +363,23 @@ export function setMeta(key: string, value: string | null): void {
   if (value === null) d.prepare("delete from meta where key = ?").run(key)
   else d.prepare("insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value").run(key, value)
 }
+
+/** How a chat is filed in the sidebar (P1, 2026-11-17): pinned to the top, in a folder of the person's, or archived out of the list.
+ *  Kept in the session row's metadata JSON, so no migration. */
+export type Filing = { pinned?: boolean; archived?: boolean; folder?: string | null }
+export function filingOf(metadata: string | null | undefined): Filing {
+  try { const m = JSON.parse(metadata || "{}"); return { pinned: !!m.pinned, archived: !!m.archived, folder: typeof m.folder === "string" && m.folder ? m.folder : null } }
+  catch { return {} }
+}
+export function fileSession(id: string, patch: Filing): Filing | null {
+  const d = open()
+  const row = d.prepare("select metadata from sessions where id = ?").get(id) as { metadata: string | null } | undefined
+  if (!row) return null
+  let m: Record<string, unknown> = {}
+  try { m = JSON.parse(row.metadata || "{}") || {} } catch { m = {} }
+  if (patch.pinned !== undefined) m.pinned = !!patch.pinned
+  if (patch.archived !== undefined) { m.archived = !!patch.archived; if (patch.archived) m.pinned = false }
+  if (patch.folder !== undefined) m.folder = patch.folder ? String(patch.folder).replace(/\s+/g, " ").trim().slice(0, 60) || null : null
+  d.prepare("update sessions set metadata = ? where id = ?").run(JSON.stringify(m), id)
+  return filingOf(JSON.stringify(m))
+}

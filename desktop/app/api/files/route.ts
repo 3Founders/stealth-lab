@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic"
 
 /** Folders the tree never shows: dependencies, build output, caches, VCS metadata. */
 const SKIP = new Set([
-  ".git", ".hg", ".svn", "node_modules", ".next", "dist", "build", "out", ".output", "coverage",
+  ".git", ".kell-versions", ".hg", ".svn", "node_modules", ".next", "dist", "build", "out", ".output", "coverage",
   ".venv", "venv", "env", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
   ".turbo", ".cache", ".parcel-cache", ".gradle", ".idea", "target", ".DS_Store",
 ])

@@ -1271,3 +1271,48 @@ button.dk-fold[aria-expanded="true"] svg { transform: none; }
 .dk-palette-foot kbd { font-size: 11.5px; }
 .dk-import-src button { font-size: 14px; }
 .dk-import-list .t small, .dk-import-list time { font-size: 12.5px; }
+
+/* Edit and resend (P0 #9): the message turns into a box in place. */
+.dk-edit { width: min(640px, 100%); }
+.dk-edit textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; line-height: 1.45; }
+
+/* Documents kell made (components/DocPanel.tsx). */
+.dk-docs { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 2px; }
+.dk-doc { display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; min-width: 220px; max-width: 360px; text-align: left;
+  border: 1px solid var(--rule-strong, rgba(0,0,0,.14)); border-radius: 10px; background: var(--paper, #fff); color: inherit; cursor: pointer; font: inherit; }
+.dk-doc:hover { border-color: var(--ink, #222); }
+.dk-doc-ico { flex: none; width: 38px; height: 38px; border-radius: 8px; display: grid; place-items: center; font-size: 10px; font-weight: 700;
+  color: #fff; background: #5b6470; letter-spacing: .02em; }
+.dk-doc-ico[data-kind="docx"] { background: #2b579a; } .dk-doc-ico[data-kind="xlsx"], .dk-doc-ico[data-kind="csv"] { background: #217346; }
+.dk-doc-ico[data-kind="pptx"] { background: #c43e1c; } .dk-doc-ico[data-kind="pdf"] { background: #b30b00; }
+.dk-doc-txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.dk-doc-txt b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-doc-txt span { font-size: 12px; opacity: .7; }
+.dk-doc-go { font-size: 12px; text-decoration: underline; opacity: .8; }
+.dk-docpane { position: fixed; top: 44px; right: 0; bottom: 0; width: min(720px, 56vw); z-index: 40; display: flex; flex-direction: column;
+  background: var(--paper, #F8F6EF); border-left: 1px solid var(--rule-strong, rgba(0,0,0,.16)); box-shadow: -8px 0 28px rgba(0,0,0,.12); }
+.dk-docpane header { display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--rule, rgba(0,0,0,.08)); }
+.dk-docpane header b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dk-docpane header .sp { flex: 1; }
+.dk-docver { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13px; }
+.dk-docpane iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+.dk-docask { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--rule, rgba(0,0,0,.08)); }
+.dk-docask input { flex: 1; font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--rule-strong, rgba(0,0,0,.16)); background: var(--paper, #fff); color: inherit; }
+@media (max-width: 760px) { .dk-docpane { width: 100vw; } }
+
+/* Maths, diagrams and charts in replies (components/chat/RichBlocks.tsx). */
+.dg-math { overflow-x: auto; margin: 8px 0; text-align: center; }
+.dg-diagram { margin: 8px 0; overflow-x: auto; }
+.dg-diagram svg { max-width: 100%; height: auto; }
+.dg-chart { margin: 8px 0; max-width: 600px; }
+.dg-chart svg { width: 100%; height: auto; }
+.dg-chart .t { font-size: 14px; font-weight: 600; fill: currentColor; }
+.dg-chart .l { font-size: 11px; fill: currentColor; opacity: .75; }
+.dg-chart .g { stroke: currentColor; opacity: .12; }
+
+/* Filing chats: Pinned, folders, Archived (2026-11-17). */
+.dk-sess-group { display: flex; align-items: center; gap: 4px; margin: 10px 8px 2px; padding: 0; font-size: 11px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; opacity: .6; background: none; border: 0; color: inherit; font-family: inherit; cursor: default; }
+button.dk-sess-group { cursor: pointer; }
+.dk-sess-folder { display: flex; gap: 6px; padding: 6px; }
+.dk-sess-folder input { flex: 1; min-width: 0; font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--rule-strong, rgba(0,0,0,.16)); background: var(--paper, #fff); color: inherit; }

@@ -6,7 +6,8 @@
 // fixed one — the OpenCode desktop app owns 28894 and is never touched), and its whole tree — including the opencode
 // engine it starts through lib/engine.ts's /api routes — dies with the app.
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron"
-import { startUpdates } from "./updater"
+import { startUpdates, ulog } from "./updater"
+import { markQuitting, startPresence } from "./presence"
 import { isSignInLink, openSignIn } from "./signin"
 import { popupAppMenu, setAppMenu, setFontChoice } from "./menu"
 import { BOOT } from "./memory"
@@ -43,10 +44,41 @@ const killTree = () => {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus() } })
+  app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus() } })
+
+  // Startup check (docs/desktop_requirements_2026-11.md, P0 #11): a start that cannot finish says why and what to do, instead of
+  // leaving no window at all (Cowork hung silently on Windows Home). The Next server's output goes to next.log in the logs
+  // folder, so the reason is on disk too.
+  const logsDir = () => { try { return app.getPath("logs") } catch { return app.getPath("userData") } }
+  const nextLog = () => path.join(logsDir(), "next.log")
+  const tail = (f: string, n = 12) => { try { return fs.readFileSync(f, "utf8").trim().split(/\r?\n/).slice(-n).join("\n") } catch { return "" } }
+  const failStart = async (why: string, fix: string) => {
+    ulog(`start failed: ${why}`)
+    const last = tail(nextLog())
+    const detail = last ? `${fix}\n\nLast lines of ${nextLog()}:\n${last}` : `${fix}\n\nLogs: ${logsDir()}`
+    const r = await dialog.showMessageBox({ type: "error", title: "kell could not start", message: why, detail, buttons: ["Try again", "Open logs folder", "Quit"], defaultId: 0, cancelId: 2 })
+    if (r.response === 1) await shell.openPath(logsDir())
+    markQuitting(); killTree()
+    if (r.response === 0) app.relaunch()
+    app.exit(1)
+  }
+  const preflight = (): [string, string] | null => {
+    try { fs.mkdirSync(app.getPath("userData"), { recursive: true }); const t = path.join(app.getPath("userData"), ".write-test"); fs.writeFileSync(t, "ok"); fs.rmSync(t) }
+    catch (e: any) { return ["kell can't write to its data folder", `${app.getPath("userData")}: ${String(e?.message || e)}. Check the folder's permissions or free some disk space.`] }
+    try {
+      const st = (fs as any).statfsSync?.(app.getPath("userData"))
+      if (st && st.bavail * st.bsize < 300 * 1024 * 1024) return ["Your disk is almost full", "kell needs at least 300 MB free to start its engine and keep your chats. Free some space and try again."]
+    } catch { /* not supported here */ }
+    const standalone = path.join(ROOT, ".next", "standalone", "server.js")
+    if (!fs.existsSync(standalone) && !fs.existsSync(path.join(ROOT, "node_modules", "next", "dist", "bin", "next")))
+      return ["kell's files are incomplete", "Part of the app is missing (an antivirus may have quarantined it). Reinstall kell from kell's download page."]
+    return null
+  }
 
   app.whenReady().then(async () => {
     const say = (...a: unknown[]) => console.log("KELL_SMOKE", ...a)
+    const pre = preflight()
+    if (pre) { await failStart(pre[0], pre[1]); return }
     say("electron ready; starting next")
     setAppMenu(() => win)
     const port = await freePort()
@@ -70,20 +102,43 @@ if (!app.requestSingleInstanceLock()) {
     // RAM: in the installed app the Next child's stdout/stderr are only diagnostics. Piping them makes Electron keep a
     // growing read buffer; KELL_DEBUG=1 restores the pipes for a support session.
     const quiet = app.isPackaged && process.env.KELL_DEBUG !== "1"
+    let fd: number | "ignore" | undefined
+    const logFd = (): number | "ignore" => {
+      if (fd !== undefined) return fd
+      try { fs.mkdirSync(logsDir(), { recursive: true }); fd = fs.openSync(nextLog(), "a") } catch { fd = "ignore" }
+      return fd
+    }
     next = fs.existsSync(standalone)
-      ? spawn(process.execPath, [standalone], { cwd: ROOT, windowsHide: true, env, stdio: quiet ? ["ignore", "ignore", "ignore"] : ["ignore", "pipe", "pipe"] })
+      ? spawn(process.execPath, [standalone], { cwd: ROOT, windowsHide: true, env, stdio: quiet ? ["ignore", logFd(), logFd()] : ["ignore", "pipe", "pipe"] })
       : spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)],
-              { cwd: ROOT, windowsHide: true, env, stdio: quiet ? ["ignore", "ignore", "ignore"] : ["ignore", "pipe", "pipe"] })
-    next.on("exit", (code) => { say(`next exited (${code})`); next = undefined; win?.close() })
+              { cwd: ROOT, windowsHide: true, env, stdio: quiet ? ["ignore", logFd(), logFd()] : ["ignore", "pipe", "pipe"] })
+    let started = false
+    next.on("exit", (code) => {
+      say(`next exited (${code})`); next = undefined
+      if (!started) return               // the wait below reports it
+      markQuitting(); win?.close()
+    })
     next.stdout?.on("data", (c) => process.stdout.write(c))
     next.stderr?.on("data", (c) => process.stderr.write(c))
+    // In the installed app the output is not piped to this process (RAM, above): it goes to next.log instead, kept short.
+    if (quiet) {
+      try {
+        fs.mkdirSync(logsDir(), { recursive: true })
+        if (fs.existsSync(nextLog()) && fs.statSync(nextLog()).size > 1024 * 1024) fs.renameSync(nextLog(), nextLog() + ".old")
+      } catch { /* logging is optional */ }
+    }
 
     const base = `http://127.0.0.1:${port}`
     let up = false
-    for (let i = 0; i < 200 && !up; i++) {
+    for (let i = 0; i < 300 && !up && next; i++) {
       try { up = (await fetch(base)).ok } catch { await new Promise((r) => setTimeout(r, 300)) }
     }
-    if (!up) throw new Error("the Next server never answered")
+    if (!up) {
+      await failStart(next ? "kell's local server did not answer in 90 seconds" : "kell's local server stopped while starting",
+        "This is usually an antivirus or a security policy blocking a program inside kell, or a broken install. Try again; if it keeps happening, reinstall kell, or allow kell in your antivirus.")
+      return
+    }
+    started = true
     say(`next up on ${base}`)
 
     // A run starts clean: the page's storage of the last run (the folder open, its sessions, the column widths, the last tab) goes
@@ -96,7 +151,8 @@ if (!app.requestSingleInstanceLock()) {
                               // Electron's frame on Windows cannot take the app's rounded corners and shadow.
                               frame: false,
                               webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false,
-                                                               devTools: !app.isPackaged } })   // no inspector in the installed app
+                                                               devTools: !app.isPackaged,
+                                                               plugins: true } })   // Chromium's PDF viewer, for the document preview   // no inspector in the installed app
     // The page's storage emptied before it reads anything, before it can restore anything: a fresh project and no sessions.
     win.webContents.on("dom-ready", () => { void win?.webContents.executeJavaScript(BOOT).catch(() => undefined) })
     // Links: a tool's sign-in opens in the person's default browser (electron/signin.ts); any other link goes there too.
@@ -161,6 +217,17 @@ if (!app.requestSingleInstanceLock()) {
     })
     // Open a file outside the project in the person's default app. Project files are opened in the app's own viewer.
     ipcMain.handle("kell:open-path", async (_e, p: string) => (p ? shell.openPath(String(p)) : "no path"))
+    // Documents kell made (components/DocPanel.tsx): show one in Explorer, or save a copy where the person chooses.
+    ipcMain.on("kell:show-in-folder", (_e, p: string) => { if (p) shell.showItemInFolder(String(p)) })
+    ipcMain.handle("kell:save-copy", async (_e, p: string) => {
+      const src = String(p || "")
+      if (!src || !fs.existsSync(src)) return null
+      const opts = { title: "Save a copy", defaultPath: path.join(app.getPath("documents"), path.basename(src)) }
+      const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+      if (r.canceled || !r.filePath) return null
+      fs.copyFileSync(src, r.filePath)
+      return r.filePath
+    })
     // Register the show handler BEFORE the load: "ready-to-show" can fire while loadURL is still resolving, and a handler
     // added after the await then never runs, leaving the window hidden forever (the installed app looked like it did
     // nothing, 2026-11-03). show() is idempotent, so it is also called once the load has finished.
@@ -181,6 +248,11 @@ if (!app.requestSingleInstanceLock()) {
     // Updates (electron/updater.ts): check at start and every few hours, offer a restart when one is downloaded, log to
     // updater.log. Not in dev or the smoke run; a failure never stops the app.
     if (app.isPackaged && process.env.KELL_SMOKE !== "1" && process.env.KELL_NO_UPDATE !== "1") startUpdates(() => win)
+    // The tray, the global quick-ask hotkey and its box (electron/presence.ts).
+    if (process.env.KELL_SMOKE !== "1") {
+      try { const p = startPresence(() => win, base, ROOT, path.join(__dirname, "preload.js")); say(`presence ${JSON.stringify(p)}`) }
+      catch (e: any) { say(`presence failed: ${String(e?.message || e)}`) }
+    }
 
     // Smoke (KELL_SMOKE=1): with the window up, start the engine through the UI's own route, report, quit.
     // KELL_SMOKE_DIR is the project directory to boot the engine on.

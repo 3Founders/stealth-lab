@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Markdown from "@/components/chat/Markdown"
 import SmoothText, { Thinking } from "@/components/chat/SmoothText"
+import { DocCards, DocPreview, type Doc } from "@/components/DocPanel"
 import MessageActions from "@/components/chat/MessageActions"
 import ThemeToggle, { ThemeWatcher } from "@/components/ThemeToggle"
 import { useSpringScroll } from "@/components/chat/useSpringScroll"
@@ -37,6 +38,7 @@ const IMPORT_SOURCES: { id: ImportSource; label: string; note: string }[] = [
 type KellDesktop = {
   openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void; showMenu?: () => void
   pickFiles?: () => Promise<string[]>; pathForFile?: (file: File) => string; openPath?: (path: string) => Promise<string>
+  onQuick?: (cb: (text: string) => void) => () => void
   onFont?: (cb: (font: string) => void) => () => void; setFont?: (font: string) => void
   window?: { minimize: () => void; toggleMaximize: () => void; close: () => void; isMaximized?: () => Promise<boolean>; onState?: (cb: (max: boolean) => void) => () => void }
   rooms: { show: (rect: Rect | null) => void; reload: () => void; panel?: (p: "desktop" | "submit") => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
@@ -506,7 +508,7 @@ export default function Home() {
   // card, or its error belonged to the chat the person just left (2026-11-16).
   const turnGen = useRef(0)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
-  const [sessions, setSessions] = useState<{ id: string; title: string; updated: number; directory?: string | null }[]>([])
+  const [sessions, setSessions] = useState<{ id: string; title: string; updated: number; directory?: string | null; pinned?: boolean; archived?: boolean; folder?: string | null }[]>([])
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
   const dirRef = useRef("")                             // the open folder, for callbacks that outlive a render
@@ -761,6 +763,20 @@ export default function Home() {
   }
   const [stopping, setStopping] = useState(false)
   const [stopNote, setStopNote] = useState("")
+  // The chats folder (lib/home.ts): kell without a project. Its path comes from the server; it shows as "Chats".
+  const [homePath, setHomePath] = useState("")
+  const homeRef = useRef("")
+  const samePath = (a: string, b: string) => !!a && !!b && a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+  const isChats = (d: string) => samePath(d, homePath || homeRef.current)
+  const projName = (d: string) => (isChats(d) ? "Chats" : d.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || d)
+  const loadHome = async (): Promise<string> => {
+    if (homeRef.current) return homeRef.current
+    try {
+      const j = await (await fetch("/api/home")).json()
+      if (j.path) { homeRef.current = j.path; setHomePath(j.path) }
+    } catch { /* the folder picker still works */ }
+    return homeRef.current
+  }
 
   useEffect(() => {
     fetch("/api/engine").then((r) => r.json()).then(async (j) => {
@@ -778,8 +794,13 @@ export default function Home() {
         setSideView("project")            // the restored project's sessions are the point of opening it
         void loadSessions()
         void openProject(last.directory, last.sessionID || undefined)
+        void loadHome()
         return
       }
+      // Nothing to reopen (a first start): open the chats folder, so the first thing a person sees is a box to ask in,
+      // not "open a folder" (P0 #1, 2026-11-17).
+      const home = await loadHome()
+      if (home) { setSideView("project"); void openProject(home); return }
       if (j.up) void loadSessions()
     })
     fetch("/api/settings").then((r) => r.json()).then(setSettings).catch(() => undefined)
@@ -1089,6 +1110,80 @@ export default function Home() {
     } catch (err: any) { appendNote(`fork: ${String(err?.message || err)}`) }
   }
 
+  // A prompt to send once a chat is ready: the quick-ask box and "edit and resend" open a chat first (a new one, a fork, or
+  // the chats folder) and the prompt goes when that chat is the one on screen with its engine up (2026-11-17).
+  const [autoSend, setAutoSend] = useState<{ text: string; sid: string | null; dir?: string } | null>(null)
+  useEffect(() => {
+    if (!autoSend || opening || !engine?.up || !directory || sessLoading) return
+    if (autoSend.dir && !samePath(autoSend.dir, directory)) return
+    if ((autoSend.sid ?? null) !== (sessionID ?? null)) return
+    const t = autoSend.text
+    setAutoSend(null)
+    void send(t, [])
+  })
+
+  // Edit and resend / regenerate (P0 #9): the chat is forked just before the prompt (the original stays as it was, its own
+  // chat in the list) and the new or same text is sent there. The first prompt of a chat has nothing before it: a new chat.
+  const [editing, setEditing] = useState<{ i: number; value: string } | null>(null)
+  const branchSend = async (i: number, newText: string) => {
+    const t = newText.trim()
+    if (!t || busy) return
+    setEditing(null)
+    let j = i - 1
+    while (j >= 0 && lines[j].who !== "assistant") j--
+    if (!sessionID || j < 0) { newSession(); setAutoSend({ text: t, sid: null }); return }
+    try {
+      const r = await fetch("/api/fork", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionID, upTo: { who: "assistant", text: lines[j].text, at: lines[j].at } }) })
+      const out = await r.json()
+      if (!r.ok || !out.sessionID) { appendNote(`edit: ${out.error || "could not branch this chat"}`); return }
+      void loadSessions()
+      setAutoSend({ text: t, sid: out.sessionID })
+      await openSession(out.sessionID)
+    } catch (err: any) { appendNote(`edit: ${String(err?.message || err)}`) }
+  }
+
+  // Documents kell made in this chat (components/DocPanel.tsx): read from kell-docs' log after every turn, shown as cards under the
+  // answer that made them, opened in the preview pane.
+  const [docs, setDocs] = useState<Doc[]>([])
+  const [docOpen, setDocOpen] = useState<Doc | null>(null)
+  const firstAt = lines.find((l) => l.at)?.at
+  useEffect(() => {
+    if (!directory || !firstAt) { setDocs([]); return }
+    let live = true
+    fetch(`/api/docs?since=${firstAt - 60_000}&dir=${encodeURIComponent(directory)}`).then((r) => r.json())
+      .then((j) => { if (live) setDocs(Array.isArray(j.docs) ? j.docs : []) }).catch(() => undefined)
+    return () => { live = false }
+  }, [directory, sessionID, busy, firstAt])
+  useEffect(() => { setDocOpen(null) }, [sessionID, directory])
+  /** The documents made during the turn this answer ends: only the last answer before the next prompt carries them. */
+  const docsAfter = (i: number): Doc[] => {
+    if (!docs.length || lines[i]?.who !== "assistant") return []
+    let n = i + 1
+    while (n < lines.length && lines[n].who !== "user") { if (lines[n].who === "assistant") return []; n++ }
+    let u = i - 1
+    while (u >= 0 && lines[u].who !== "user") u--
+    const lo = u >= 0 ? (lines[u].at ?? 0) : 0
+    const hi = n < lines.length ? (lines[n].at ?? Infinity) : Infinity
+    return docs.filter((d) => d.at > lo && d.at <= hi)
+  }
+
+  // The quick-ask box (Ctrl+Shift+Space, electron/presence.ts): a new chat in the chats folder, or in the open folder while
+  // a turn is running there (switching folders would end it).
+  const quickRef = useRef<(t: string) => void>(() => {})
+  quickRef.current = (t: string) => {
+    const running = Object.keys(runningRef.current).length > 0
+    if (directory && (isChats(directory) || running)) { newSession(); setAutoSend({ text: t, sid: null }); return }
+    void (async () => {
+      const h = await loadHome()
+      if (!h) { if (directory) { newSession(); setAutoSend({ text: t, sid: null }) } return }
+      setSideView("project")
+      setAutoSend({ text: t, sid: null, dir: h })
+      await openProject(h)
+    })()
+  }
+  useEffect(() => desktop()?.onQuick?.((t) => quickRef.current(t)), [])
+
   // Renaming a chat: the pencil on its row, double-clicking the row, or the command palette puts an input in its place.
   // Enter or leaving the box saves, Escape cancels. The app's store is the name the sidebar reads; the route also tells
   // the engine, so its own header agrees (2026-11-17).
@@ -1125,13 +1220,24 @@ export default function Home() {
   // clip it (2026-11-17).
   const [sessMenu, setSessMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [sessDelete, setSessDelete] = useState<string | null>(null)
+  // Filing a chat (P1, 2026-11-17): pin, archive, folder. The sidebar shows Pinned, then each folder, then the rest; archived chats
+  // sit behind "Archived" at the end. The change shows at once and is saved in the app's store.
+  const [folderAsk, setFolderAsk] = useState<string | null>(null)
+  const [folderName, setFolderName] = useState("")
+  const [showArchived, setShowArchived] = useState(false)
+  const [closedFolders, setClosedFolders] = useState<Set<string>>(new Set())
+  const fileChat = async (id: string, patch: { pinned?: boolean; archived?: boolean; folder?: string | null }) => {
+    setSessions((list) => list.map((x) => (x.id === id ? { ...x, ...patch, ...(patch.archived ? { pinned: false } : {}) } : x)))
+    try { await fetch("/api/sessions/organize", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, ...patch }) }) }
+    catch { /* the next refresh shows what the store has */ }
+  }
   const openSessMenu = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
     setSessMenu({
       id,
       x: Math.min(window.innerWidth - 196, Math.max(8, r.right - 184)),
-      y: Math.min(window.innerHeight - 120, r.bottom + 4),
+      y: Math.min(window.innerHeight - 280, r.bottom + 4),
     })
     setSessDelete(null)
   }
@@ -2209,7 +2315,7 @@ export default function Home() {
     requestAnimationFrame(() => { textRef.current?.focus(); textRef.current?.setSelectionRange(next.length, next.length) })
   }
 
-  const project = directory ? directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || directory : "No project"
+  const project = directory ? projName(directory) : "No project"
   const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null)
 
   // The waiting prompts can be reordered or pulled back into the box, not only dropped (reqs §2: "edit / reorder / delete").
@@ -2472,11 +2578,18 @@ export default function Home() {
               <div className="dk-row">
                 <button type="button" className="btn-ink" disabled={opening}
                   onClick={() => void openFolder()}>{opening ? "Opening…" : "Open folder"}</button>
+                <button type="button" className="btn-line" disabled={opening} title="Chat without a project"
+                  onClick={() => void (async () => {
+                    const h = await loadHome(); if (!h) return
+                    setSideView("project")
+                    if (directory && isChats(directory) && engine?.up) return
+                    await openProject(h)
+                  })()}>Chats</button>
               </div>
               {recents.length === 0 ? <p className="dk-note">Projects you open show here.</p> : (
                 <ul className="dk-recents" aria-label="Projects">
                   {recents.map((d) => {
-                    const name = d.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || d
+                    const name = projName(d)
                     const here = !!directory && d.toLowerCase() === directory.toLowerCase()
                     return (
                       <li key={d} data-here={here || undefined}>
@@ -2508,7 +2621,7 @@ export default function Home() {
                 <button type="button" className="dk-icon dk-icon-sm" aria-label="Back to the projects" title="Back to the projects" onClick={() => setSideView("projects")}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
                 </button>
-                <b title={directory}>{directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || directory}</b>
+                <b title={directory}>{projName(directory)}</b>
                 <button type="button" className="dk-recent-more" aria-haspopup="menu" aria-expanded={projMenu?.path === directory}
                   aria-label="Project actions" title="More actions" style={{ opacity: 1 }} onClick={(e) => openProjectMenu(e, directory)}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2551,7 +2664,40 @@ export default function Home() {
               <div className="dk-sec-body" data-open={showSessions}>
                 <div className="dk-sec-body-in">
                   <div className="dk-sess dk-sess-list">
-                    {sessions.length === 0 ? <p className="dk-note">No sessions yet. Write a message to start one.</p> : sessions.map(sessionRow)}
+                    {sessions.length === 0 ? <p className="dk-note">No sessions yet. Write a message to start one.</p> : (() => {
+                      const live = sessions.filter((x) => !x.archived)
+                      const pinned = live.filter((x) => x.pinned)
+                      const rest = live.filter((x) => !x.pinned)
+                      const folders = [...new Set(rest.map((x) => x.folder).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b))
+                      const loose = rest.filter((x) => !x.folder)
+                      const archived = sessions.filter((x) => x.archived)
+                      const toggle = (f: string) => setClosedFolders((s) => { const n = new Set(s); if (n.has(f)) n.delete(f); else n.add(f); return n })
+                      return (
+                        <>
+                          {pinned.length > 0 && <><p className="dk-sess-group">Pinned</p>{pinned.map(sessionRow)}</>}
+                          {folders.map((f) => (
+                            <div key={`f:${f}`}>
+                              <button type="button" className="dk-sess-group dk-sess-folderhead" aria-expanded={!closedFolders.has(f)} onClick={() => toggle(f)}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d={closedFolders.has(f) ? "m9 6 6 6-6 6" : "m6 9 6 6 6-6"} /></svg>
+                                {f} <span className="dk-count">{rest.filter((x) => x.folder === f).length}</span>
+                              </button>
+                              {!closedFolders.has(f) && rest.filter((x) => x.folder === f).map(sessionRow)}
+                            </div>
+                          ))}
+                          {(pinned.length > 0 || folders.length > 0) && loose.length > 0 && <p className="dk-sess-group">Chats</p>}
+                          {loose.map(sessionRow)}
+                          {archived.length > 0 && (
+                            <>
+                              <button type="button" className="dk-sess-group dk-sess-folderhead" aria-expanded={showArchived} onClick={() => setShowArchived((o) => !o)}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d={showArchived ? "m6 9 6 6 6-6" : "m9 6 6 6-6 6"} /></svg>
+                                Archived <span className="dk-count">{archived.length}</span>
+                              </button>
+                              {showArchived && archived.map(sessionRow)}
+                            </>
+                          )}
+                        </>
+                      )
+                    })()}
                     <button type="button" className="dk-sess-import" onClick={() => openImport()}>Import other agent chats</button>
                   </div>
                 </div>
@@ -2690,6 +2836,10 @@ export default function Home() {
             onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragFiles(false) }}
             onDrop={(e) => { e.preventDefault(); setDragFiles(false); void addBrowserFiles(Array.from(e.dataTransfer.files)) }}>
             {dragFiles && <div className="dg-drop" aria-hidden="true"><span>Drop files to attach</span></div>}
+            {docOpen && <DocPreview doc={docOpen} onClose={() => setDocOpen(null)}
+              onAskChange={(t) => void send(`Change the document "${docOpen.name}" (${docOpen.path}): ${t}
+
+Remake it with kell-docs at the same path; keep everything else as it is.`, [])} />}
             {railTicks.length > 0 && (
               // ChatGPT's prompt rail: one tick per prompt at its place in the conversation; click to go there.
               <div className="dk-rail" data-on={railOn || undefined} aria-hidden={!railOn}>
@@ -2801,7 +2951,16 @@ export default function Home() {
                   // The empty state is not a blank box (reqs §8): one line states the boundary, and three prompts that
                   // are known to work here fill the composer rather than a highlight reel.
                   <div className="dk-empty">
-                    {directory ? (
+                    {directory && isChats(directory) ? (
+                      <>
+                        <p className="dk-empty-line">Ask anything: questions, advice, writing, analysis. Attach files from anywhere, and ask for a Word, Excel, PowerPoint or PDF file when you want one.</p>
+                        <div className="dk-empty-prompts">
+                          {["Explain a topic to me simply", "Draft an email I describe", "Make a spreadsheet from data I paste"].map((p) => (
+                            <button key={p} type="button" className="btn-line dg-mini dk-empty-prompt" onClick={() => { setText(p); textRef.current?.focus() }}>{p}</button>
+                          ))}
+                        </div>
+                      </>
+                    ) : directory ? (
                       <>
                         <p className="dk-empty-line">kell can read and edit this folder and run commands here. It asks before anything destructive, and every change comes back as a diff you can undo.</p>
                         <div className="dk-empty-prompts">
@@ -2812,9 +2971,10 @@ export default function Home() {
                       </>
                     ) : (
                       <>
-                        <p className="dk-empty-line">kell works in one folder at a time. Open a folder, then describe the task — the changes come back as a diff you can undo.</p>
+                        <p className="dk-empty-line">Ask kell anything, or open a folder to work on a project — changes to a project come back as a diff you can undo.</p>
                         <div className="dk-row" style={{ margin: 0 }}>
-                          <button type="button" className="btn-ink" onClick={() => void openFolder()}>Open a folder</button>
+                          <button type="button" className="btn-ink" onClick={() => void (async () => { const h = await loadHome(); if (h) { setSideView("project"); await openProject(h) } })()}>Just chat</button>
+                          <button type="button" className="btn-line" onClick={() => void openFolder()}>Open a folder</button>
                         </div>
                       </>
                     )}
@@ -2907,13 +3067,37 @@ export default function Home() {
                       <div className="dg-col">
                         <div className="dg-meta"><b>{mine ? "You" : "Kell"}</b>{!mine && <span className="dg-badge">agent</span>}<time>{time(l.at)}</time></div>
                         <div className="dg-msg">
-                          <div className="dg-body">{mine ? <p>{l.text}</p> : live ? <SmoothText text={l.text} markdown /> : <Markdown text={l.text} />}</div>
+                          <div className="dg-body">{mine && editing?.i === i ? (
+                            <div className="dk-edit">
+                              <textarea className="dk-field" value={editing.value} rows={Math.min(10, Math.max(2, editing.value.split("\n").length))} autoFocus
+                                aria-label="Edit your message" onChange={(e) => setEditing({ i, value: e.target.value })}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Escape") { e.preventDefault(); setEditing(null) }
+                                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void branchSend(i, editing.value) }
+                                }} />
+                              <div className="dk-row" style={{ margin: "6px 0 0" }}>
+                                <button type="button" className="btn-ink dg-mini" disabled={!editing.value.trim() || busy} onClick={() => void branchSend(i, editing.value)}>Send</button>
+                                <button type="button" className="btn-line dg-mini" onClick={() => setEditing(null)}>Cancel</button>
+                                <span className="dk-note" style={{ margin: 0 }}>Sends from here in a new branch; this chat stays as it is.</span>
+                              </div>
+                            </div>
+                          ) : mine ? <p>{l.text}</p> : live ? <SmoothText text={l.text} markdown /> : <Markdown text={l.text} />}</div>
                           {mine && l.files?.length ? attachmentChips(l.files) : null}
                           {l.text && !live ? (
                             <MessageActions copyText={l.text} retryText={mine ? l.text : lastUserBefore(i)}
-                              onCopy={copyText} onRetry={(t) => void send(t)} retryLabel={mine ? "Send this again" : "Ask again"}
+                              onCopy={copyText}
+                              onRetry={(t) => {
+                                if (mine) { void send(t); return }
+                                // Regenerate: the same prompt again in a branch from just before it.
+                                let u = i - 1
+                                while (u >= 0 && lines[u].who !== "user") u--
+                                if (u >= 0 && !busy) void branchSend(u, t); else void send(t)
+                              }}
+                              retryLabel={mine ? "Send this again" : "Regenerate"}
+                              onEdit={mine && !busy && editing?.i !== i ? () => setEditing({ i, value: l.text }) : undefined}
                               onFork={sessionID && !busy ? () => void fork({ who: l.who, text: l.text, at: l.at }) : undefined} />
                           ) : null}
+                          {!mine && !live ? <DocCards docs={docsAfter(i)} onOpen={setDocOpen} /> : null}
                         </div>
                       </div>
                     </div>
@@ -3414,6 +3598,26 @@ export default function Home() {
           ) : (
             <>
               <button type="button" role="menuitem" autoFocus onClick={() => { const id = sessMenu.id; setSessMenu(null); startRename({ id }) }}>Rename</button>
+              {(() => {
+                const cur = sessions.find((x) => x.id === sessMenu.id)
+                const folders = [...new Set(sessions.map((x) => x.folder).filter(Boolean) as string[])].sort()
+                return (
+                  <>
+                    <button type="button" role="menuitem" onClick={() => { void fileChat(sessMenu.id, { pinned: !cur?.pinned }); setSessMenu(null) }}>{cur?.pinned ? "Unpin" : "Pin to top"}</button>
+                    {folderAsk === sessMenu.id ? (
+                      <form className="dk-sess-folder" onSubmit={(e) => { e.preventDefault(); void fileChat(sessMenu.id, { folder: folderName.trim() || null }); setFolderAsk(null); setSessMenu(null) }}>
+                        <input autoFocus list="dk-folders" value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder="Folder name" aria-label="Folder name" />
+                        <datalist id="dk-folders">{folders.map((f) => <option key={f} value={f} />)}</datalist>
+                        <button type="submit" className="btn-ink dg-mini">Move</button>
+                      </form>
+                    ) : (
+                      <button type="button" role="menuitem" onClick={() => { setFolderName(cur?.folder || ""); setFolderAsk(sessMenu.id) }}>{cur?.folder ? "Move to another folder…" : "Move to a folder…"}</button>
+                    )}
+                    {cur?.folder && <button type="button" role="menuitem" onClick={() => { void fileChat(sessMenu.id, { folder: null }); setSessMenu(null) }}>Take out of “{cur.folder}”</button>}
+                    <button type="button" role="menuitem" onClick={() => { void fileChat(sessMenu.id, { archived: !cur?.archived }); setSessMenu(null) }}>{cur?.archived ? "Unarchive" : "Archive"}</button>
+                  </>
+                )
+              })()}
               <button type="button" role="menuitem" className="dk-danger" onClick={() => setSessDelete(sessMenu.id)}>Delete</button>
             </>
           )}
