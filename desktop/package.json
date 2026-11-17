@@ -9,7 +9,8 @@
     "build": "npm run bundle:cli && next build && node scripts/standalone.mjs",
     "typecheck": "tsc --noEmit",
     "start": "next start -p 3400",
-    "electron:build": "tsc -p electron",
+    "electron:build": "tsc -p electron && npm run electron:bundle",
+    "electron:bundle": "esbuild electron/updater.ts --bundle --platform=node --format=cjs --external:electron --outfile=electron/dist/updater.js",
     "predist": "node scripts/seed-electron-checksums.mjs",
     "dist": "npm run build && npm run electron:build && electron-builder --win nsis --publish never"
   },
@@ -84,6 +85,7 @@
     "docx": "^9.15.4",
     "electron-updater": "^6.8.11",
     "exceljs": "^4.4.0",
+    "fs-extra": "^10.1.0",
     "jszip": "^3.10.2",
     "katex": "^0.19.1",
     "mammoth": "^1.13.0",

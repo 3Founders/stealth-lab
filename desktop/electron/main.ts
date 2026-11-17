@@ -1,17 +1,25 @@
-// kell desktop's Electron shell (docs/desktop_app_plan.md; the shell is Electron by owner decision 2026-11-01).
+﻿// kell desktop's Electron shell (docs/desktop_app_plan.md; the shell is Electron by owner decision 2026-11-01).
 //
 // One window on the Next UI. Next runs as a child process (`next start` on a production build), not in-process: in the
 // Electron main, next's programmatic prepare() hangs (its render-server fork resolves to electron.exe instead of node).
 // The child gets ELECTRON_RUN_AS_NODE=1 so it runs as plain node, listens on an OS-picked port (port 0 probed, never a
-// fixed one — the OpenCode desktop app owns 28894 and is never touched), and its whole tree — including the opencode
-// engine it starts through lib/engine.ts's /api routes — dies with the app.
+// fixed one â€” the OpenCode desktop app owns 28894 and is never touched), and its whole tree â€” including the opencode
+// engine it starts through lib/engine.ts's /api routes â€” dies with the app.
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron"
-import { startUpdates, ulog } from "./updater"
 import { markQuitting, startPresence } from "./presence"
 import { isSignInLink, openSignIn } from "./signin"
 import { popupAppMenu, setAppMenu, setFontChoice } from "./menu"
 import { BOOT } from "./memory"
 import { openRoomsEmailSignIn, openRoomsPanel, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
+
+// The updater loads late and defensively: a module missing from the package there must never stop the window from
+// opening. It did once (2026-11-17): a build without fs-extra crashed at require time, before any try/catch could run.
+type StartUpdates = (win: () => BrowserWindow | undefined) => void
+let startUpdates: StartUpdates | null = null
+let ulog: (message: string) => void = () => undefined
+void import("./updater.js")
+  .then((m) => { startUpdates = m.startUpdates; ulog = m.ulog })
+  .catch((e) => console.error("kell updater unavailable", e))
 import { termCreate, termKill, termKillAll, termResize, termWrite } from "./terminal"
 import { browserAct, browserBounds, browserGo, browserState } from "./browser"
 import { createServer } from "node:http"
@@ -247,7 +255,7 @@ if (!app.requestSingleInstanceLock()) {
 
     // Updates (electron/updater.ts): check at start and every few hours, offer a restart when one is downloaded, log to
     // updater.log. Not in dev or the smoke run; a failure never stops the app.
-    if (app.isPackaged && process.env.KELL_SMOKE !== "1" && process.env.KELL_NO_UPDATE !== "1") startUpdates(() => win)
+    if (app.isPackaged && process.env.KELL_SMOKE !== "1" && process.env.KELL_NO_UPDATE !== "1") startUpdates?.(() => win)
     // The tray, the global quick-ask hotkey and its box (electron/presence.ts).
     if (process.env.KELL_SMOKE !== "1") {
       try { const p = startPresence(() => win, base, ROOT, path.join(__dirname, "preload.js")); say(`presence ${JSON.stringify(p)}`) }
