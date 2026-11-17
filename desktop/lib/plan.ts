@@ -10,6 +10,8 @@ export type DelegationStep = {
   tool?: string
   server?: string
   note?: string
+  /** A model recommended for this step (a step's own pick); absent means the Way's default model. */
+  model?: string
   sourceId?: string
   /** Where the step's tool lives: the server's own endpoint (an MCP URL) or how to reach it. From find_ways. */
   locator?: { kind?: string; server?: string; url?: string }
@@ -98,6 +100,7 @@ export function stepsOf(way: any): DelegationStep[] {
       kind,
       ...(b ? { tool: String(b.tool || b.name || ""), server: String(b.server_url || b.server || "") } : {}),
       ...(step?.note ? { note: String(step.note) } : {}),
+      ...(b?.model ? { model: String(b.model) } : step?.model ? { model: String(step.model) } : {}),
       ...(step?.locator && typeof step.locator === "object"
         ? { locator: {
               ...(step.locator.kind ? { kind: String(step.locator.kind) } : {}),

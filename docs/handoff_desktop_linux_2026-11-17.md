@@ -27,36 +27,33 @@ newer. Everything is in place and the last full check passed except for the one 
 | `desktop/scripts/linux-smoke.sh` | **Done.** The five checks that failed were bugs in this script, not the app; fixed in `da827b7d`. |
 | Package size | **Staged and committed, not yet confirmed by a build.** See section 2. |
 
-## 2. The one open item: confirm the size reduction
+## 2. The size item: closed (2026-11-17)
 
-The Linux packages were larger than the Windows one because npm installs every Linux engine variant while only one is
-used, and because node-pty ships prebuilts for all platforms.
+Confirmed by a green run of the workflow on `main` (run `44128994703`, 13m, all smoke checks PASS):
 
-The fix is `build.linux.files` in `desktop/package.json`. It is **Linux-only on purpose**: excluding node-pty's
-prebuilt binaries for every platform would break the Windows terminal, which uses its `win32-x64` prebuild.
+| Artifact | Before the `build.linux.files` change | After |
+|---|---|---|
+| AppImage | 437M | **392M** |
+| `.deb` | 549M | **286M** |
 
-What is excluded, and why it is safe:
+`PASS node-pty spawns a shell` still passes, and the AppImage, the `.deb`, the installed app, the menu entry and
+`desktop.sh` all pass too. The exclusions did what they were meant to.
 
-- `@opencode/cli-linux-x64-{baseline,musl,baseline-musl}` and `@opencode/cli-linux-arm64{,-musl}` — the engine is
-  chosen by `lib/engine.ts` and only `cli-linux-x64/bin/opencode` is ever loaded.
-- `node-pty/prebuilds/{darwin,win32}-*` — the Linux PTY is compiled into `build/Release` by `@electron/rebuild`, and
-  `node-pty/lib/utils.js` looks in `build/Release` **before** `prebuilds/<platform>-<arch>`.
+**Publishing is the one thing left, and it needs write access to the releases repo.** The build is downloaded at
+`desktop/release-linux/` (`kell-0.1.28-x86_64.AppImage`, `kell-0.1.28-amd64.deb`, `latest-linux.yml`). The
+authenticated `gh` account (`ChaitIITB`) has READ only on `AnujB05/kell-desktop`, so the upload answered 404. From an
+account with write access:
 
-**Do not** add `!node_modules/node-pty/prebuilds/linux-x64/**`: Linux does not use a prebuild here, but the pattern
-would also match the directory the loader probes if the rebuild ever moves to a prebuild.
+```
+gh release upload v0.1.28 \
+  desktop/release-linux/kell-0.1.28-x86_64.AppImage \
+  desktop/release-linux/kell-0.1.28-amd64.deb \
+  desktop/release-linux/latest-linux.yml \
+  -R AnujB05/kell-desktop
+```
 
-To finish:
-
-1. Push to `desktop-linux` (or run the workflow by hand) and let the run go green.
-2. Read the AppImage and `.deb` sizes in the workflow log: `linux-smoke.sh` prints them as
-   `AppImage built: … (NNN M)` and `.deb built: … (NNN M)`. Compare against the previous run.
-3. Keep the terminal check's `PASS node-pty spawns a shell` — that is the evidence the exclusions did not cut the PTY.
-4. If both are better and the run is green, the item is closed. Move it out of this file and out of `docs/revisit.md`.
-
-**Caveat to re-check if the numbers look wrong:** electron-builder merges `build.files` with `build.linux.files`, and
-the exclusion globs only work if they match whole paths. Check one build with
-`unzip -l desktop/release/*.AppImage` (or `ar t` on the `.deb`) to see what actually landed, rather than trusting the
-matches alone.
+`/download?os=linux` and `?os=linux&format=deb` already look for exactly those names, so the site needs no change once
+the assets are on the latest release.
 
 ## 3. Things that will trip up the next person
 

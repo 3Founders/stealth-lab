@@ -14,9 +14,9 @@ import { useSpringScroll } from "@/components/chat/useSpringScroll"
 import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
 import { applyFont, readFont, saveFont } from "@/lib/font"
-import type { Delegation, GoalOption, WayOption } from "@/lib/plan"
+import type { Delegation, DelegationStep, GoalOption, WayOption } from "@/lib/plan"
 import { planFromOption } from "@/lib/plan"
-import ProcedureGraph from "@/components/ProcedureGraph"
+import ProcedurePanel from "@/components/ProcedurePanel"
 import ProcedurePicker from "@/components/ProcedurePicker"
 import BottomPanel, { GlobeIcon, TerminalIcon, type PanelTab } from "@/components/BottomPanel"
 
@@ -234,6 +234,8 @@ type Settings = {
   signedIn: boolean; account: string | null; subject?: string | null; server: string | null
   lane?: "organization" | "personal" | "own-key" | "none"; gateway?: string | null
   models: { cheap: string | null; strong: string | null; fallback: string | null; mode: string | null }
+  /** Every model this machine may run; the step model picker searches it. Empty when unknown. */
+  catalog?: string[]
   engine: { exe: string | null; directory: string | null }
 }
 
@@ -250,6 +252,12 @@ const tokensOf = (d: any) => {
   const inn = Number(t.input) || 0, out = (Number(t.output) || 0) + (Number(t.reasoning) || 0), cached = Number(t.cache?.read) || 0
   return `${inn} in / ${out} out${cached ? ` / ${cached} cached` : ""}`
 }
+
+/** A chosen plan as the WayOption the record editor takes, so the panel can show it after the pick. */
+const delegationWay = (d: Delegation | null): WayOption | null => d?.way ? {
+  id: d.way.id, name: d.way.name, approval: d.way.approval, review: "", why: d.why,
+  goal: d.goal, tool: d.tool, steps: d.steps,
+} : null
 
 export default function Home() {
   const [directory, setDirectory] = useState("")
@@ -633,6 +641,10 @@ export default function Home() {
   // The Ways the router offered for the message waiting on the person's choice. The turn does not run until one is
   // picked (or the person chooses to run without a Way).
   const [delegateOptions, setDelegateOptions] = useState<WayOption[]>([])
+  // The Way whose record is open in the chat (the sheet): the right panel follows it, so the record is always visible.
+  const [inspectWay, setInspectWay] = useState<WayOption | null>(null)
+  // Step edits per Way (title, note, and an optional model), shared by the right panel and the card's sheet.
+  const [procDrafts, setProcDrafts] = useState<Record<string, DelegationStep[]>>({})
   // The Goals the search matched, even when none has a written Way: the chat shows the result before the model runs.
   const [delegateGoals, setDelegateGoals] = useState<GoalOption[]>([])
   const [pendingTurn, setPendingTurn] = useState<{ text: string; files: Attachment[]; asGoal: boolean; goal: Delegation["goal"]; sid: string | null } | null>(null)
@@ -1959,11 +1971,46 @@ export default function Home() {
     setDelegation(plan)
     setDelegateOptions([])
     setDelegateGoals([])
+    setInspectWay(null)
     setPendingTurn(null)
     setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateLog([])
     beginTurn(key, pending.sid)
     setDelegateStatus(`Working with ${plan.model?.id || "the engine's default"}…`)
     void runTurn(pending.text, pending.files, plan, key, pending.sid)
+  }
+
+  // The procedure editor's steps: one shared list per Way, so the right panel and the card's sheet edit the same record.
+  const procKey = (o: WayOption) => o.id || o.name
+  const stepsFor = (o: WayOption) => procDrafts[procKey(o)] ?? o.steps
+  const setProcSteps = (o: WayOption, steps: DelegationStep[]) =>
+    setProcDrafts((d) => ({ ...d, [procKey(o)]: steps }))
+  const editProcStep = (o: WayOption, i: number, patch: Partial<DelegationStep>) =>
+    setProcSteps(o, stepsFor(o).map((s, n) => (n === i ? { ...s, ...patch } : s)))
+  const addProcStep = (o: WayOption) =>
+    setProcSteps(o, [...stepsFor(o), { order: stepsFor(o).length + 1, title: "New step", kind: "prompt" }])
+  const removeProcStep = (o: WayOption, i: number) =>
+    setProcSteps(o, stepsFor(o).filter((_, n) => n !== i).map((s, n) => ({ ...s, order: n + 1 })))
+  const replaceProcSteps = (o: WayOption, steps: DelegationStep[]) =>
+    setProcSteps(o, steps.map((s, n) => ({ ...s, order: n + 1 })))
+  const useProcWay = (o: WayOption) => {
+    if (!pendingTurn) return
+    applyOption({ ...o, steps: stepsFor(o) })
+    setInspectWay(null)
+  }
+  // Ask kell to rewrite the steps (title and note) from a sentence: the editor's input, like the canvas's.
+  const askProcedure = async (o: WayOption, text: string) => {
+    const steps = stepsFor(o)
+    const r = await fetch("/api/procedure/edit", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: o.name, goal: o.goal?.name || "",
+        steps: steps.map(({ title, note, kind, tool, model }) => ({ title, note, kind, tool, model })),
+        instruction: text,
+      }),
+    })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(j.error || `the edit answered ${r.status}`)
+    if (Array.isArray(j.steps)) replaceProcSteps(o, j.steps as DelegationStep[])
   }
 
   // "Run without a Way": the turn still runs, on the model the ladder would pick for the task, with no procedure
@@ -1977,6 +2024,7 @@ export default function Home() {
     setDelegation(plan)
     setDelegateOptions([])
     setDelegateGoals([])
+    setInspectWay(null)
     setPendingTurn(null)
     setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateLog([])
     beginTurn(key, pending.sid)
@@ -2514,6 +2562,8 @@ export default function Home() {
     ? planFromOption(pendingTurn.text, settings?.models || {}, pendingTurn.goal, delegateOptions[0] ?? null)
     : null
   const shownPlan = delegation ?? previewPlan
+  // The record the right panel shows: the card open in the chat, else the best fit while choosing, else the chosen Way.
+  const panelWay: WayOption | null = inspectWay ?? delegateOptions[0] ?? (delegationWay(delegation))
 
   // The side sheet's derived view: this chat's stored threads, newest first, and whether its newest turn is still out.
   const btwThreads = btwHistory
@@ -3204,7 +3254,9 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                       </div>
                     </div>
                     <div className="dk-pick-wide">
-                      <ProcedurePicker goal={pendingTurn.goal} options={delegateOptions} goals={delegateGoals}
+                      <ProcedurePicker goal={pendingTurn.goal} options={delegateOptions} goals={delegateGoals} onInspect={setInspectWay}
+                        stepsFor={stepsFor} onEdit={editProcStep} onAdd={addProcStep} onRemove={removeProcStep}
+                        onAsk={askProcedure} catalog={settings?.catalog || []}
                         onPick={applyOption} onSkip={runWithoutWay} />
                     </div>
                   </div>
@@ -3583,9 +3635,14 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                   </>)}
             </section>
           )}
-          {/* The procedure graph: the chosen Way, or a preview of the best fit while the chat shows the choice. */}
-          <ProcedureGraph plan={shownPlan} preview={!!previewPlan}
-            previewLabel={delegateOptions.length ? "Preview · pick in the chat" : "Search result · no Way"}
+          {/* The procedure record, editable in the panel: the card open in the chat, else the best fit, else the chosen Way. */}
+          <ProcedurePanel option={panelWay} steps={panelWay ? stepsFor(panelWay) : []} catalog={settings?.catalog || []}
+            onEdit={(i, patch) => panelWay && editProcStep(panelWay, i, patch)}
+            onAdd={() => panelWay && addProcStep(panelWay)}
+            onRemove={(i) => panelWay && removeProcStep(panelWay, i)}
+            onAsk={panelWay ? (t) => askProcedure(panelWay, t) : undefined}
+            onUse={pendingTurn && panelWay ? () => useProcWay(panelWay) : undefined}
+            previewLabel={inspectWay ? "Open in the chat" : delegateOptions.length ? "Preview · pick in the chat" : undefined}
             glass={glassGraph} onToggleGlass={toggleGlassGraph} />
         </aside>
         <div className="dk-scrim-right" onClick={() => setRightOpen(false)} aria-hidden="true" />

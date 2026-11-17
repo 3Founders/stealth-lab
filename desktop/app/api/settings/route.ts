@@ -39,6 +39,7 @@ export async function GET() {
   let lane: "organization" | "personal" | "own-key" | "none" = "none"
   let gateway: string | null = null
   let models = { cheap: oc.cheap || null, strong: oc.strong || null, fallback: oc.fallback || null, mode: oc.mode || null }
+  let catalog: string[] = []      // every model this machine may run: the search in a step's model picker
   if (pooled) {
     try {
       const c = JSON.parse(pooled.content)
@@ -50,7 +51,7 @@ export async function GET() {
       const offered = Object.keys(k?.models || {})
       const ids = offered.length ? ladderOrder(offered)
         : String(k?.options?.headers?.["x-stealthlab-fallback-models"] || "").split(",").filter(Boolean)
-      if (ids.length) models = { ...modelPlan(ids), mode: "session" }
+      if (ids.length) { models = { ...modelPlan(ids), mode: "session" }; catalog = ids }
     } catch { lane = "none" }
   } else if (ownKeyLane()) {
     lane = "own-key"
@@ -64,8 +65,9 @@ export async function GET() {
     if (!personalModelIds().length && Date.now() - lastAsk > 60_000) { lastAsk = Date.now(); await personalEngineConfig().catch(() => undefined) }
     // the gateway lists them in its own order; the engine runs them in MODEL_LADDER's (lib/pooled.ts), and so does this
     const ids = ladderOrder(personalModelIds())
-    if (ids.length) models = { ...modelPlan(ids), mode: "session" }
+    if (ids.length) { models = { ...modelPlan(ids), mode: "session" }; catalog = ids }
   }
+  if (!catalog.length) catalog = [...new Set([oc.cheap, oc.strong, oc.fallback].filter((m: unknown): m is string => typeof m === "string" && !!m))]
 
   // Who the saved token belongs to, read from its payload for display and for the app's same-account check with the
   // rooms only (the token is not verified here and never leaves this route; the server verifies it on every call).
@@ -80,6 +82,7 @@ export async function GET() {
     lane,
     gateway,
     models,
+    catalog,
     engine: { exe: findEngineExe() || null, directory: e?.directory || null },
   })
 }
