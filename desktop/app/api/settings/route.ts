@@ -17,6 +17,7 @@ import { engineStatus, findEngineExe } from "@/lib/engine"
 import { pooledEngineConfig, ownKeyLane, personalModelIds, personalEngineConfig, gatewayOrigin, ladderOrder } from "@/lib/pooled"
 import { modelPlan } from "@/lib/kellplugin"
 import { kellCommand } from "@/lib/cli"
+import { tokenLive } from "@/lib/token"
 
 export const dynamic = "force-dynamic"
 
@@ -53,7 +54,7 @@ export async function GET() {
     } catch { lane = "none" }
   } else if (ownKeyLane()) {
     lane = "own-key"
-  } else if (cfg.token) {
+  } else if (tokenLive(cfg)) {
     // Signed in, in no team, no developer key: the person's own plan pays through kell's gateway. The model list is the
     // gateway's, known once the engine has started.
     lane = "personal"
@@ -72,7 +73,7 @@ export async function GET() {
   try { who = JSON.parse(Buffer.from(String(cfg.token).split(".")[1], "base64url").toString("utf8")) || {} } catch { /* not a JWT */ }
 
   return NextResponse.json({
-    signedIn: !!cfg.token,                               // no saved url is fine: the CLI falls back to its default server
+    signedIn: tokenLive(cfg),                            // no saved url is fine: the CLI falls back to its default server
     account: who.email || cfg.email || cfg.account || null,
     subject: who.sub || null,
     server,

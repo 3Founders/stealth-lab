@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "start": "next start -p 3400",
     "electron:build": "tsc -p electron",
+    "predist": "node scripts/seed-electron-checksums.mjs",
     "dist": "npm run build && npm run electron:build && electron-builder --win nsis --publish never"
   },
   "build": {

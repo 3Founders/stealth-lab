@@ -1,0 +1,18 @@
+# The kell-mcp image builds from backend/ only (backend/Dockerfile.mcp-server).
+# Ignore everything else so `railway up` does not archive the research notes,
+# decks, PDFs and local experiment output that live in this working tree.
+*
+!backend/
+!backend/**
+
+# Never upload local secrets or the virtualenv.
+backend/.env
+backend/.venv/
+backend/**/__pycache__/
+backend/**/*.pyc
+
+# Not needed by the running service, and they made the upload time out.
+backend/tests/
+backend/.cache_joint/
+backend/.scratch/
+backend/**/*.log

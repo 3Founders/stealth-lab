@@ -34,6 +34,7 @@ from app.services.semantic.providers import (
     CAP_APPLICABILITY,
     CAP_GOAL,
     CAP_IDENTITY,
+    CAP_PROCEDURE,
     CAP_RELATION,
     CAP_RETENTION,
     CAP_SUMMARY,
@@ -174,6 +175,11 @@ class SemanticJudge:
         """Whether the transcript demonstrates the completion condition (met / not_yet / impossible). JEV answers it as
         one typed choice; the fallbacks return the same JSON contract (prompts.GOAL_VERDICTS)."""
         return await self._run("goal", CAP_GOAL, lambda p: p.goal(condition, transcript))
+
+    async def judge_procedure(self, query: str, context: str = "") -> ChainResult:
+        """Whether `query` asks for a procedure (a way/method) to choose, rather than for work to be done or a question
+        answered directly (prompts.PROCEDURE_KINDS); `context`: the conversation's earlier turns, or ""."""
+        return await self._run("procedure", CAP_PROCEDURE, lambda p: p.procedure(query, context))
 
     async def judge_identity_batch(self, kind: str, a: str, candidates: list) -> ChainResult:
         if not candidates:

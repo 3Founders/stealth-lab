@@ -30,7 +30,7 @@ import json
 import logging
 import re
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -280,13 +280,12 @@ async def your_turn(step: dict, run: dict) -> dict:
         turn["earlier"] = ctx
     if step["kind"] == "tool":
         loc = step["locator"]
-        server, name = loc.get("server") or loc["value"], loc.get("tool")
-        call = (f'use_tool(server="{server}", name="{name}", arguments={{...}})' if name else "use_tool(...)")
-        turn["do"] = (f"Call {'the tool ' + name + ' of ' if name else 'the tool '}{server} through kell: "
-                      f'discover_tools(server="{server}") to see its tools and input schemas, then {call} with '
-                      f"the arguments this step needs"
-                      + (f": {step['prompt']}" if step["prompt"] else f" ({step['title']})")
-                      + ". Report the tool's answer as the output. If the tool cannot do it, report failed=<why>; do "
+        server = loc.get("server") or loc["value"]
+        turn["do"] = (f"Use {server} through kell to do this step: discover_tools(server=\"{server}\") to see its tools "
+                      f"and input schemas, then call use_tool(server=\"{server}\", name=<tool>, arguments={{...}}) for "
+                      f"each call the step needs -- several searches or page reads in one turn are fine. "
+                      + (f"The step: {step['prompt']}." if step["prompt"] else f"The step: {step['title']}.")
+                      + " Report the tools' answers as the output. If the tool cannot do it, report failed=<why>; do "
                         "not do the work another way. " + SIDE_EFFECTS)
     else:
         if step["kind"] == "fetch":
@@ -376,12 +375,31 @@ async def _look_up(pool: Any, run: dict, why: str, finder: _lk.Lookup, need: str
                              max_depth=MAX_DEPTH)
 
 
-async def advance(pool: Any, run: dict, finder: Optional[_lk.Lookup] = None) -> dict:
+async def _emit(on_progress: Optional[Callable[[dict[str, Any]], Any]], event: dict[str, Any]) -> None:
+    """Tell a listener about one step. Presentation only: a listener that raises is logged, never allowed to fail the run."""
+    if on_progress is None:
+        return
+    try:
+        out = on_progress(event)
+        if hasattr(out, "__await__"):
+            await out
+    except Exception:  # noqa: BLE001
+        log.warning("way run: progress listener failed", exc_info=True)
+
+
+async def advance(pool: Any, run: dict, finder: Optional[_lk.Lookup] = None,
+                  on_progress: Optional[Callable[[dict[str, Any]], Any]] = None) -> dict:
     """Run every step kell can run, and stop at the first one the session or a person must do. With `finder` (a
-    find_ways call), a step looks up once when it is due, fails, or kell's model says what it needs (way_lookups)."""
+    find_ways call), a step looks up once when it is due, fails, or kell's model says what it needs (way_lookups).
+
+    `on_progress` is called as each step starts and ends (a chat can show the run without polling the row). It may be
+    sync or async; a callback that fails never stops the run.
+    """
     plan = run["plan"]
     while run["status"] in ("running",) and run["next_step"] <= len(plan):
         step = plan[run["next_step"] - 1]
+        await _emit(on_progress, {"event": "step", "status": "running", "order": step["order"], "of": len(plan),
+                                  "title": step["title"], "kind": step["kind"]})
         if finder is not None and _lk.due(step):
             if await _look_up(pool, run, f"hint: {step.get('hint')}" if step.get("hint") else "a goal with no Way",
                               finder) == "spliced":
@@ -391,6 +409,8 @@ async def advance(pool: Any, run: dict, finder: Optional[_lk.Lookup] = None) -> 
             run["waiting"] = {"kind": "step", "order": step["order"], "title": step["title"],
                               "description": step["description"],
                               "then": f"run_way(run_id=\"{run['id']}\", done=true, note=<what they did or found>)"}
+            await _emit(on_progress, {"event": "step", "status": "waiting_human", "order": step["order"], "of": len(plan),
+                                      "title": step["title"], "kind": step["kind"]})
             break
         try:
             if run["mode"] == "session" and _who(step, "session") == "your session":
@@ -417,27 +437,65 @@ async def advance(pool: Any, run: dict, finder: Optional[_lk.Lookup] = None) -> 
                     await _look_up(pool, run, f"failed: {exc}", finder) == "spliced":
                 continue                                        # another Way does this step instead
             run["status"], run["error"], run["waiting"] = "failed", f"step {step['order']}: {exc}"[:600], None
+            await _emit(on_progress, {"event": "step", "status": "failed", "order": step["order"], "of": len(plan),
+                                      "title": step["title"], "kind": step["kind"], "error": run["error"]})
             break
         run["outputs"].append({"order": step["order"], "title": step["title"], "actor": "ai", "output": output})
         run["next_step"] += 1
+        await _emit(on_progress, {"event": "step", "status": "done", "order": step["order"], "of": len(plan),
+                                  "title": step["title"], "kind": step["kind"], "output": str(output)[:400]})
     if run["status"] == "running":
         run["status"], run["waiting"] = "done", None
     await _save(pool, run)
     if run["status"] in ("done", "failed"):
         await record_outcome(pool, run)
-    return view(run)
+    result = view(run)
+    await _emit(on_progress, {"event": "done", **result})
+    return result
 
 
 async def start(pool: Any, way_id: str, *, owner_id: str, input: str = "", mode: str = "session",
-                finder: Optional[_lk.Lookup] = None) -> dict:
+                finder: Optional[_lk.Lookup] = None,
+                on_progress: Optional[Callable[[dict[str, Any]], Any]] = None,
+                overrides: Optional[list[dict]] = None) -> dict:
     """Load a Way into a run and go as far as kell can on its own. With `finder`, the steps JEV judged may need a
-    lookup (once per version of the Way, way_lookups.hints) look up when the run reaches them."""
+    lookup (once per version of the Way, way_lookups.hints) look up when the run reaches them. `on_progress` hears each
+    step start and end (see `advance`). `overrides` is what the person changed in the procedure panel: only a step's
+    title and an added note, by order, on the approved Way they were offered (2026-11-17). Tools, kinds and bindings
+    stay the Way's own, so editing never changes what the run may call."""
     if mode not in ("session", "headless"):
         raise RunError("mode is session or headless")
     way = await _way(pool, way_id, owner_id)
     plan = await expand(pool, way, owner_id)
     if not plan:
         raise RunError("this Way has no steps")
+    if overrides:
+        by_order: dict[int, dict] = {}
+        for o in overrides:
+            if not isinstance(o, dict):
+                continue
+            try:
+                n = int(o.get("order") or 0)
+            except (TypeError, ValueError):
+                continue
+            if n > 0:
+                by_order[n] = o
+        for step in plan:
+            o = by_order.get(int(step.get("order") or 0))
+            if not o:
+                continue
+            title = _text(o.get("title"))
+            if title:
+                step["title"] = title[:300]
+            note = _text(o.get("note"))[:2000]
+            if note:
+                added = f"\n\nFrom the person: {note}"
+                if step.get("instruction"):
+                    step["instruction"] = f"{step['instruction']}{added}"
+                elif step.get("prompt"):
+                    step["prompt"] = f"{step['prompt']}{added}"
+                else:
+                    step["instruction"] = note
     if finder is not None:
         try:
             _lk.apply_hints(plan, await _lk.hints(pool, way["id"], plan))
@@ -446,7 +504,7 @@ async def start(pool: Any, way_id: str, *, owner_id: str, input: str = "", mode:
     rid = await pool.fetchval(
         """INSERT INTO way_runs (procedure_row_id, owner_id, input, mode, plan) VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
            RETURNING id::text""", way["id"], owner_id, input or "", mode, json.dumps(plan))
-    return await advance(pool, await _load(pool, rid, owner_id), finder)
+    return await advance(pool, await _load(pool, rid, owner_id), finder, on_progress)
 
 
 async def report(pool: Any, run_id: str, *, owner_id: str, output: Any = None, failed: str = "",

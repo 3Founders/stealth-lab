@@ -1,5 +1,5 @@
-// The one bridge between the page and the Electron main: open a tool's sign-in in the person's default browser; the
-// account sign-in and sign-out; the team rooms view (electron/rooms.ts); the bottom panel's terminal and browser. Nothing else is exposed
+// The one bridge between the page and the Electron main: the account sign-in and sign-out; the team rooms view
+// (electron/rooms.ts); the bottom panel's terminal and browser. Nothing else is exposed
 // (contextIsolation stays on; the page never sees ipcRenderer itself).
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 
@@ -7,7 +7,6 @@ type Rect = { x: number; y: number; width: number; height: number }
 type BrowserState = { url: string; title: string; loading: boolean; back: boolean; forward: boolean }
 
 contextBridge.exposeInMainWorld("kellDesktop", {
-  openSignIn: (url: string): Promise<boolean> => ipcRenderer.invoke("kell:open-signin", String(url)),
   openAccount: (url: string): Promise<boolean> => ipcRenderer.invoke("kell:account-open", String(url)),
   signOutRooms: (): Promise<void> => ipcRenderer.invoke("kell:rooms-signout"),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke("kell:pick-folder"),

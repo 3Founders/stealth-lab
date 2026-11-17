@@ -119,6 +119,19 @@ describe("Submit a Way", () => {
     expect(host.textContent).toContain("Go or no-go");
   });
 
+  it("swaps two steps with the up and down buttons, keeping what was typed", () => {
+    const api = fakeApi();
+    root = createRoot(host);
+    act(() => root!.render(<SubmitWay api={api} />));
+    type(host.querySelector('textarea[aria-label="What the person does in step 1"]') as HTMLTextAreaElement, "first");
+    type(host.querySelector('textarea[aria-label="Prompt for step 2"]') as HTMLTextAreaElement, "second");
+    act(() => (host.querySelector('button[aria-label="Move step 2 up"]') as HTMLButtonElement).click());
+    expect((host.querySelector('textarea[aria-label="Prompt for step 1"]') as HTMLTextAreaElement).value).toBe("second");
+    expect((host.querySelector('textarea[aria-label="What the person does in step 2"]') as HTMLTextAreaElement).value).toBe("first");
+    act(() => (host.querySelector('button[aria-label="Move step 1 down"]') as HTMLButtonElement).click());
+    expect((host.querySelector('textarea[aria-label="What the person does in step 1"]') as HTMLTextAreaElement).value).toBe("first");
+  });
+
   it("cleans a step for the server", () => {
     expect(cleanStep({ kind: "human", description: "  do it ", prompt: "dropped", locator: "x" })).toEqual({ kind: "human", description: "do it" });
     expect(cleanStep({ kind: "automated", title: "", prompt: "p", locator: "  https://a.b " })).toEqual({ kind: "automated", prompt: "p", locator: "https://a.b" });

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Back control: a real link to "/" that goes back in history only after the visitor has moved around this site.
+// The Back control: a real link to the homepage (with the one-time-redirect bypass) that goes back in history only after the visitor has moved around this site.
 import React, { act } from "react";
 // @ts-ignore this app does not install @types/react-dom; the test only needs createRoot at runtime
 import { createRoot } from "react-dom/client";
@@ -29,7 +29,7 @@ afterEach(() => { act(() => root?.unmount()); host?.remove(); host = null; root 
 describe("Back control", () => {
   it("opened directly (a new tab or a shared link): a link to the homepage that says so, and a click is left to the browser", async () => {
     await mount();
-    expect(link()!.getAttribute("href")).toBe("/");
+    expect(link()!.getAttribute("href")).toBe("/?home=1");
     expect(link()!.textContent).toBe("Back to home");
     expect(click().defaultPrevented).toBe(false);
     expect(back).not.toHaveBeenCalled();

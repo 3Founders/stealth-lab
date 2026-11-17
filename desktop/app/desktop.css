@@ -238,10 +238,12 @@
    side call. Motion is the same kit as the rest of the panel -- an 8 px rise on --dg-smooth, transform and opacity only. */
 @keyframes dk-delegate-in { from { opacity: 0; transform: translateY(8px); } }
 .dk-delegate-body { display: flex; flex-direction: column; gap: 4px; margin: 2px 6px 0; animation: dk-delegate-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
-.dk-delegate-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; font-size: 12.5px; }
-.dk-delegate-row > span { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--grey); }
-.dk-delegate-row > b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-delegate-row > i { font-style: normal; font-size: 10.5px; color: var(--grey); }
+/* A plan row reads label, value, then its tier right beside the value: the tier used to be pushed to the far edge of a
+   wide panel, where it looked detached from the model it describes (2026-11-16). */
+.dk-delegate-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12.5px; }
+.dk-delegate-row > span { flex: 0 0 44px; white-space: nowrap; font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--grey); }
+.dk-delegate-row > b { flex: 0 1 auto; min-width: 0; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-delegate-row > i { flex: none; font-style: normal; font-size: 10.5px; color: var(--grey); }
 .dk-delegate-row > i[data-rung="strong"] { color: var(--ink); }
 .dk-delegate-row > i[data-rung="cheap"] { color: var(--cobalt); }
 .dk-brief { margin-top: 2px; }
@@ -259,6 +261,18 @@
 .dk-delegate-status { display: flex; align-items: center; gap: 6px; margin: 2px 6px 4px; font-size: 12px; color: var(--grey); }
 .dk-delegate-status .dg-pulse { flex: none; }
 /* The same updates in the chat column, so closing the right panel does not hide what the worker is doing. */
+/* ChatGPT-like prompt rail on the chat's right edge: ticks appear when the pointer is near, each jumps to a prompt. */
+.dk-rail { position: absolute; right: 2px; top: 10px; bottom: 10px; width: 12px; z-index: 6; pointer-events: none;
+  opacity: 0; transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-rail[data-on] { opacity: 1; }
+.dk-rail button { position: absolute; right: 3px; width: 4px; height: 3px; padding: 0; border: 0; border-radius: 2px;
+  background: var(--grey); opacity: .75; cursor: pointer; pointer-events: auto; transform-origin: right center;
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-rail button:hover, .dk-rail button:focus-visible { transform: scaleX(2); background: var(--ink); opacity: 1; outline: none; }
+@media (prefers-reduced-motion: reduce) { .dk-rail, .dk-rail button { transition: none; } }
+/* A search hit's message, marked while the chat scrolls to it. */
+.dg-run.dk-found { outline: 2px solid var(--yellow); outline-offset: 3px; border-radius: 8px; }
 .dk-delegate-live { display: flex; align-items: center; gap: 6px; margin: 0 4px 6px; font-size: 12px; color: var(--grey);
   animation: dk-delegate-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
 .dk-delegate-live .dg-pulse { flex: none; }
@@ -293,9 +307,12 @@
 .dk-proc { position: relative; margin: 2px 6px 6px; }
 .dk-proc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .dk-proc-head h2 { margin: 0 0 4px; }
+.dk-proc-preview { margin: 0 0 4px auto; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--grey); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 6px; }
 .dk-proc-toggle { flex: none; }
 .dk-proc-toggle[aria-pressed="true"] { color: var(--ink); border-color: var(--rule-strong); background: var(--soft, rgba(0,0,0,.05)); }
-.dk-proc-graph { position: relative; isolation: isolate; border-radius: 14px; padding: 10px 10px 8px; overflow: hidden; }
+.dk-proc-graph { position: relative; isolation: isolate; border-radius: 14px; padding: 10px 10px 8px; overflow: hidden;
+  animation: dk-proc-in 460ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
 .dk-proc-aurora { position: absolute; inset: -28%; z-index: 0; pointer-events: none; opacity: 0;
   background:
     radial-gradient(circle at 18% 0%, color-mix(in oklab, var(--cobalt) 30%, rgba(0,0,0,0)), rgba(0,0,0,0) 62%),
@@ -322,6 +339,9 @@
   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .dk-proc-goal b { font-size: 13px; }
 .dk-proc-goal small { font-size: 10px; color: var(--grey); font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; }
+/* A Goal matched with no written Way: the graph says so instead of drawing a Way that does not exist. */
+.dk-proc-empty { border-style: dashed; }
+.dk-proc-empty small { font-size: 10.5px; color: var(--grey); }
 .dk-proc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .dk-proc-tags i { font-style: normal; font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 999px;
   color: var(--grey); border: 1px solid var(--rule); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -344,6 +364,28 @@
 .dk-proc-foot { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .dk-proc-chip { font-size: 10px; color: var(--grey); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 7px;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The graph's entrance, in the order a procedure is read: the sheet, the Goal, the link drawn down, the Way, then each
+   step (one after another). Transform and opacity only; the aurora's blur is static and never animated
+   (docs/ios_animation.md sections 4.6 and 6). The key on .dk-proc-graph replays it when the picked Way changes. */
+.dk-proc-goal { animation: dk-proc-pop 460ms var(--dg-bouncy, cubic-bezier(.32, .72, 0, 1)) 60ms backwards; }
+.dk-proc-way { animation: dk-proc-pop 460ms var(--dg-bouncy, cubic-bezier(.32, .72, 0, 1)) 220ms backwards; }
+.dk-proc-link { transform-origin: top center; animation: dk-proc-draw 320ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) 170ms backwards; }
+.dk-proc-steps::before { transform-origin: top center; animation: dk-proc-draw 460ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) 280ms backwards; }
+.dk-proc-step { animation: dk-proc-step-in 420ms var(--dg-smooth, cubic-bezier(.32, .72, 0, 1)) backwards;
+  animation-delay: calc(320ms + var(--i, 0) * 70ms); }
+.dk-proc-foot { animation: dg-rise 420ms var(--dg-smooth, cubic-bezier(.32, .72, 0, 1)) 600ms backwards; }
+.dk-proc-aurora { animation: dk-proc-aurora-in 900ms var(--dg-smooth, cubic-bezier(.32, .72, 0, 1)) backwards; }
+@keyframes dk-proc-in { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes dk-proc-pop { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes dk-proc-draw { from { opacity: 0; transform: scaleY(0); } to { opacity: 1; transform: scaleY(1); } }
+@keyframes dk-proc-step-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+@keyframes dk-proc-aurora-in { from { opacity: 0; transform: scale(.94); } to { transform: none; } }
+/* Hover and press follow the micro spring: a 1 px lift, never a layout shift. */
+.dk-proc-node { transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+  border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), box-shadow var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-proc-step:hover .dk-proc-node { transform: translateY(-1px); border-color: var(--rule-strong);
+  box-shadow: 0 6px 16px rgba(0,0,0,.07); }
 /* No glass when the person turned it off, the OS asks for less transparency, or the browser cannot blur. */
 .dk-proc[data-glass="off"] .dk-proc-graph::before,
 .dk-proc[data-glass="off"] .dk-proc-node { background: var(--surface); }
@@ -360,59 +402,159 @@
   .dk-proc[data-glass="on"] .dk-proc-aurora { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dk-proc-aurora, .dk-proc-node, .dk-proc-graph { animation: none !important; transition: none !important; }
+  .dk-proc-aurora, .dk-proc-node, .dk-proc-graph, .dk-proc-goal, .dk-proc-way, .dk-proc-link, .dk-proc-step,
+  .dk-proc-foot, .dk-proc-steps::before { animation: none !important; transition: none !important; }
 }
 
-/* The procedure picker: the router's Ways as App-Store-like cards (tile, title, one line, metadata, action). The
-   whole card is the target; "Best fit" is a text badge, never only a colour. Same glass layer as the graph. */
-.dk-pick-sub { margin: 0 0 6px; font-size: 11.5px; line-height: 1.45; color: var(--grey); }
-.dk-pick-sub b { font-weight: 500; color: var(--ink); }
-.dk-pick-graph { padding: 8px; }
-.dk-pick-list { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 6px; }
-.dk-pick-card { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 9px;
-  align-items: center; width: 100%; padding: 8px; border-radius: 12px; cursor: pointer; text-align: left; font: inherit; color: var(--ink);
-  border: 1px solid color-mix(in oklab, var(--ink) 10%, rgba(0,0,0,0));
-  background: color-mix(in oklab, var(--surface) 84%, rgba(0,0,0,0));
-  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
-              border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), box-shadow var(--dg-micro-d, 160ms) var(--dg-micro, ease);
+/* The procedure choice: the router's Ways as the rooms' tool sign-in cards -- a gradient tile, a title, one line of
+   supporting text, a metadata row, a "Best fit" badge and one dark action. Several Ways scroll sideways, one snap per
+   card, so the sidebar does not grow downwards; the turn waits until one is picked (2026-11-16). */
+.dk-pick { margin: 0 0 2px; padding: 12px 12px 10px; border: 1px solid var(--rule-strong); border-radius: 12px;
+  background: var(--paper); display: grid; gap: 8px; max-width: 100%;
   animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
-.dk-proc[data-glass="on"] .dk-pick-card { background: color-mix(in oklab, var(--surface) 66%, rgba(0,0,0,0));
-  border-color: color-mix(in oklab, var(--paper) 55%, rgba(0,0,0,0)); box-shadow: 0 1px 0 rgba(255,255,255,.4) inset; }
-.dk-pick-card:hover { transform: translateY(-1px); border-color: var(--rule-strong);
-  box-shadow: 0 8px 22px rgba(0,0,0,.10); }
-.dk-pick-card:active { transform: scale(.99); }
-.dk-pick-card:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
-.dk-pick-icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: #fff;
-  background: linear-gradient(145deg, color-mix(in oklab, var(--cobalt) 85%, #000), color-mix(in oklab, var(--cobalt) 45%, #000));
-  box-shadow: 0 4px 12px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.35) inset; }
-.dk-pick-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* The picker spans the centre panel: the run is two columns (avatar, meta) and the card is one full-width row under
+   them, so its sideways scrollbar reaches both ends with only the card's own margin left over (2026-11-16). */
+.dk-pick-run .dg-col { min-width: 0; max-width: 100%; }
+.dk-pick-wide { grid-column: 1 / -1; min-width: 0; }
+.dk-pick-head h2 { margin: 0 0 3px; }
+.dk-pick-sub { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--grey); }
+.dk-pick-sub b { font-weight: 500; color: var(--ink); }
+.dk-pick-empty { display: grid; gap: 8px; }
+.dk-pick-empty-goal { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--grey); }
+.dk-pick-empty-goal b { font-weight: 500; color: var(--ink); }
+.dk-pick-goals { display: flex; flex-wrap: wrap; gap: 4px; }
+.dk-pick-goal-chip { font-size: 10.5px; line-height: 17px; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--rule); color: var(--grey); max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.dk-pick-goal-chip[data-has-way] { color: var(--ink); border-color: var(--rule-strong); }
+.dk-pick-strip { display: flex; align-items: flex-start; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+  margin-inline: -12px; padding: 2px 12px 8px; scrollbar-width: thin; }
+.dk-pick-strip::-webkit-scrollbar { height: 6px; }
+.dk-pick-strip::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 999px; }
+/* A card is its title and evidence: the generated icon is gone. A Way with its own icon shows it above the title,
+   with Use beside it; without one the title starts at the card's edge (2026-11-17). */
+.dk-pick-card { box-sizing: border-box; flex: 0 0 min(300px, 84%); scroll-snap-align: start;
+  display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface);
+  color: var(--ink);
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              box-shadow var(--dg-micro-d, 160ms) var(--dg-micro, ease);
+  animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards;
+  animation-delay: calc(var(--i, 0) * 60ms); }
+.dk-pick-card:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.10); }
+.dk-pick-card[data-open] { border-color: var(--ink); }
+.dk-pick-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-height: 24px; }
+.dk-pick-icon { width: 28px; height: 28px; border-radius: 8px; object-fit: cover; flex: none; box-shadow: 0 2px 8px rgba(0,0,0,.14); }
+.dk-pick-use { all: unset; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 3px 3px 3px 9px;
+  border-radius: 8px; background: var(--ink); color: var(--paper); font-size: 10.5px; white-space: nowrap; cursor: pointer;
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-pick-use .sq { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; background: var(--yellow);
+  color: #171717; transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
+.dk-pick-use:hover .sq, .dk-pick-use:focus-visible .sq { transform: translate(2px, -2px); }
+.dk-pick-use:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dk-pick-open { all: unset; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; width: 100%; cursor: pointer;
+  border-radius: 8px; }
+.dk-pick-open:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
 .dk-pick-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .dk-pick-title b { font-weight: 500; font-size: 12.5px; line-height: 1.3; overflow: hidden; display: -webkit-box;
-  -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .dk-pick-best { flex: none; font-size: 9px; letter-spacing: .06em; text-transform: uppercase; background: var(--yellow);
   color: #171717; border-radius: 3px; padding: 2px 5px 1px; }
 .dk-pick-why { font-size: 11.5px; line-height: 1.35; color: var(--grey); overflow: hidden; display: -webkit-box;
-  -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .dk-pick-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .dk-pick-meta i { font-style: normal; font-size: 9.5px; line-height: 15px; padding: 0 5px; border-radius: 999px;
   color: var(--grey); border: 1px solid var(--rule); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-pick-meta i[data-approval="approved"], .dk-pick-meta i[data-approval="ai_approved"],
 .dk-pick-meta i[data-approval="verified"] { color: var(--ink); border-color: var(--rule-strong); }
 .dk-pick-meta i.dk-pick-tool { color: var(--cobalt); border-color: color-mix(in oklab, var(--cobalt) 40%, rgba(0,0,0,0)); }
+.dk-pick-meta i.dk-pick-goal { color: var(--ink); border-color: var(--rule-strong); }
 .dk-pick-meta i.dk-pick-id { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; }
-.dk-pick-cta { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 4px 4px 4px 10px; border-radius: 8px;
-  background: var(--ink); color: var(--paper); font-size: 11px; white-space: nowrap; }
-.dk-pick-cta .sq { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; background: var(--yellow);
-  color: #171717; transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
-.dk-pick-card:hover .dk-pick-cta .sq, .dk-pick-card:focus-visible .dk-pick-cta .sq { transform: translate(2px, -2px); }
-.dk-pick-skip { position: relative; z-index: 2; justify-self: start; margin: 8px 2px 0; padding: 0; border: 0; background: none;
+
+/* The Way's record, on the right like the canvas panel: metadata, every step, and the step wording editable before
+   the run. Transform for the sheet, opacity for the scrim; both off under reduced motion (docs/ios_animation.md). */
+.dk-proc-layer { position: fixed; inset: 0; z-index: 80; }
+.dk-proc-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.3); animation: dk-proc-scrim-in 220ms var(--dg-micro, ease) both; }
+@keyframes dk-proc-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+.dk-proc-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 94vw); display: flex; flex-direction: column;
+  background: var(--surface); color: var(--ink); border-left: 1px solid var(--rule-strong);
+  box-shadow: -18px 0 48px rgba(0,0,0,.18); animation: dk-proc-in 420ms var(--dg-smooth, cubic-bezier(.32,.72,0,1)) both; }
+@keyframes dk-proc-in { from { transform: translateX(100%); } to { transform: none; } }
+.dk-proc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--rule); }
+.dk-proc-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dk-proc-icon { width: 36px; height: 36px; border-radius: 9px; object-fit: cover; flex: none; }
+.dk-proc-head h2 { margin: 0; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
+.dk-proc-head p { margin: 2px 0 0; font-size: 11.5px; color: var(--grey); }
+.dk-proc-x { all: unset; flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px;
+  color: var(--grey); font-size: 18px; line-height: 1; cursor: pointer; }
+.dk-proc-x:hover { background: rgba(0,0,0,.06); color: var(--ink); }
+.dk-proc-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.dk-proc-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; margin: 0; font-size: 11.5px; line-height: 1.45; }
+.dk-proc-dl dt { color: var(--grey); }
+.dk-proc-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.dk-proc-why { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--grey); }
+.dk-proc-body h3 { margin: 4px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--grey); }
+.dk-proc-body h3 span { font-weight: 400; margin-left: 4px; }
+.dk-proc-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dk-proc-steps li { display: flex; gap: 8px; align-items: flex-start; }
+.dk-proc-steps .n { flex: none; width: 18px; text-align: right; font-size: 11px; color: var(--grey);
+  font-variant-numeric: tabular-nums; padding-top: 6px; }
+.dk-proc-steps .fields { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.dk-proc-steps input { width: 100%; box-sizing: border-box; font: inherit; font-size: 11.5px; padding: 5px 8px;
+  border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); color: var(--ink); }
+.dk-proc-steps input:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-proc-steps .k { font-size: 10px; color: var(--grey); }
+.dk-proc-reset { align-self: flex-start; padding: 0; border: 0; background: none; font: inherit; font-size: 11px;
+  color: var(--grey); text-decoration: underline; cursor: pointer; }
+.dk-proc-reset:hover { color: var(--ink); }
+.dk-proc-foot { padding: 10px 16px 14px; border-top: 1px solid var(--rule); display: flex; justify-content: flex-end; }
+.dk-proc-use { all: unset; display: inline-flex; align-items: center; gap: 8px; padding: 5px 5px 5px 12px; border-radius: 8px;
+  background: var(--ink); color: var(--paper); font-size: 11.5px; cursor: pointer; }
+.dk-proc-use .sq { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; background: var(--yellow); color: #171717; }
+.dk-proc-use:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dk-pick-skip { justify-self: start; margin: 0 2px; padding: 0; border: 0; background: none;
   font: inherit; font-size: 11.5px; color: var(--grey); text-decoration: underline; cursor: pointer; }
 .dk-pick-skip:hover { color: var(--ink); }
 .dk-pick-skip:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .dk-pick .dk-pick-card { background: var(--surface) !important; border-color: var(--rule-strong) !important; }
+  .dk-pick { background: var(--surface); }
 }
-@media (prefers-reduced-motion: reduce) { .dk-pick-card { animation: none !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .dk-pick, .dk-pick-card, .dk-proc-panel, .dk-proc-scrim, .dk-pick-use .sq { animation: none !important; transition: none !important; } }
+
+/* Direct / Auto / Ask: the procedure mode, in the row above the message box (chat.css already floats
+   .dg-composer-meta there). The thumb slides between the three labels on the smooth spring; transform only, and the
+   reduced-motion block at the end of this file removes it (docs/ios_animation.md). */
+.dk-mode { margin: 0; flex: none; position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: 999px; background: var(--paper); }
+/* The mode choice is its own row above the message box; Stop joins that row, at its right (2026-11-16). The row is
+   always there, so starting or ending a turn does not move the textarea. */
+.dk-composer-top { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dk-composer-top .dk-mode { align-self: center; }
+.dg-composer .dk-composer-top .dk-stop { width: 28px; height: 28px; border-radius: 999px; }
+.dg-composer .dk-composer-top .dk-stop svg { width: 12px; height: 12px; }
+.dk-mode-thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 8px) / 3);
+  border-radius: 999px; background: var(--ink); pointer-events: none; transform: translateX(0);
+  transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
+.dk-mode[data-mode="auto"] .dk-mode-thumb { transform: translateX(calc(100% + 2px)); }
+.dk-mode[data-mode="ask"] .dk-mode-thumb { transform: translateX(calc(200% + 4px)); }
+.dg-composer .dk-mode-btn { position: relative; z-index: 1; height: auto; padding: 3px 11px; border: 0; border-radius: 999px;
+  background: none; color: var(--grey); font-size: 11px; line-height: 16px; cursor: pointer;
+  transition: color var(--dg-micro-d) var(--dg-micro); }
+.dg-composer .dk-mode-btn[data-on] { color: var(--paper); }
+.dg-composer .dk-mode-btn:not(:disabled):hover { background: none; color: var(--ink); }
+.dg-composer .dk-mode-btn[data-on]:not(:disabled):hover { color: var(--paper); }
+.dk-mode-btn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+/* The description on hover/focus: a small dark tip under the label, so Direct / Auto / Ask explain themselves. */
+.dk-mode-btn::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 7px); left: 0; z-index: 6;
+  width: max-content; max-width: 240px; padding: 5px 8px; border-radius: 7px; background: var(--ink); color: var(--paper);
+  font-size: 10.5px; line-height: 1.35; font-weight: 400; text-align: left; opacity: 0; transform: translateY(3px);
+  pointer-events: none; transition: opacity var(--dg-micro-d) var(--dg-micro), transform var(--dg-micro-d) var(--dg-micro); }
+.dk-mode-btn:hover::after, .dk-mode-btn:focus-visible::after { opacity: 1; transform: translateY(0); }
+@media (hover: none) { .dk-mode-btn::after { display: none; } }
+@media (max-width: 760px) {
+  .dg-composer .dk-mode-btn { padding-inline: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .dk-mode-thumb, .dg-composer .dk-mode-btn, .dk-mode-btn::after { transition: none !important; } }
 
 /* The right panel's Agents list: the session itself and the model the router delegated this turn to. Selecting one
    swaps the middle column (main chat vs that agent's own output). */
@@ -426,7 +568,7 @@
 .dk-agent[aria-selected="true"] { background: var(--surface); border-color: var(--rule-strong); }
 .dk-agent > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dk-agent b { font-weight: 500; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-agent small { font-size: 10.5px; color: var(--grey); }
+.dk-agent small { font-size: 10.5px; color: var(--grey); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-agent-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cobalt); flex: none; }
 .dk-agent-dot[data-rung="strong"] { background: var(--ink); }
 /* A subagent's state: a ring while it works, filled when it answered, a cross-coloured dot when it failed (never colour
@@ -439,22 +581,54 @@
 .dk-agent-empty { cursor: default; opacity: .65; }
 .dk-agent-empty:hover { background: transparent; }
 
-/* The delegated agent's own view in the middle: the plan, its last turn, and every direct answer. */
+/* The delegated agent's own view in the middle: the plan, its last turn, and every direct answer. It is a report, not a
+   chat row, so it is one column that starts at the top and never widens the pane: every part truncates or wraps inside
+   the panel, at any width (2026-11-16). */
 .dk-agent-content { justify-content: flex-start; }
-.dk-agent-view { display: flex; flex-direction: column; gap: 12px; padding: 2px 0 12px;
+.dk-agent-view { display: flex; flex-direction: column; gap: 12px; padding: 2px 0 12px; min-width: 0; max-width: 100%;
   animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
-.dk-agent-view-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
-.dk-agent-view-head b { font-size: 14px; font-weight: 500; }
-.dk-agent-view-sub { color: var(--grey); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-agent-view-head .dg-mini { margin-left: auto; }
-.dk-agent-plan { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
-.dk-agent-turn, .dk-agent-qa { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); padding: 10px 12px; }
+.dk-agent-view-head { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; min-width: 0; }
+.dk-agent-view-head > b { font-size: 14px; font-weight: 500; min-width: 0; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-agent-view-sub { color: var(--grey); font-size: 12px; flex: 1 1 8ch; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-agent-view-head .dg-mini { margin-left: auto; flex: none; }
+/* The chat clears every border colour (chat.css), so these blocks are tinted paper with a soft inner edge, not outlines. */
+.dk-agent-plan { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px;
+  background: var(--paper); box-shadow: inset 0 0 0 1px rgba(23, 23, 23, .05); }
+.dk-agent-turn, .dk-agent-qa { min-width: 0; border-radius: 10px; background: var(--paper);
+  box-shadow: inset 0 0 0 1px rgba(23, 23, 23, .05); padding: 10px 12px; }
+:root[data-theme="dark"] .dk-agent-plan, :root[data-theme="dark"] .dk-agent-turn, :root[data-theme="dark"] .dk-agent-qa {
+  box-shadow: inset 0 0 0 1px rgba(241, 238, 229, .08); }
+.dk-agent-plan, .dk-agent-turn, .dk-agent-qa { overflow-wrap: anywhere; }
+.dk-agent-turn > .dg-md, .dk-agent-a, .dk-agent-a > .dg-md { min-width: 0; }
 .dk-agent-turn-label { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); margin-bottom: 4px; }
-.dk-agent-q { font-size: 12.5px; font-weight: 500; color: var(--ink); margin-bottom: 3px; }
+.dk-agent-q { font-size: 12.5px; font-weight: 500; color: var(--ink); margin-bottom: 3px; overflow-wrap: anywhere; }
 .dk-agent-a { font-size: 14px; line-height: 1.55; }
 .dk-agent-a > :first-child { margin-top: 0; } .dk-agent-a > :last-child { margin-bottom: 0; }
-.dk-agent-log { display: flex; flex-direction: column; gap: 8px; }
+.dk-agent-log { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .dk-agent-turn .dg-md p, .dk-agent-a .dg-md p { font-weight: 300; }
+/* The chat's own notes and live status carry a side margin for a chat row; inside this view they sit on the column. */
+.dk-agent-view .dk-note, .dk-agent-view .dk-delegate-status { margin-inline: 0; overflow-wrap: anywhere; }
+/* Phones: the header keeps the name on one line and lets the way back take the next; the plan's label column tightens. */
+@media (max-width: 620px) {
+  .dk-agent-view { gap: 10px; }
+  .dk-agent-view-head > b { flex: 1 1 0; order: 2; }
+  .dk-agent-view-head .dk-agent-dot { order: 1; }
+  .dk-agent-view-sub { flex: 1 1 100%; order: 3; }
+  .dk-agent-view-head .dg-mini { order: 4; margin-left: 0; }
+  .dk-agent-plan { padding: 8px 10px; }
+  .dk-agent-turn, .dk-agent-qa { padding: 8px 10px; }
+  /* On a phone the plan is read, not scanned: the value wraps under its label and the tier stays on the first line,
+     instead of a one-line ellipsis that hides most of a Goal. */
+  .dk-delegate-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 2px 6px; }
+  .dk-delegate-row > b { grid-column: 2; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+  .dk-delegate-row > i { grid-column: 2; justify-self: start; }
+}
+/* The live line is a sentence, not a row of chips: block layout lets the model id wrap, and keeps the pulse on its
+   first line instead of floating in the middle of a wrapped line. */
+.dk-agent-view .dk-delegate-status { display: block; }
+.dk-agent-view .dk-delegate-status .dg-pulse { display: inline-block; vertical-align: middle; margin-right: 6px; }
 
 :root[data-theme="dark"] .dk-diff .add { color: #8fd3a8; } :root[data-theme="dark"] .dk-diff .del { color: #e6a0a0; }
 :root[data-theme="dark"] .dk-file .stat .add { color: #6ee7a0; } :root[data-theme="dark"] .dk-file .stat .del { color: #ff8a80; }
@@ -646,22 +820,71 @@
 /* Sessions under their project. */
 .dk-recents li { grid-template-columns: minmax(0, 1fr) auto; }
 .dk-sess { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 1px; padding: 0 4px 6px 22px; }
-.dk-sess-row { all: unset; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px;
-  border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text-2, var(--ink)); min-width: 0; }
+/* A row is the open button plus a rename pencil that only takes room on hover: when hidden it must not leave a gap
+   between the chat's time and the sidebar's edge (2026-11-17). */
+.dk-sess-row { position: relative; box-sizing: border-box; display: flex; align-items: center; padding: 0;
+  border-radius: 6px; font-size: 13px; color: var(--text-2, var(--ink)); min-width: 0; }
+.dk-sess-row > .dk-sess-open { all: unset; box-sizing: border-box; flex: 1 1 auto; min-width: 0; display: flex; align-items: center;
+  justify-content: space-between; gap: 8px; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .dk-sess-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-sess-row .when { flex: none; color: var(--grey); font-size: 11px; }
+.dk-sess-row .when { flex: none; margin-left: auto; color: var(--grey); font-size: 11px;
+  transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-sess-row:hover { background: var(--paper, rgba(0,0,0,.04)); }
 .dk-sess-row[data-here] { background: var(--paper, rgba(0,0,0,.06)); color: var(--ink); }
 .dk-sess-row:disabled { cursor: default; }
+/* Rename: a pencil over the row's right edge, shown on hover or focus; the time fades under it, so the row never keeps
+   an empty 22px column when the pencil is away. */
+.dk-sess-row:hover .when, .dk-sess-row:focus-within .when { opacity: 0; }
+.dk-sess-rename { all: unset; position: absolute; right: 2px; top: 50%; transform: translateY(-50%) translateX(3px);
+  display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; color: var(--grey); cursor: pointer; opacity: 0;
+  transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-sess-row:hover .dk-sess-rename, .dk-sess-row:focus-within .dk-sess-rename { opacity: 1; transform: translateY(-50%) translateX(0); }
+.dk-sess-rename:hover { background: rgba(0,0,0,.07); color: var(--ink); }
+.dk-sess-rename:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; opacity: 1; transform: translateY(-50%); }
+@media (hover: none) {
+  .dk-sess-rename { opacity: 1; transform: translateY(-50%); }
+  .dk-sess-row .when { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .dk-sess-rename, .dk-sess-row .when { transition: none; } }
+.dk-sess-renaming { padding: 2px 4px; }
+.dk-sess-renaming .dk-sess-name { all: unset; box-sizing: border-box; width: 100%; font: inherit; font-size: 13px; padding: 3px 7px;
+  border: 1px solid var(--cobalt); border-radius: 5px; background: var(--surface, #fff); color: var(--ink); }
+/* A chat that is answering: a pulsing dot where its time normally sits, so every running chat is visible at a glance. */
+.dk-sess-live { flex: none; display: inline-grid; place-items: center; width: 14px; height: 14px; }
+.dk-sess-live .dg-pulse { width: 6px; height: 6px; background: var(--cobalt); }
+@media (prefers-reduced-motion: reduce) { .dk-sess-live .dg-pulse { animation: none; } }
+
+/* A chat finished while another was open: a small notice at the bottom right, and the same news on the device. */
+.dk-done-toast { position: fixed; right: 18px; bottom: 18px; z-index: 70; display: flex; align-items: center; gap: 10px;
+  max-width: min(440px, calc(100vw - 36px)); padding: 10px 10px 10px 12px; border: 1px solid var(--rule-strong);
+  border-radius: 10px; background: var(--surface); color: var(--ink); box-shadow: var(--dg-lift-hover, 0 10px 30px rgba(0,0,0,.18));
+  animation: dk-toast-in 320ms var(--dg-smooth, cubic-bezier(.32,.72,0,1)) both; }
+@keyframes dk-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.dk-done-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #1a9d5a; }
+.dk-done-text { min-width: 0; font-size: 13px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; }
+.dk-done-text b { font-weight: 600; }
+.dk-done-open { all: unset; flex: none; padding: 4px 10px; border-radius: 6px; background: var(--ink); color: var(--paper);
+  font-size: 12px; font-weight: 600; cursor: pointer; }
+.dk-done-open:hover { background: var(--cobalt); }
+.dk-done-x { all: unset; flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px;
+  color: var(--grey); font-size: 16px; line-height: 1; cursor: pointer; }
+.dk-done-x:hover { background: rgba(0,0,0,.06); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .dk-done-toast { animation: none !important; } }
+@media (max-width: 560px) { .dk-done-toast { left: 12px; right: 12px; bottom: 12px; max-width: none; } }
 .dk-sess-more > summary { list-style: none; cursor: pointer; padding: 4px 8px; font-size: 12px; color: var(--grey); }
 .dk-sess-more > summary::-webkit-details-marker { display: none; }
 .dk-sess-more > summary::before { content: "\25B8"; display: inline-block; margin-right: 6px; transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-sess-more[open] > summary::before { transform: rotate(90deg); }
 /* The website's sidebar button lift (chat.css .dg-side button) is not for these rows; the open project's highlight stays on its own row. */
 .dg-page .dg-side .dk-recent, .dg-page .dg-side .dk-recent-x, .dg-page .dg-side .dk-sess-row,
-.dg-page .dg-side .dk-recent:hover, .dg-page .dg-side .dk-recent-x:hover, .dg-page .dg-side .dk-sess-row:hover { box-shadow: none !important;   /* chat.css's rule carries four :not()s, so it outranks a plain override */ }
+.dg-page .dg-side .dk-sess-open, .dg-page .dg-side .dk-sess-rename,
+.dg-page .dg-side .dk-recent:hover, .dg-page .dg-side .dk-recent-x:hover, .dg-page .dg-side .dk-sess-row:hover,
+.dg-page .dg-side .dk-sess-open:hover, .dg-page .dg-side .dk-sess-rename:hover { box-shadow: none !important;   /* chat.css's rule carries four :not()s, so it outranks a plain override */ }
 .dg-page .dg-side .dk-sess-row { background: transparent; border: 0; }
 .dg-page .dg-side .dk-sess-row:hover { background: rgba(0, 0, 0, .045); }
+.dg-page .dg-side .dk-sess-open, .dg-page .dg-side .dk-sess-open:hover { background: transparent; border: 0; }
+.dg-page .dg-side .dk-sess-rename:focus-visible { outline: 2px solid var(--cobalt) !important; }
 .dg-page .dg-side .dk-sess-row[data-here] { background: rgba(0, 0, 0, .07); color: var(--ink); }
 .dk-recents li[data-here] { background: none; }
 .dk-recents li[data-here] > .dk-recent { background: var(--soft, rgba(0,0,0,.05)); border-radius: 8px; }
@@ -677,6 +900,18 @@
    the whole tree is keyboard-walkable. */
 .dk-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 10px 6px 4px; }
 .dk-sec-head h2 { margin: 0; }
+/* Sessions and Files open and close like the right panel's folds (docs/ios_animation.md §10): the row grows from 0fr to
+   1fr on the smooth spring while the content fades, and the inner element clips the overflow. `visibility` flips after the
+   close (at once on the open), so a closed section is not in the tab order. */
+.dk-sec-body { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden;
+  transition: grid-template-rows var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+              opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+              visibility 0s linear var(--dg-smooth-d, 300ms); }
+.dk-sec-body[data-open="true"] { grid-template-rows: 1fr; opacity: 1; visibility: visible;
+  transition: grid-template-rows var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+              opacity var(--dg-smooth-d, 300ms) var(--dg-smooth, ease),
+              visibility 0s; }
+.dk-sec-body-in { min-height: 0; min-width: 0; overflow: hidden; }
 .dk-tree { margin: 0 2px; max-height: min(46vh, 420px); overflow: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; }
 .dk-tree-level { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .dk-tree-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px;
@@ -907,7 +1142,9 @@
   .dk-page .dk-head-toggle, .dk-palette-backdrop, .dk-palette, .dk-btw, .dk-page .dk-agent,
   .dk-page .dk-file, .dk-page .dk-card, .dk-page .dk-agent-view, .dk-page .dg-atts .dg-att { animation: none !important; }
   .dk-page .dk-icon, .dk-page .dk-winbtn, .dk-page .dk-tree-row, .dk-page .dk-tree-row .chev,
-  .dk-page .dk-sess-toggle svg, .dk-page .dk-fold > summary h2::before, .dk-page .dk-sess-more > summary::before,
+  .dk-page .dk-sess-toggle svg, .dk-page .dk-fold > summary h2::before, .dk-page button.dk-fold svg,
+  .dk-page .dk-sess-more > summary::before,
+  .dk-page .dk-sec-body,
   .dk-page .dk-resize, .dk-page .dk-resize::after, .dk-page .dk-act-mark, .dk-page .dk-activity li, .dk-page .dk-help-menu a,
   .dk-page .dk-agent, .dk-palette-row, .dk-stop, .dk-queue-tools button, .dk-empty-prompt { transition: none !important; }
   .dk-page .dg-shell, .dk-page .dg-side, .dk-page .dk-panel { transition: none !important; }
@@ -915,15 +1152,17 @@
 }
 
 /* The left sidebar's project view (app/page.tsx sideView): a back arrow, the project's name and its menu; then Sessions and Files,
-   each a heading that folds its list away. */
+   each a heading that folds its list away. These are buttons; the right panel's folds are <details> and must keep the block
+   layout above, so every button-only rule is scoped to `button.dk-fold` (2026-11-16). */
 .dk-proj-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; margin: 4px 2px 0; }
 .dk-proj-head b { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-fold { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; padding: 2px 4px; border-radius: 6px; min-width: 0; }
-.dk-fold:hover { background: var(--soft, rgba(0,0,0,.05)); }
-.dk-fold:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+button.dk-fold { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; padding: 2px 4px; border-radius: 6px; min-width: 0; }
+button.dk-fold:hover { background: var(--soft, rgba(0,0,0,.05)); }
+button.dk-fold:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+/* Shared: the right panel's summary h2 must lose the panel heading's margins too. */
 .dk-fold h2 { margin: 0; }
-.dk-fold svg { flex: none; color: var(--grey); transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); transform: rotate(-90deg); }
-.dk-fold[aria-expanded="true"] svg { transform: none; }
+button.dk-fold svg { flex: none; color: var(--grey); transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); transform: rotate(-90deg); }
+button.dk-fold[aria-expanded="true"] svg { transform: none; }
 .dk-count { font-size: 11px; color: var(--grey); font-variant-numeric: tabular-nums; }
 .dk-sess-list { padding: 0 4px 8px 4px; }
 
@@ -956,3 +1195,62 @@
   border-radius: 999px; background: var(--paper); color: var(--ink); }
 .dk-browser-addr:focus { outline: none; border-color: var(--rule-strong); }
 .dk-browser-view { flex: 1; min-height: 0; background: var(--paper); }
+
+/* Larger type (2026-11-16): the right panel's labels were 9.5–12.5px and the sidebar lists 13px. Universal Design
+   recommends 16px body and no text below 12px; BBC GEL uses 13px for core content and 11px for the rest; macOS HIG body
+   is 13pt. The panel keeps its compact width, with a 13.5–14px primary line, 12–13px secondary and 11px labels. */
+.dk-panel { font-size: 13.5px; }
+.dk-panel h2 { font-size: 12px; }
+.dk-note { font-size: 13px; }
+.dk-err { font-size: 13px; }
+.dk-kv { font-size: 13px; }
+.dk-kv .mono { font-size: 12px; }
+.dk-step, .dk-rung, .dk-proc-label, .dk-proc-tags i, .dk-proc-order, .dk-proc-chip, .dk-pick-best, .dk-pick-meta i { font-size: 11px; }
+.dk-agent b { font-size: 13.5px; }
+.dk-agent small { font-size: 12px; }
+.dk-ledger { font-size: 13px; }
+.dk-file summary { font-size: 13.5px; }
+.dk-file .path, .dk-file .stat, .dk-diff { font-size: 12.5px; }
+.dk-card .name { font-size: 14px; }
+.dk-card .meta { font-size: 12.5px; }
+.dk-delegate-row { font-size: 13.5px; }
+.dk-delegate-row > span { font-size: 11px; }
+.dk-delegate-row > i { font-size: 12px; }
+.dk-brief > summary { font-size: 12.5px; }
+.dk-brief pre { font-size: 12px; }
+.dk-delegate-ask input, .dk-delegate-a { font-size: 13.5px; }
+.dk-delegate-status, .dk-delegate-live { font-size: 13px; }
+.dk-choose b { font-size: 13.5px; }
+.dk-choose p { font-size: 12.5px; }
+.dk-delegate-chip { font-size: 12.5px; }
+.dk-proc-node b { font-size: 13.5px; }
+.dk-proc-goal b { font-size: 14px; }
+.dk-proc-goal small { font-size: 11.5px; }
+.dk-proc-empty small { font-size: 12px; }
+.dk-pick-sub, .dk-pick-why { font-size: 12.5px; }
+.dk-pick-title b { font-size: 13.5px; }
+.dk-pick-use { font-size: 12px; }
+.dk-pick-skip { font-size: 12.5px; }
+.dk-viewer-head h2 { font-size: 12.5px; }
+.dk-code { font-size: 12.5px; }
+.dk-agent-view-head b { font-size: 15px; }
+.dk-agent-view-sub { font-size: 13px; }
+.dk-agent-turn-label { font-size: 11.5px; }
+.dk-agent-q { font-size: 13.5px; }
+.dk-agent-a { font-size: 15px; }
+.dk-sess-row { font-size: 14px; }
+.dk-sess-row .when { font-size: 12px; }
+.dk-sess-import { font-size: 13px; }
+.dk-tree-row { font-size: 14px; }
+.dk-sec-head h2 { font-size: 12px; }
+.dk-sessions .dk-recent .when { font-size: 12.5px; }
+.dk-activity { font-size: 13.5px; }
+.dk-act-hint { font-size: 12.5px; }
+.dk-switch [role="tablist"] button { font-size: 14px; }
+.dk-bottom-tab { font-size: 13.5px; }
+.dk-browser-addr { font-size: 13.5px; }
+.dk-palette-row .h { font-size: 13px; }
+.dk-palette-foot { font-size: 12.5px; }
+.dk-palette-foot kbd { font-size: 11.5px; }
+.dk-import-src button { font-size: 14px; }
+.dk-import-list .t small, .dk-import-list time { font-size: 12.5px; }

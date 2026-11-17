@@ -8,8 +8,9 @@ An adapter is a module with:
     ALIASES: dict[str, str]             other names for the same tools (optional)
     BASE_URL: str                       the host it calls; the gate checks it against the policy's egress list
     READ_ONLY_TOOLS: tuple[str, ...]    tools a valid certificate may run without an approval (optional; R2+ only)
-    ADAPTER_ONLY: bool                  the provider has no MCP server: the gateway lists and calls the adapter itself
-                                        (optional; an R2+ one runs only while the gate enforces)
+    ADAPTER_ONLY: bool                  the provider has no MCP server kell should use: the gateway lists and calls the
+                                        adapter itself (Exa sets this even though it has one, because kell's key is the
+                                        no-sign-in path) (optional; an R2+ one runs only while the gate enforces)
     def list_tools() -> list[dict]      its tools in MCP shape (with ADAPTER_ONLY)
     def available() -> bool             its key is configured
     async def call(tool, arguments) -> dict
@@ -40,12 +41,39 @@ def _modules() -> list[ModuleType]:
     return out
 
 
+def _norm(value: str) -> str:
+    """A server name or URL compared loosely: no surrounding space, no trailing slash, no case. Agents name Exa as
+    "exa", "ai.exa/exa", or its MCP URL ("https://mcp.exa.ai/mcp"); all are the same adapter (2026-11-16)."""
+    return str(value or "").strip().rstrip("/").lower()
+
+
 def get(server: str) -> Optional[ModuleType]:
-    """The adapter for a tool card id or server name, else None."""
-    s = str(server or "").strip()
+    """The adapter for a tool card id, server name or MCP URL, else None."""
+    s = _norm(server)
     for module in _modules():
-        if s in getattr(module, "SERVERS", ()):
+        if any(_norm(x) == s for x in getattr(module, "SERVERS", ())):
             return module
+    return None
+
+
+def adapters() -> list[ModuleType]:
+    """Every provider adapter that imported (Exa, Hinoki, ...), for discover_tools."""
+    return _modules()
+
+
+def adapter_for_tool(tool: str) -> Optional[tuple[ModuleType, str]]:
+    """(adapter, canonical tool name) for a bare tool name an agent may know from the provider's own server:
+    web_search_exa -> (Exa, web_search). None when no adapter has it."""
+    t = str(tool or "").strip()
+    if not t:
+        return None
+    for module in _modules():
+        names = getattr(module, "TOOLS", {})
+        aliases = getattr(module, "ALIASES", {})
+        if t in names:
+            return module, t
+        if t in aliases:
+            return module, str(aliases[t])
     return None
 
 

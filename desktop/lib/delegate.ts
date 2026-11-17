@@ -1,28 +1,166 @@
 // The MCP/engine half of the delegation plan. The pure types and planning functions live in lib/plan.ts, so the page
 // can import them without pulling node:fs (lib/mcp.ts) into the browser bundle.
-import { callMcpTool } from "./mcp"
-import { planFromRoute, stepsOf, toolOf, type Delegation, type Models, type Routed } from "./plan"
+import { callKellRoute, callMcpTool } from "./mcp"
+import { planFromRoute, stepsOf, toolOf, type Delegation, type GoalOption, type Models, type Routed, type WayOption } from "./plan"
 
 export * from "./plan"
 
-/** Route the task with `find_ways` and read the Goal and every Way it offered. */
-export async function routeTask(task: string, timeoutMs = 20_000): Promise<Routed> {
-  const text = task.trim().slice(0, 4000)
-  const found = await callMcpTool("find_ways", { query: text }, timeoutMs)
+/** find_ways' reply as the panel's shape: the Goal it resolved and every Way it offered. */
+function fromFindWays(found: any): Routed {
   const goal = found?.goal && typeof found.goal === "object" ? found.goal : null
   const ways = Array.isArray(found?.procedures) ? found.procedures.slice(0, 6) : []
+  const asGoal = goal ? { id: String(goal.goal_id || ""), name: String(goal.name || goal.canonical_name || "") } : null
   return {
-    goal: goal ? { id: String(goal.goal_id || ""), name: String(goal.name || goal.canonical_name || "") } : null,
+    goal: asGoal,
+    goals: asGoal ? [{ ...asGoal, score: 1, hasWay: ways.length > 0 }] : [],
     options: ways.map((way: any) => ({
       id: String(way.procedure_id || way.version_id || ""),
       name: String(way.name || ""),
       approval: String(way.verification_state || way.approval_status || "candidate"),
       review: String(way.approval_status || ""),
       why: String(way.why_chosen || ""),
+      goal: asGoal ?? undefined,
       tool: toolOf(way),
       steps: stepsOf(way),
     })),
   }
+}
+
+/**
+ * The Goal catalog's answer (`route_goal`) as the picker's shape. Ways can live under several Goals ("Research how
+ * experts do it", "Write the research plan...", "Search the literature..."), and a task often matches more than one, so
+ * every Goal with a written Way contributes; a Goal with no Way is not a runnable procedure and is skipped. The best
+ * Goal sets the score floor, so a low-scoring Goal far down the catalog does not fill the strip with noise. Each Way
+ * keeps its own Goal: picking it moves the graph to that Goal, not the first one in the answer (2026-11-16).
+ */
+function fromCatalog(answer: any, limit = 8): Routed {
+  const goals = Array.isArray(answer?.goals) ? answer.goals : []
+  const top = Number(goals[0]?.score ?? 0)
+  const floor = Math.max(0.35, top * 0.5)
+  const seen = new Set<string>()
+  const options: WayOption[] = []
+  let firstGoal: any = null
+  for (const g of goals) {
+    if (options.length >= limit) break
+    const score = Number(g?.score ?? 0)
+    const ways = Array.isArray(g?.ways) ? g.ways : []
+    for (const way of ways) {
+      if (options.length >= limit) break
+      const id = String(way?.procedure_id || way?.version_id || "")
+      if (!id || seen.has(id)) continue
+      if (score < floor) continue
+      seen.add(id)
+      if (!firstGoal) firstGoal = g
+      const card = Array.isArray(way?.cards) ? way.cards[0] : null
+      options.push({
+        id,
+        name: String(way?.name || ""),
+        approval: String(way?.verification_state || way?.approval_status || "candidate"),
+        review: String(way?.approval_status || ""),
+        why: String(way?.why_chosen || g?.description || g?.matched_by || ""),
+        goal: g?.goal_id ? { id: String(g.goal_id), name: String(g.canonical_name || "") } : undefined,
+        tool: toolOf(way) || (card?.name
+          ? { name: String(card.name), server: String(card.server || card.connector_url || "") }
+          : null),
+        steps: stepsOf(way),
+      })
+    }
+  }
+  const named = firstGoal ?? goals[0]
+  return {
+    goal: named?.goal_id ? { id: String(named.goal_id), name: String(named.canonical_name || "") } : null,
+    goals: goals.slice(0, 8).map((g: any) => ({
+      id: String(g?.goal_id || ""),
+      name: String(g?.canonical_name || ""),
+      score: Number(g?.score ?? 0),
+      hasWay: Array.isArray(g?.ways) && g.ways.some((w: any) => w?.procedure_id),
+    })),
+    options,
+  }
+}
+
+/**
+ * Does this prompt ask for a procedure at all? JEV decides (POST /procedure, one typed choice): "find procedures for
+ * research" and "what is the best way to..." do; "fix the failing test", "add a test" and "explain this function" do
+ * not. Ordinary work then goes straight to the model, with no catalog read and no picker. A missing verdict opens the
+ * picker, as before: a skipped picker costs the person a Way, a wasted one only a second or two.
+ */
+export async function wantsProcedure(task: string, timeoutMs = 4000): Promise<boolean> {
+  try {
+    const verdict = await callKellRoute("/procedure", { query: task.trim().slice(0, 4000) }, timeoutMs)
+    return verdict?.search !== false
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Route the task: find_ways (the judged, repo-aware answer) and the Goal catalog run together. find_ways decides whether
+ * knowledge helps and names the best Way; the catalog adds the other Ways that fit, so the picker is a real choice
+ * rather than one card. A slow or refused find_ways never hides the catalog, and vice versa.
+ */
+export async function routeTask(task: string, timeoutMs = 20_000): Promise<Routed> {
+  const text = task.trim().slice(0, 4000)
+  if (!(await wantsProcedure(text, Math.min(timeoutMs, 4000)))) {
+    return { goal: null, options: [], goals: [], skip: true }
+  }
+  let firstErr: any = null
+  // A task that asks for procedures (or is about research) also reads the catalog for the literature/novelty side:
+  // "research" alone does not rank "Search the literature and check novelty" high, and it is one of the Ways people
+  // most often want next to the plan (2026-11-16). Both reads are cached by the catalog and run together.
+  const researchAsk = /\b(research|literature|study|paper|novelty|procedure|procedures|ways?)\b/i.test(text)
+  const catalogRead = (q: string) => callMcpTool("route_goal", { query: q, limit: 10 }, Math.min(timeoutMs, 12_000))
+  const catalogP = Promise.allSettled([
+    catalogRead(text),
+    ...(researchAsk ? [catalogRead("research literature novelty")] : []),
+  ]).then((results) => {
+    const options: WayOption[] = []
+    const goals: GoalOption[] = []
+    const seen = new Set<string>()
+    const seenGoals = new Set<string>()
+    let goal: Delegation["goal"] = null
+    for (const r of results) {
+      if (r.status !== "fulfilled") {
+        if (!firstErr) firstErr = r.reason
+        continue
+      }
+      const part = fromCatalog(r.value)
+      if (!goal) goal = part.goal
+      for (const g of part.goals ?? []) {
+        if (!g.id || seenGoals.has(g.id)) continue
+        seenGoals.add(g.id)
+        goals.push(g)
+      }
+      for (const o of part.options) {
+        if (seen.has(o.id)) continue
+        seen.add(o.id)
+        options.push(o)
+      }
+    }
+    return { goal, options: options.slice(0, 10), goals: goals.slice(0, 8) }
+  })
+  let routed: Routed = { goal: null, options: [] }
+  try {
+    routed = fromFindWays(await callMcpTool("find_ways", { query: text }, timeoutMs))
+  } catch (err) { firstErr = err }
+  const catalog = await catalogP
+  if (catalog.options.length || (catalog.goals?.length ?? 0)) {
+    const seen = new Set(routed.options.map((o) => o.id))
+    const goals = [...(routed.goals ?? [])]
+    const seenGoals = new Set(goals.map((g) => g.id))
+    for (const g of catalog.goals ?? []) {
+      if (seenGoals.has(g.id)) continue
+      seenGoals.add(g.id)
+      goals.push(g)
+    }
+    routed = {
+      goal: routed.goal ?? catalog.goal,
+      goals: goals.slice(0, 8),
+      options: [...routed.options, ...catalog.options.filter((o) => !seen.has(o.id))].slice(0, 10),
+    }
+  }
+  if (!routed.goal && !routed.options.length && firstErr) throw firstErr
+  return routed
 }
 
 /** Route the task, pick the first unit, and write the brief. Throws only when kell's server cannot be reached. */

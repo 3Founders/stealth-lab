@@ -30,6 +30,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: motionGate }} />
+        {/* a signed-in visitor on the home page goes to /chat the first time in a tab, before the landing page paints (see public/session-home.js) */}
+        <script src="/session-home.js" />
         {/* a file, not inline text: the inline copy was once cut short in the production build, so no theme was ever set */}
         <script src="/theme-init.js" />
       </head>

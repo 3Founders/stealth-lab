@@ -6,8 +6,7 @@
 // window, whatever user agent it is given), and it is where the person already is signed in to their accounts.
 //
 // No callback comes back to this process: the browser finishes the flow with kell's server, which seals the token or records
-// the consent. The page then asks kell whether it finished (lib/tools.ts toolSignInStatus, /api/tools/signin) and carries on
-// by itself; a closed browser is never taken as a sign-in.
+// the consent. The app no longer shows tool sign-ins (2026-11-16); a link in a message still opens here.
 import { shell } from "electron"
 
 const CALLBACK = "/tools/connect/callback"

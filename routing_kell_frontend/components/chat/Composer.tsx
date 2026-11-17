@@ -17,9 +17,11 @@ import { fileKind, formatSize, whyNotFile } from "@/lib/chat/files";
 const MAX_MESSAGE = 8000;
 const wordCount = (t: string): number => (t.trim() ? t.trim().split(/\s+/).length : 0);
 
-export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true, draft, onEscape }: { handles: string[]; agentHandles?: string[];
+export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true, draft, onEscape, procedureMode, onProcedureMode }: { handles: string[]; agentHandles?: string[];
   /** Escape in the box when no suggestion list is open (cancels a reply). */
   onEscape?: () => void;
+  /** Direct / Auto / Ask: how a prompt is handled before the model runs (the rooms' procedure picker). */
+  procedureMode?: "direct" | "auto" | "ask"; onProcedureMode?: (mode: "direct" | "auto" | "ask") => void;
   /** Puts text in the box (a new `n` replaces what is there): "Ask Kell to revise", a suggestion. */
   draft?: { text: string; n: number }; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
   const [text, setText] = useState("");
@@ -179,6 +181,27 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
             </li>
           ))}
         </ul>
+      )}
+      {/* Direct / Auto / Ask, the same switch as the desktop app: its own row above the message box, never beside it. */}
+      {procedureMode && onProcedureMode && (
+        <div className="dg-mode-row">
+          <div className="dg-mode" role="group" aria-label="Procedure mode" data-mode={procedureMode}>
+            <span className="dg-mode-thumb" aria-hidden="true" />
+            {([["direct", "Direct"], ["auto", "Auto"], ["ask", "Ask"]] as const).map(([id, label]) => (
+              <button key={id} type="button" className="dg-mode-btn" data-on={procedureMode === id || undefined}
+                data-tip={id === "direct" ? "Straight to the model, no procedure search (/direct)"
+                  : id === "auto" ? "Search for a procedure and use the best fit automatically (/auto)"
+                    : "Search for a procedure and show the ways to pick from (/ask)"}
+                aria-pressed={procedureMode === id} aria-label={`${label}: ${id === "direct" ? "straight to the model, no procedure search"
+                  : id === "auto" ? "search for a procedure and use the best fit automatically"
+                    : "search for a procedure and show the ways to pick from"}`}
+                title={id === "direct" ? "Straight to the model, no procedure search (/direct)"
+                  : id === "auto" ? "Search for a procedure and use the best fit automatically (/auto)"
+                    : "Search for a procedure and show the ways to pick from (/ask)"}
+                onClick={() => onProcedureMode(id)}>{label}</button>
+            ))}
+          </div>
+        </div>
       )}
       <textarea
         ref={ref} rows={1} data-big={big || undefined} value={text} disabled={disabled} maxLength={MAX_MESSAGE}

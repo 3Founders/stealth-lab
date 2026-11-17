@@ -3,6 +3,7 @@
 R0: read-only public web data. The results are third-party data: every answer is labelled untrusted and scanned for
 prompt-injection shapes (app/services/untrusted.py), which flags, never cleans.
 """
-from app.tool_providers.exa.client import ALIASES, BASE_URL, RISK, SERVERS, TOOLS, available, call
+from app.tool_providers.exa.client import (ADAPTER_ONLY, ALIASES, BASE_URL, GOALS, RISK, SERVERS, TOOLS, available, call)
+from app.tool_providers.exa.mcp_server import list_tools
 
-__all__ = ["ALIASES", "BASE_URL", "RISK", "SERVERS", "TOOLS", "available", "call"]
+__all__ = ["ADAPTER_ONLY", "ALIASES", "BASE_URL", "GOALS", "RISK", "SERVERS", "TOOLS", "available", "call", "list_tools"]

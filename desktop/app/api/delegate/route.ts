@@ -68,12 +68,13 @@ export async function POST(req: Request) {
     const models = await ladder(req, given)
     const key = `${text}\u0000${JSON.stringify(models)}`
     const hit = cached(key)
-    if (hit) return NextResponse.json({ ...hit.plan, options: hit.options })
+    if (hit) return NextResponse.json({ ...hit.plan, options: hit.options, goals: [] })
     try {
       const routed = await routeTask(text, timeoutMs)
       const plan = planFromRoute(text, models, routed)
-      remember(key, plan, routed.options)
-      return NextResponse.json({ ...plan, options: routed.options })
+      if (routed.skip) return NextResponse.json({ ...plan, options: [], goals: [], skip: true })
+      if (routed.options.length) remember(key, plan, routed.options)
+      return NextResponse.json({ ...plan, options: routed.options, goals: routed.goals ?? [] })
     } catch (err: any) {
       return NextResponse.json({ error: String(err?.message || err) }, { status: err?.status || 502 })
     }
@@ -92,18 +93,25 @@ export async function POST(req: Request) {
         const hit = cached(key)
         if (hit) {
           status("cached", "Using the plan from a moment ago")
-          send({ type: "plan", plan: hit.plan, options: hit.options })
+          send({ type: "plan", plan: hit.plan, options: hit.options, goals: [] })
           send({ type: "done" })
           return
         }
-        status("routing", "Asking kell's router (find_ways)…")
+        status("routing", "Checking whether this needs a procedure…")
         const routed = await routeTask(text, timeoutMs)
-        status("goal", goalLine(routed), { goal: routed.goal, options: routed.options })
+        if (routed.skip) {
+          const plan = planFromRoute(text, models, routed)
+          status("skip", "Ordinary work - going straight to the model")
+          send({ type: "plan", plan, options: [], goals: [], skip: true })
+          send({ type: "done" })
+          return
+        }
+        status("goal", goalLine(routed), { goal: routed.goal, options: routed.options, goals: routed.goals ?? [] })
         const plan = planFromRoute(text, models, routed)
         status("model", plan.model ? `Model: ${plan.model.id} (${plan.rung}) — ${plan.why}` : `Model: the engine's default — ${plan.why}`,
                { model: plan.model, rung: plan.rung })
-        remember(key, plan, routed.options)
-        send({ type: "plan", plan, options: routed.options })
+        if (routed.options.length) remember(key, plan, routed.options)
+        send({ type: "plan", plan, options: routed.options, goals: routed.goals ?? [] })
         send({ type: "done" })
       } catch (err: any) {
         send({ type: "error", error: String(err?.message || err).replace(/Bearer\s+\S+/gi, "Bearer …").slice(0, 300) })

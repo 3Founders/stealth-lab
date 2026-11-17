@@ -37,7 +37,7 @@ export default function BackButton({ inline = false }: { inline?: boolean } = {}
   };
 
   return (
-    <Link href="/" className={inline ? "back-btn back-btn--inline" : "back-btn"} onClick={onClick}>
+    <Link href="/?home=1" className={inline ? "back-btn back-btn--inline" : "back-btn"} onClick={onClick}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M13 8H3M7 4 3 8l4 4" />
       </svg>

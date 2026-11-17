@@ -117,12 +117,21 @@ export type WayOption = {
   approval: string
   review: string
   why: string
+  /** A Way's own icon, when it has one: shown above the title. Most have none, and then no tile is drawn. */
+  icon?: string
+  /** The Goal this Way serves. Options can come from several Goals, so the card and the graph follow the picked Way's
+   *  Goal rather than the first Goal in the catalog answer. */
+  goal?: Delegation["goal"]
   tool: { name: string; server: string } | null
   steps: DelegationStep[]
 }
 
-/** What the router resolved, before a model is picked or a Way is chosen. */
-export type Routed = { goal: Delegation["goal"]; options: WayOption[] }
+/** A Goal the catalog matched, even when it has no written Way. The search result is shown before the model runs. */
+export type GoalOption = { id: string; name: string; score?: number; hasWay?: boolean }
+
+/** What the router resolved, before a model is picked or a Way is chosen. `skip`: JEV judged this ordinary work, so the
+ *  picker stays closed and the model runs at once. */
+export type Routed = { goal: Delegation["goal"]; options: WayOption[]; goals?: GoalOption[]; skip?: boolean }
 
 /** Turn one chosen Way into the plan: the model rung, the reason, and the least-privilege brief. */
 export function planFromOption(task: string, models: Models, goal: Delegation["goal"], option: WayOption | null): Delegation {
@@ -130,7 +139,7 @@ export function planFromOption(task: string, models: Models, goal: Delegation["g
   const picked = chooseModel(text, models, option ? { approval: option.approval } : null)
   const plan: Delegation = {
     task: text,
-    goal,
+    goal: option?.goal ?? goal,
     way: option ? { id: option.id, name: option.name, approval: option.approval } : null,
     tool: option?.tool ?? null,
     steps: option?.steps ?? [],
