@@ -5,7 +5,6 @@ import type { Plan } from "@/lib/plans";
 import { forgetCode, recallCode, rememberCode } from "@/lib/referral";
 
 import FreeCodeRedeem from "@/components/billing/FreeCodeRedeem";
-import { kellCredits } from "@/lib/billing";
 
 type Api = Pick<ReturnType<typeof billingApi>, "checkCode" | "redeemCode">;
 
@@ -72,7 +71,7 @@ export default function ReferralCode({ api, pilot, onApplied, onCleared }: {
             <b>Code {free.code}: a free trial.</b>{" "}
             {free.team
               ? <>It puts you in a trial team, paid from the team&rsquo;s balance with a small daily limit for each person. No payment is taken.</>
-              : <>It adds {kellCredits(free.creditUsd)} kell credits to your account, free. No payment is taken.</>}
+              : <>It adds free kell credits to your account. No payment is taken.</>}
             {free.placesLeft !== null ? <> {free.placesLeft} {free.placesLeft === 1 ? "place is" : "places are"} left.</> : null}
           </p>
           <FreeCodeRedeem api={api} initialCode={free.code} bare />
