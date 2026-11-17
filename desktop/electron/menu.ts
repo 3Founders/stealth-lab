@@ -3,6 +3,7 @@
 // session (the page does the work, told through "kell:menu"), Edit and Window are the standard ones, View only zooms and goes full
 // screen (reload and the inspector only in a development build), Help opens kell's pages in the person's browser.
 import { app, Menu, shell, type BrowserWindow, type MenuItemConstructorOptions } from "electron"
+import { checkForUpdates } from "./updater"
 
 const SITE = "https://www.kell.org.in"
 
@@ -54,6 +55,7 @@ export function setAppMenu(win: () => BrowserWindow | undefined) {
       { type: "separator" },
       { label: "Contact us", click: () => void shell.openExternal(`${SITE}/contact`) },
       { type: "separator" },
+      { label: "Check for updates…", click: () => void checkForUpdates(win, true) },
       { label: `kell ${app.getVersion()}`, enabled: false },
     ] },
   ]
