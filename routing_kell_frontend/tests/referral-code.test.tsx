@@ -115,7 +115,8 @@ describe("the referral-code section", () => {
     await type("friendof");
     await submit();
     expect(text()).toContain("a free trial");
-    expect(text()).toContain("0.25 kell credits");
+    expect(text()).toContain("free kell credits");
+    expect(text()).not.toContain("0.25");                                    // the amount given is never stated
     expect(text()).not.toContain("$");
     expect(text()).toContain("5 places are left");
     expect(text()).not.toContain("649");

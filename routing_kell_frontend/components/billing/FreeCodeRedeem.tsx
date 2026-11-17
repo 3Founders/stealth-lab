@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { kellCredits, type billingApi } from "@/lib/billing";
+import { type billingApi } from "@/lib/billing";
 import { getSupabase } from "@/lib/supabase";
 
 type Api = Pick<ReturnType<typeof billingApi>, "redeemCode">;
@@ -28,7 +28,7 @@ export default function FreeCodeRedeem({ api, onRedeemed, initialCode = "", bare
     if (r.kind === "ok") {
       setOk(true); setValue("");
       setNote(r.data.team ? "You have joined the trial team. Your use is paid from the team's balance, with a small daily limit for each person."
-        : `${kellCredits(r.data.creditedUsd)} kell credits were added. Your balance is now ${kellCredits(r.data.remainingUsd)} kell credits.`);
+        : "Your free kell credits are in your account. No payment was taken.");
       onRedeemed?.();
     } else if (r.kind === "error" && /verify your phone/i.test(r.message)) {
       setStep("phone"); setNote("This offer needs a confirmed phone number, one account per number. We text you a code to confirm it.");
