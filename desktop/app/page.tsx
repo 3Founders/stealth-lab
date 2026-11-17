@@ -2804,7 +2804,7 @@ export default function Home() {
             )}
             <div className="dk-iconrow">
               {settings && !settings.signedIn ? (
-                <button type="button" className="btn-ink" onClick={() => void signIn()}>Sign in</button>
+                <button type="button" className="btn-ink dk-signin" onClick={() => void signIn()}>Sign in</button>
               ) : (
                 <button type="button" className="dk-icon" aria-label="Account" title={settings?.account ? `Signed in as ${settings.account}` : "Account"}
                   aria-expanded={accountOpen} onClick={() => setAccountOpen((o) => !o)}>
@@ -2824,9 +2824,6 @@ export default function Home() {
               </button>
               <button type="button" className="dk-icon" aria-label="Route a task to a tool" title="Route a task to a tool" onClick={() => window.location.assign("/route")}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-              </button>
-              <button type="button" className="dk-icon" aria-label="Open console" title="Open console" onClick={openConsole}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3M13 15h4" /></svg>
               </button>
               {settings?.signedIn && (
                 <button type="button" className="dk-icon" aria-label="Sign out" title="Sign out" onClick={() => void signOut()}>
