@@ -19,7 +19,7 @@ jobs:
       - name: System packages
         run: |
           apt-get update -qq
-          apt-get install -y -qq --no-install-recommends ca-certificates curl git python3 make g++ xz-utils binutils file \
+          apt-get install -y -qq --no-install-recommends ca-certificates curl git python3 make g++ g++-10 gcc-10 xz-utils binutils file \
             libgtk-3-0 libnss3 libxss1 libxtst6 libatspi2.0-0 libsecret-1-0 libnotify4 libgbm1 libasound2 libdrm2 libxkbcommon0 \
             libuuid1 xdg-utils xvfb xauth fakeroot dpkg-dev procps
       - uses: actions/checkout@v4
@@ -31,6 +31,10 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Build node-pty for Electron on 20.04
         working-directory: desktop
+        # Electron 45's headers need C++20: 20.04's own g++-10 (its stock g++ 9 has no -std=gnu++20); same glibc and libstdc++ as 20.04
+        env:
+          CC: gcc-10
+          CXX: g++-10
         run: npx --yes @electron/rebuild@3.7.2 -f -w node-pty
       - name: Build AppImage and .deb
         working-directory: desktop
