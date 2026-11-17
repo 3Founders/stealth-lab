@@ -204,6 +204,25 @@ export function sessionExists(id: string): boolean {
   return !!d.prepare("select 1 from sessions where id = ?").get(id)
 }
 
+/**
+ * The person's own name for a chat. The sidebar reads the app's store, so this is the name it shows; the engine's copy
+ * is updated by the route that calls this, for any other client. A session the store has never seen gets a row here
+ * (an engine-only chat), so the name survives the next sync.
+ */
+export function renameSession(id: string, title: string): boolean {
+  const d = open()
+  const now = Date.now()
+  const row = d.prepare("select id from sessions where id = ?").get(id) as { id: string } | undefined
+  if (!row) {
+    d.prepare(`insert into sessions (id, engine_id, source, title, directory, created_at, updated_at, metadata)
+      values (?, ?, ?, ?, ?, ?, ?, ?)`).run(id, id, "kell", title, null, now, now, null)
+    return true
+  }
+  // The title only: a rename is not new activity, so the chat keeps its place in the sidebar's recent order.
+  d.prepare("update sessions set title = ? where id = ?").run(title, id)
+  return true
+}
+
 export function messageCount(sessionId: string): number {
   const d = open()
   const r = d.prepare("select count(*) as n from messages where session_id = ?").get(sessionId) as { n: number }

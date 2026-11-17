@@ -361,6 +361,10 @@ export async function POST(req: Request) {
         : ocMessages(id)
       if (!msgs.length) throw new Error("nothing was said in this chat that could be imported")
       const title = listing.find((c) => c.id === id)?.title || titleOf(msgs[0].text)
+      // Message ids must be unique per import attempt. The engine writes messages before it rejects an import, and a
+      // rejected one leaves them behind: fixed ids made every retry collide with those orphans and fail with a bare 500
+      // ("0 imported; 1 could not be: UnexpectedStatus: 500", 2026-11-17). A fresh tag per attempt lets a retry work.
+      const attempt = `${Date.now().toString(36)}${randomBytes(4).toString("hex")}`
       // The engine's import decodes `info` as a full Session.Info, not a title: id, projectID, cost, tokens, time and
       // location are required. `projectID: "global"` is resolved from `location` by the engine. `metadata.kell` is what
       // app/api/sessions uses to show a session in the sidebar; set it at creation and again below in case this engine
@@ -378,7 +382,7 @@ export async function POST(req: Request) {
       }
       const session = await (client as any).experimental.session.import({
         info,
-        messages: msgs.map((m, k) => ({ type: m.role, id: `msg_import_${id.replace(/\W/g, "")}_${k}`, time: { created: m.at }, text: m.text,
+        messages: msgs.map((m, k) => ({ type: m.role, id: `msg_import_${id.replace(/\W/g, "")}_${attempt}_${k}`, time: { created: m.at }, text: m.text,
           ...(m.role === "assistant" ? { agent: "build", model: { providerID: "opencode", id: "imported" }, content: [{ type: "text", text: m.text }], finish: "stop", cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } } : {}) })),
         location: { directory },
       })

@@ -21,6 +21,9 @@ import { spawn, type ChildProcess } from "node:child_process"
 import path from "node:path"
 
 const ROOT = path.join(__dirname, "..", "..") // desktop/ (main.js compiles to electron/dist/main.js)
+// Windows shows a notification under the app's own name only when it has an AppUserModelID; the installed shortcut uses
+// this one, so a finished chat's notice is attributed to kell instead of a generic Electron window (2026-11-17).
+if (process.platform === "win32") app.setAppUserModelId("org.kell.desktop")
 let win: BrowserWindow | undefined
 let next: ChildProcess | undefined
 

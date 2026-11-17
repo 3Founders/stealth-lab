@@ -3,7 +3,7 @@
 // tool calls; the changes panel (per-session diff, Undo via `kell undo`); the model strip (which model did each step, its
 // tokens and cost, and whether that model is the configured cheap one); tool suggestion cards (kell's tool router, the same
 // call the session's plugin makes); and settings (sign-in, models, engine, "Open console").
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Markdown from "@/components/chat/Markdown"
 import SmoothText, { Thinking } from "@/components/chat/SmoothText"
 import MessageActions from "@/components/chat/MessageActions"
@@ -507,6 +507,8 @@ export default function Home() {
   const turnGen = useRef(0)
   // The open project's sessions, newest first (the engine keeps them, so they are there after a restart; /api/sessions).
   const [sessions, setSessions] = useState<{ id: string; title: string; updated: number; directory?: string | null }[]>([])
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
   const dirRef = useRef("")                             // the open folder, for callbacks that outlive a render
   dirRef.current = directory
   const [sessOpen, setSessOpen] = useState(false)
@@ -837,7 +839,12 @@ export default function Home() {
       if (!r.ok) { setImportNote(String(j.error || "Could not import these chats.")); return }
       const failed: { id: string; error: string }[] = Array.isArray(j.failed) ? j.failed : []
       if (failed.length) {
-        setImportNote(`${ids.length - failed.length} imported; ${failed.length} could not be: ${String(failed[0].error || "")}`)
+        // The engine's own "UnexpectedStatus: 500" says nothing a person can act on; the usual cause was a retry after a
+        // half-written import, which fresh message ids now avoid (2026-11-17).
+        const why = (e: string) => /UnexpectedStatus:\s*500/.test(e)
+          ? "the engine refused it (500). Try importing it again; if it keeps failing, restart kell."
+          : String(e || "")
+        setImportNote(`${ids.length - failed.length} imported; ${failed.length} could not be: ${why(String(failed[0].error || ""))}`)
         setImportPick(new Set(failed.map((f) => String(f.id))))
         await loadSessions()
         return
@@ -856,11 +863,10 @@ export default function Home() {
   }, [importOpen, importBusy])
 
   // A past session: its conversation back on screen, and the next message continues it.
-  const openSession = async (id: string, force = false) => {
-    if (!force && id === sessionID) return
-    // A turn that is still running belongs to the chat it started in: switching away detaches the pane from its
-    // stream, and the engine keeps answering. `force` is the turn-end reload of that same chat.
-    if (!force && busyRef.current) { detached.current = true; setDetachedView(true) }
+  const openSession = async (id: string) => {
+    if (id === sessionID) return
+    // Opening a chat never stops a turn: a turn that is still running belongs to the chat it started in, and this pane
+    // simply shows the chat the person picked (2026-11-17, several chats may answer at once).
     const seq = ++sessionSeq.current
     onScreen.current = id                                // the stream stops writing to the pane in this same tick
     // On a narrow window the project list is a drawer over the chat: picking a chat closes it, or the drawer keeps
@@ -888,7 +894,12 @@ export default function Home() {
       }
       if (seq !== sessionSeq.current) return          // a newer click won
       setLines(Array.isArray(j.lines) ? j.lines : [])
-      // A permission or credit card that arrived while this chat was in the background is put back with its lines.
+      // A chat that is still answering shows what it has written so far, then any card that arrived while it was in the
+      // background (a permission waits there for the person's answer).
+      if (runningRef.current[id] && turnText.current[id]) {
+        const sofar = turnText.current[id]
+        setLines((l) => [...l, { who: "assistant", text: sofar, at: Date.now() }])
+      }
       const queued = pendingLines.current.filter((x) => x.sid === id)
       if (queued.length) {
         pendingLines.current = pendingLines.current.filter((x) => x.sid !== id)
@@ -908,17 +919,13 @@ export default function Home() {
     } catch { if (seq === sessionSeq.current) setLines([{ who: "assistant", text: "kell could not read this session.", at: Date.now() }]) }
     finally { if (seq === sessionSeq.current) setSessLoading(null) }
     if (seq === sessionSeq.current) loadChanges(id)
-    // A forced reload (the turn ended, or a blocking card brought us back) takes the stream again only once the
-    // chat it belongs to is on screen.
-    if (force && seq === sessionSeq.current) { detached.current = false; setDetachedView(false) }
   }
 
   // A new session: an empty chat in this project. Every per-turn and per-search state goes with it. Without that, the
   // last chat's picker, delegation, queue, or "opening" state stayed over the empty chat, and the `+` looked like it did
   // nothing while an Ask-mode picker was open (2026-11-16). A turn still running keeps running in its own chat.
   const newSession = () => {
-    if (busyRef.current) { detached.current = true; setDetachedView(true) }
-    else { detached.current = false; setDetachedView(false) }
+    setNewKey(`new:${Date.now().toString(36)}`)          // this empty chat is its own chat, even while another answers
     sessionSeq.current++                                  // a chat still loading must not fill this one
     planSeq.current++                                     // a procedure search still running must not land here
     turnGen.current++                                     // nor may its picker open over the new chat
@@ -942,16 +949,61 @@ export default function Home() {
   const remoteSeen = useRef(0)
   const onScreen = useRef<string | null>(null)
   onScreen.current = sessionID
-  // The running turn's session, and whether the person has switched to another chat. The engine keeps answering;
-  // the pane stops taking that stream's events so another chat can be read, and the finished answer is read back when
-  // the turn ends (2026-11-16). A blocking event (a permission, credit, or an error) brings the chat back, because
-  // without the person's answer that turn would wait forever.
-  const runningSid = useRef<string | null>(null)
-  const detached = useRef(false)
+  // Chats answering right now, by chat key: a session id, or "new:<n>" until the engine names a new chat. More than one
+  // can run at once (2026-11-17): each turn owns its own stream, and only the chat on screen draws it.
+  const [running, setRunning] = useState<Record<string, { sid: string | null }>>({})
+  const runningRef = useRef<Record<string, { sid: string | null }>>({})
+  const runningWrite = (next: Record<string, { sid: string | null }>) => { runningRef.current = next; setRunning(next) }
+  const [newKey, setNewKey] = useState(() => `new:${Date.now().toString(36)}`)
+  const chatKey = sessionID ?? newKey
+  const chatKeyRef = useRef(chatKey)
+  chatKeyRef.current = chatKey
+  const runningIds = useMemo(
+    () => new Set(Object.values(running).map((t) => t.sid).filter((x): x is string => !!x)),
+    [running],
+  )
+  // The answer each running chat has written so far, so opening one mid-turn shows what has been said, not a blank pane.
+  const turnText = useRef<Record<string, string>>({})
   const pendingLines = useRef<Array<{ sid: string; line: Line }>>([])   // a blocking event seen while another chat was open
-  const [runningSession, setRunningSession] = useState<string | null>(null)
-  const [detachedView, setDetachedView] = useState(false)
-  const streamLive = () => !detached.current && (runningSid.current === null || runningSid.current === onScreen.current)
+  // A finished chat's notice in the app, and the device notification that goes with it.
+  const [doneNote, setDoneNote] = useState<{ id: string; title: string; why?: string } | null>(null)
+  const doneTimer = useRef(0)
+  const chatTitle = (sid: string) => sessionsRef.current.find((s) => s.id === sid)?.title || "Your chat"
+  const notifyDone = (id: string, title: string, why?: string) => {
+    setDoneNote({ id, title, why })
+    if (doneTimer.current) window.clearTimeout(doneTimer.current)
+    doneTimer.current = window.setTimeout(() => setDoneNote(null), 12_000)
+    try {
+      if (typeof Notification === "undefined") return
+      const show = () => {
+        const n = new Notification(why ? "kell needs you" : "The chat finished", { body: title, tag: `kell-${id}` })
+        n.onclick = () => { window.focus(); void openSession(id); n.close() }
+      }
+      if (Notification.permission === "granted") show()
+      else if (Notification.permission === "default") void Notification.requestPermission().then((p) => { if (p === "granted") show() })
+    } catch { /* a notification is an addition */ }
+  }
+  // The chat on screen is the one whose turn the composer's state (busy, Stop, Thinking) follows. A turn in another chat
+  // never blocks this one.
+  useEffect(() => {
+    const b = !!running[chatKey]
+    setBusy(b); busyRef.current = b
+  }, [running, chatKey])
+  const beginTurn = (key: string, sid: string | null) => { if (!runningRef.current[key]) runningWrite({ ...runningRef.current, [key]: { sid } }) }
+  const endTurn = (key: string) => {
+    if (!key || !runningRef.current[key]) return
+    const next = { ...runningRef.current }
+    delete next[key]
+    runningWrite(next)
+  }
+  // A new chat gets its id from the engine on its first prompt: the running entry follows the new name.
+  const moveTurn = (from: string, to: string) => {
+    if (!from || !to || from === to || !runningRef.current[from]) return
+    const next = { ...runningRef.current }
+    next[to] = { ...next[from], sid: to }
+    delete next[from]
+    runningWrite(next)
+  }
   useEffect(() => {
     const tick = async () => {
       try {
@@ -987,12 +1039,63 @@ export default function Home() {
     } catch (err: any) { appendNote(`fork: ${String(err?.message || err)}`) }
   }
 
+  // Renaming a chat: the pencil on its row, double-clicking the row, or the command palette puts an input in its place.
+  // Enter or leaving the box saves, Escape cancels. The app's store is the name the sidebar reads; the route also tells
+  // the engine, so its own header agrees (2026-11-17).
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null)
+  const renamingRef = useRef<{ id: string; value: string } | null>(null)
+  renamingRef.current = renaming
+  const renameCancelled = useRef(false)
+  const renameSaving = useRef(false)
+  const startRename = (x: { id: string; title?: string }) => {
+    renameCancelled.current = false
+    setRenaming({ id: x.id, value: x.title ?? sessions.find((s) => s.id === x.id)?.title ?? "" })
+  }
+  const commitRename = async () => {
+    const cur = renamingRef.current
+    if (!cur || renameSaving.current) return
+    setRenaming(null)
+    if (renameCancelled.current) { renameCancelled.current = false; return }
+    const title = cur.value.replace(/\s+/g, " ").trim()
+    if (!title) return
+    renameSaving.current = true
+    setSessions((list) => list.map((x) => (x.id === cur.id ? { ...x, title } : x)))     // the row changes at once
+    try {
+      const r = await fetch("/api/sessions/rename", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: cur.id, title }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || `the rename answered ${r.status}`)
+      void loadSessions()
+    } catch (err) {
+      appendNote(`Could not rename the chat: ${String((err as any)?.message || err)}`)
+      void loadSessions()
+    } finally { renameSaving.current = false }
+  }
+
   const sessionRow = (x: { id: string; title: string; updated: number }) => (
-    <button type="button" key={x.id} className="dk-sess-row" data-here={x.id === sessionID || undefined} title={x.title || "Untitled session"}
-      onClick={() => void openSession(x.id)}>
-      <span className="nm">{x.title || "Untitled session"}</span>
-      <span className="when">{x.updated ? when(x.updated) : ""}</span>
-    </button>
+    renaming?.id === x.id ? (
+      <form key={x.id} className="dk-sess-row dk-sess-renaming" onSubmit={(e) => { e.preventDefault(); void commitRename() }}>
+        <input className="dk-sess-name" autoFocus value={renaming.value} aria-label="Chat name" placeholder="Name this chat"
+          onChange={(e) => setRenaming({ id: x.id, value: e.target.value })}
+          onBlur={() => void commitRename()}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") { e.preventDefault(); renameCancelled.current = true; setRenaming(null) }
+          }} />
+      </form>
+    ) : (
+      <div className="dk-sess-row" key={x.id} data-here={x.id === sessionID || undefined} onDoubleClick={() => startRename(x)}>
+        <button type="button" className="dk-sess-open" title={`${x.title || "Untitled session"} (double-click to rename)`}
+          onClick={() => void openSession(x.id)}>
+          <span className="nm">{x.title || "Untitled session"}</span>
+          {runningIds.has(x.id)
+            ? <span className="dk-sess-live" role="img" aria-label="Answering" title="kell is still answering in this chat"><span className="dg-pulse" aria-hidden="true" /></span>
+            : <span className="when">{x.updated ? when(x.updated) : ""}</span>}
+        </button>
+        <button type="button" className="dk-sess-rename" aria-label={`Rename ${x.title || "this chat"}`} title="Rename this chat"
+          onClick={(e) => { e.stopPropagation(); startRename(x) }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+        </button>
+      </div>
+    )
   )
 
   // Open project: with no folder typed, the system's folder picker first (in the app). Says what it is doing and what happened:
@@ -1007,7 +1110,7 @@ export default function Home() {
     // The pane belongs to the new folder from this moment: an empty chat and its own sessions, never the last project's,
     // while the engine boots. Waiting for the engine left the old conversation under the new name and looked like the
     // folder never opened (2026-11-16). A running turn is ended by the engine switch itself, so say so.
-    const endedTurn = busyRef.current
+    const endedTurn = Object.keys(runningRef.current).length > 0
     sessionSeq.current++                                  // a chat still loading must not fill the new project
     planSeq.current++                                     // a procedure search must not open its picker there
     turnGen.current++
@@ -1015,6 +1118,10 @@ export default function Home() {
     setSideView("project")                                // an open project shows its sessions, not the project list
     setEngine(null); setOpening(true)
     dirRef.current = dir
+    // The engine serves one folder: the old project's turns cannot outlive the switch. Their streams will end on their
+    // own; the pane starts clean, with no stale running dots or notices from the previous project (2026-11-17).
+    runningWrite({}); turnText.current = {}; pendingLines.current = []; setDoneNote(null)
+    setNewKey(`new:${Date.now().toString(36)}`)
     setDirectory(dir); setSessionID(null); setSessions([])
     setQueued([]); setLines([]); setSteps([]); setSubagents([]); subagentIds.current.clear(); setSessionModel(null); setLedger([]); setSpend(0); setDelegateLog([]); loadChanges(null)
     setPendingTurn(null); setDelegateOptions([]); setDelegateGoals([]); setDelegation(null); planRef.current = null
@@ -1039,8 +1146,8 @@ export default function Home() {
     if (session) void openSession(session)
   }
 
-  // Open a folder: the picker, a recent project, or File > Open folder. A turn that is still answering is ended by the
-  // engine switch, so the pane detaches first and these buttons are never dead while a model works (2026-11-16).
+  // Open a folder: the picker, a recent project, or File > Open folder. The engine serves one folder, so switching ends a
+  // running turn; the button is never dead while a model works (2026-11-16).
   const openFolder = async (dir?: string) => {
     let d = dir
     if (!d) {
@@ -1048,18 +1155,14 @@ export default function Home() {
       d = (await desktop()?.pickFolder?.()) ?? undefined
       if (!d) return
     }
-    if (busyRef.current) { detached.current = true; setDetachedView(true) }
     await openProject(d)
   }
 
-  const appendAssistant = (delta: string) => {
-    if (!streamLive()) return
-    setLines((l) => {
-      const last = l.at(-1)
-      if (last?.who === "assistant") { const c = l.slice(0, -1); c.push({ who: "assistant", text: last.text + delta, at: last.at }); return c }
-      return [...l, { who: "assistant", text: delta, at: Date.now() }]
-    })
-  }
+  const appendAssistant = (delta: string) => setLines((l) => {
+    const last = l.at(-1)
+    if (last?.who === "assistant") { const c = l.slice(0, -1); c.push({ who: "assistant", text: last.text + delta, at: last.at }); return c }
+    return [...l, { who: "assistant", text: delta, at: Date.now() }]
+  })
 
   // The prompt an answer came from, for "Ask again".
   const lastUserBefore = (i: number) => { for (let k = i - 1; k >= 0; k--) if (lines[k].who === "user") return lines[k].text; return undefined }
@@ -1337,13 +1440,16 @@ export default function Home() {
     }
     setAgentView("main")                                    // a new prompt is for the session, not the agent view
     if ((!body.trim() && !outgoing.length) || !directory) return
-    if (busyRef.current) {                                    // still working: keep it for when this turn ends
+    // Only this chat's own turn blocks a send. Another chat answering is not this chat's business (2026-11-17).
+    const key = sessionID ?? newKey
+    if (runningRef.current[key]) {                            // still working here: keep it for when this turn ends
       setQueued((q) => [...q, { text: body, files: outgoing }])
       if (again === undefined) { setText(""); setAttachments([]); histPos.current = null }
       return
     }
     const sent = body
     const gen = turnGen.current
+    beginTurn(key, sessionID)
     // The procedure search starts now, before the model, unless the person chose Direct or this is small talk. When it
     // runs, every task shows the Goals/Ways it found, even when none has a written Way. The model never starts the
     // search itself (2026-11-16). JEV decides whether the prompt asks for a procedure at all; ordinary work skips the
@@ -1358,12 +1464,12 @@ export default function Home() {
     setBusy(true); busyRef.current = true
     setStopNote("")
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
-    if (skipSearch) { await runTurn(sent, outgoing, null); return }
+    if (skipSearch) { await runTurn(sent, outgoing, null, key, sessionID); return }
     const routed = await routedP
     // A new session was started while the search ran: its picker, card, or error belongs to the chat the person left.
-    if (turnGen.current !== gen) { setBusy(false); busyRef.current = false; return }
+    if (turnGen.current !== gen) { endTurn(key); return }
     // JEV judged this ordinary work: no picker, no card, the model starts as if kell held nothing.
-    if (routed?.skip) { if (onScreen.current === sessionID) setDelegateStatus(""); await runTurn(sent, outgoing, null); return }
+    if (routed?.skip) { if (onScreen.current === sessionID) setDelegateStatus(""); await runTurn(sent, outgoing, null, key, sessionID); return }
     if (routed && procMode === "auto") {
       // Auto: the best-fitting Way is applied without a click. No Way means the model does the work, with no card.
       const best = routed.options[0] ?? null
@@ -1379,7 +1485,7 @@ export default function Home() {
           ? `Auto: using the best fit, ${best.name}`
           : "Auto: no stored procedure fits - the model does the work")
       }
-      await runTurn(sent, outgoing, plan)
+      await runTurn(sent, outgoing, plan, key, sessionID)
       return
     }
     if (routed) {
@@ -1388,7 +1494,7 @@ export default function Home() {
       setPendingTurn({ text: sent, files: outgoing, asGoal, goal: routed.goal, sid: sessionID })
       setDelegateOptions(routed.options)
       setDelegateGoals(routed.goals)
-      setBusy(false); busyRef.current = false
+      endTurn(key)
       if (onScreen.current === sessionID) setDelegateStatus(routed.options.length
         ? `${routed.options.length} ${routed.options.length === 1 ? "Way" : "Ways"} found - choose one in the chat`
         : "No stored procedure for this task - kell can still work on it")
@@ -1396,48 +1502,40 @@ export default function Home() {
     }
     // The search could not run (a signed-out token, the server, the network). Do not let the model answer as if it
     // searched: say what happened and offer the sign-in / retry in the chat.
-    setBusy(false); busyRef.current = false
+    endTurn(key)
     const why = planErr.current || "kell could not search the procedure catalog"
     if (onScreen.current === sessionID) setLines((l) => [...l, { who: "catalog", text: sent, server: why, at: Date.now() }])
     setDelegateStatus("")
     setDelegateNote("")
   }
 
-  // Run one turn on the chosen Way (or on the engine's default when plan is null). The user's line is already in the
-  // chat; this owns the stream and the post-turn refresh.
-  const runTurnInner = async (sent: string, outgoing: Attachment[], plan: Delegation | null) => {
-    if (plan) { setDelegateAnswer(""); setDelegateErr("") }
-    runningSid.current = sessionID
-    setRunningSession(sessionID)
-    // If the person switched during the procedure search, this turn belongs to the chat they left: stay detached.
-    // If they are still on (or back on) its chat, the stream owns the pane.
-    if (onScreen.current === sessionID) { detached.current = false; setDetachedView(false) }
-    const payload = { sessionID, directory, text: sent, model: plan?.model ?? undefined, plan: plan ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
+  // Run one turn on the chosen Way (or on the engine's default when plan is null). `turn` is this chat's running entry:
+  // its key (a session id, or the pending name of a new chat), its session id once known, and the text it has written.
+  // Only the chat on screen draws the stream; the others keep their entry for the row's pulse and the notice when they
+  // finish (2026-11-17: several chats can answer at once).
+  const runTurnInner = async (sent: string, outgoing: Attachment[], plan: Delegation | null, turn: { key: string; sid: string; text: string }) => {
+    if (plan && onScreen.current === turn.sid) { setDelegateAnswer(""); setDelegateErr("") }
+    const live = () => !!turn.sid && onScreen.current === turn.sid
+    const payload = { sessionID: turn.sid || undefined, directory, text: sent, model: plan?.model ?? undefined, plan: plan ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })
     if (!r.ok || !r.body) {
       const err = await r.text()
-      if (streamLive()) setLines((l) => [...l, { who: "assistant", text: `kell could not reach the engine: ${err.slice(0, 200)}`, at: Date.now() }])
-      setBusy(false); busyRef.current = false; return
+      if (live()) setLines((l) => [...l, { who: "assistant", text: `kell could not reach the engine: ${err.slice(0, 200)}`, at: Date.now() }])
+      else if (turn.sid) notifyDone(turn.sid, chatTitle(turn.sid), "could not reach the engine")
+      return
     }
-    let sid = sessionID
     let buffer = ""
     let ended = false
     let failed = false
-    const before = lines.length
+    let said = false
     const reader = r.body.getReader()
     const dec = new TextDecoder()
-    // A blocking event (a permission, missing credit, an error) seen while another chat is open: load this turn's
-    // chat again, put the card back with its lines, and only then let the stream write to the pane.
-    const bringBack = (lineSid: string, line: Line) => {
-      const psid = lineSid || sid || ""
-      if (!psid) return
-      pendingLines.current.push({ sid: psid, line })
-      detached.current = true
-      onScreen.current = psid
-      setSessionID(psid)
-      setRunningSession(psid)
-      setDetachedView(true)
-      void openSession(psid, true)
+    // A blocking event (a permission, missing credit, an error) in a chat that is not on screen: keep its card for when
+    // the person opens it, and tell them there. Never yank them out of the chat they are working in (2026-11-17).
+    const forLater = (line: Line, why: string) => {
+      if (!turn.sid) return
+      pendingLines.current.push({ sid: turn.sid, line })
+      notifyDone(turn.sid, chatTitle(turn.sid), why)
     }
     for (;;) {
       const { value, done } = await reader.read()
@@ -1452,19 +1550,27 @@ export default function Home() {
         const t = ev.type as string
         const d = ev.data || {}
         if (t === "session") {
-          sid = ev.sessionID
-          runningSid.current = sid
-          setRunningSession(sid)
-          // A new session's id belongs to the chat the turn was started in. If the person has already switched away,
-          // the pane keeps their chat; the stream writes nowhere until the turn ends.
-          if (!detached.current) { onScreen.current = sid; setSessionID(sid) }
+          const nextSid = String(ev.sessionID || "")
+          if (nextSid && nextSid !== turn.sid) {
+            const from = turn.key
+            const here = chatKeyRef.current === from
+            turn.sid = nextSid
+            turn.key = nextSid
+            moveTurn(from, nextSid)
+            // A new session's id belongs to the chat the turn was started in. If the person is still there, show it.
+            if (here) { onScreen.current = nextSid; setSessionID(nextSid) }
+          }
           void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: ev.sessionID }) }).catch(() => undefined)
         }
-        else if (t === "session.text.delta") appendAssistant(d.delta ?? d.text ?? "")
+        else if (t === "session.text.delta") {
+          const delta = String(d.delta ?? d.text ?? "")
+          if (turn.sid && delta) { turnText.current[turn.sid] = (turnText.current[turn.sid] || "") + delta; said = true }
+          if (live()) appendAssistant(delta)
+        }
         else if (t === "session.tool.input.started") {
           // The tool's name comes only here; the called / success / failed events carry the call's id (2026-11-07: every chip read "tool").
           const id = String(d.id || ""), label = String(d.name || "tool")
-          if (streamLive()) {
+          if (live()) {
             setSteps((s) => s.some((x) => x.id === id) ? s : [...s, { kind: "tool", label, id, state: "running" }])
             // A subagent shows in the agents panel from its first moment; `called` below fills in what it was asked to do.
             if (SUBAGENT_TOOL.test(label) && id) {
@@ -1477,7 +1583,7 @@ export default function Home() {
           const id = String(d.id || "")
           const state = t === "session.tool.called" ? "running" : t === "session.tool.success" ? "done" : "failed"
           const hint = t === "session.tool.called" ? hintOf(d.input) : undefined
-          if (streamLive()) setSteps((s) => s.some((x) => x.id === id)
+          if (live()) setSteps((s) => s.some((x) => x.id === id)
             ? s.map((x) => (x.id === id ? { ...x, state, hint: hint ?? x.hint, note: state === "failed" ? "failed" : x.note } : x))
             : [...s, { kind: "tool", label: String(d.name || "tool"), id, state, hint, note: state === "failed" ? "failed" : undefined }])
           // The subagent's row: its one-line task while it runs, its answer (or failure) when it ends. The call's name is
@@ -1487,7 +1593,7 @@ export default function Home() {
             if (at || /"status":\s*"(done|failed|cancelled)"/.test(contentText(d.content))) lastRun.current = at
           }
           if (id && SUBAGENT_TOOL.test(String(d.name || ""))) subagentIds.current.add(id)
-          if (streamLive() && id && subagentIds.current.has(id)) {
+          if (live() && id && subagentIds.current.has(id)) {
             if (t === "session.tool.called") {
               const title = subagentTitle(d.input)
               const brief = typeof d.input?.prompt === "string" ? d.input.prompt : undefined
@@ -1504,92 +1610,87 @@ export default function Home() {
         }
         else if (t === "session.step.started") {
           const id = String(d.assistantMessageID || "")
-          if (streamLive() && id && d.model?.id) setLedger((rows) => [...rows.filter((r) => r.id !== id), { id, model: d.model.id, providerID: d.model.providerID }])
+          if (live() && id && d.model?.id) setLedger((rows) => [...rows.filter((r) => r.id !== id), { id, model: d.model.id, providerID: d.model.providerID }])
         }
         else if (t === "session.step.ended") {
           const id = String(d.assistantMessageID || "")
           const patch = { tokens: tokensOf(d), cost: d.cost != null ? Number(d.cost) : undefined }
-          if (streamLive() && id) setLedger((rows) => rows.some((r) => r.id === id) ? rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) : [...rows, { id, ...patch }])
-          if (d.cost != null) setSpend((c) => c + Number(d.cost))
+          if (live() && id) setLedger((rows) => rows.some((r) => r.id === id) ? rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) : [...rows, { id, ...patch }])
+          if (live() && d.cost != null) setSpend((c) => c + Number(d.cost))
         }
         else if (t === "permission.asked") {
           // the engine waits for this answer (reading a .env file asks first); without it the turn hung (2026-11-08, the e2e test)
           const what = [d.action, ...(Array.isArray(d.resources) ? d.resources.slice(0, 3) : [])].filter(Boolean).join(" ")
           const line: Line = { who: "permission", text: String(d.message || what || "a tool call"), sessionID: d.sessionID, requestID: String(d.id), at: Date.now() }
-          if (streamLive()) setLines((l) => l.some((x) => x.requestID === d.id) ? l : [...l, line])
-          else bringBack(String(d.sessionID || sid || ""), line)
+          if (live()) { said = true; setLines((l) => l.some((x) => x.requestID === d.id) ? l : [...l, line]) }
+          else forLater(line, "needs your permission")
         }
         else if (t === "need_plan") {
           failed = true
           const run = lastRun.current ?? undefined
           const line: Line = { who: "plan", text: "", at: Date.now(), ...(run ? { run } : {}) }
-          if (streamLive()) setLines((l) => [...l, line])
-          else bringBack(sid || "", line)
-          setBusy(false)
+          if (live()) { said = true; setLines((l) => [...l, line]) }
+          else forLater(line, "needs your attention")
         }
         else if (t === "low_balance") {
           const line: Line = { who: "plan", text: "", at: Date.now(), low: { left: Number(ev.left) || 0, steps: Number(ev.steps) || 0 } }
-          if (streamLive()) setLines((l) => [...l, line])
-          else bringBack(sid || "", line)
+          if (live()) { said = true; setLines((l) => [...l, line]) }
+          else forLater(line, "is low on credit")
         }
         else if (t === "error") {
           failed = true
           if (needsWebSignIn(ev.error)) setEngine({ up: false, error: String(ev.error) })
           const line: Line = { who: "assistant", text: needsWebSignIn(ev.error) ? "Sign in to run models: the buttons are on the left." : `\n(error: ${ev.error})`, at: Date.now() }
-          if (streamLive()) setLines((l) => [...l, line])
-          else bringBack(sid || "", line)
-          setBusy(false)
+          if (live()) { said = true; setLines((l) => [...l, line]) }
+          else forLater(line, "stopped with an error")
         }
         else if (t === "done") ended = true
       }
     }
     // A turn that ends with nothing said is never silent: say so (2026-11-06: a failed model call showed an empty turn).
-    if (streamLive()) setLines((l) => l.slice(before).some((x) => x.who === "assistant" || x.who === "permission" || x.who === "plan") ? l
-      : [...l, { who: "assistant", text: ended ? "kell got no answer from the model for this. Try again, or check Settings > Models."
-                                               : "The connection to the engine ended before an answer came. Try again.", at: Date.now() }])
-    setBusy(false)
-    busyRef.current = false
-    // Let React flush the last line, then let an active goal judge the turn (app/api/goal). A failed turn pauses it.
-    setTimeout(() => { if (onScreen.current === sid) goalAfterTurn.current(sid, failed) }, 80)
-    // The session's snapshot record lands shortly after the last stream event, and how long is not fixed: check now, then
-    // poll a few times, so the panel fills itself instead of waiting for a Refresh click. Only for the chat on screen:
-    // the panel belongs to the visible session, not to a turn that finished in the background.
-    if (onScreen.current === sid) loadChanges(sid)
-    for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (onScreen.current === sid && !busyRef.current) loadChanges(sid) }, ms)
+    if (live()) {
+      if (!said) setLines((l) => [...l, { who: "assistant", text: ended ? "kell got no answer from the model for this. Try again, or check Settings > Models."
+        : "The connection to the engine ended before an answer came. Try again.", at: Date.now() }])
+      // Let React flush the last line, then let an active goal judge the turn (app/api/goal). A failed turn pauses it.
+      setTimeout(() => { if (onScreen.current === turn.sid) goalAfterTurn.current(turn.sid, failed) }, 80)
+      // The session's snapshot record lands shortly after the last stream event, and how long is not fixed: check now, then
+      // poll a few times, so the panel fills itself instead of waiting for a Refresh click.
+      if (turn.sid) loadChanges(turn.sid)
+      for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (onScreen.current === turn.sid) loadChanges(turn.sid) }, ms)
+      setDelegateStatus("")
+    } else if (turn.sid) {
+      notifyDone(turn.sid, chatTitle(turn.sid), failed ? "stopped with an error" : undefined)
+    }
     loadSessions()
     setTimeout(loadSessions, 4000)                           // the engine names a new session a moment after its first turn
-    setDelegateStatus("")
   }
 
-  // A turn always ends. A stream that failed mid-read used to leave `busy` true, which disabled every session row and
-  // the composer until the app was restarted (2026-11-16). The inner function keeps the success path; this only adds the
-  // guarantee that the app is usable again, and says what happened when the connection broke.
-  const runTurn = async (sent: string, outgoing: Attachment[], plan: Delegation | null) => {
-    try { await runTurnInner(sent, outgoing, plan) }
+  // A turn always leaves the running set, even when its stream breaks; only this chat's entry goes, so other chats keep
+  // answering. A finished background chat gets the notice in the app and the device notification (2026-11-17).
+  const runTurn = async (sent: string, outgoing: Attachment[], plan: Delegation | null, key: string, startSid: string | null) => {
+    const turn = { key, sid: startSid ?? "", text: "" }
+    try { await runTurnInner(sent, outgoing, plan, turn) }
     catch (err) {
-      appendAssistant(`The connection to the engine broke: ${String((err as any)?.message || err).slice(0, 200)}`)
+      const why = String((err as any)?.message || err).slice(0, 200)
+      if (turn.sid && onScreen.current === turn.sid) appendAssistant(`The connection to the engine broke: ${why}`)
+      else if (turn.sid) notifyDone(turn.sid, chatTitle(turn.sid), "the connection broke")
     }
     finally {
-      const ranSid = runningSid.current
-      const wasDetached = detached.current
-      runningSid.current = null
-      setRunningSession(null)
-      detached.current = false
-      setDetachedView(false)
+      endTurn(turn.key)
+      if (turn.key !== turn.sid) endTurn(turn.sid)
+      if (turn.sid) delete turnText.current[turn.sid]
       // A permission card for a turn that has ended is stale. A credit/plan or error notice is still worth showing
       // when the person returns to that chat.
-      if (ranSid) pendingLines.current = pendingLines.current.filter((x) => x.sid !== ranSid || x.line.who !== "permission")
-      setBusy(false); busyRef.current = false; setDelegateStatus("")
-      // The chat that was answering in the background catches up with the finished answer.
-      if (wasDetached && ranSid && onScreen.current === ranSid) void openSession(ranSid, true)
+      if (turn.sid) pendingLines.current = pendingLines.current.filter((x) => x.sid !== turn.sid || x.line.who !== "permission")
+      if (onScreen.current === turn.sid) setDelegateStatus("")
     }
   }
 
   // The person picked one of the Ways: build its plan (model rung, brief) and run the waiting turn.
   const applyOption = (option: WayOption) => {
     const pending = pendingTurn
-    if (!pending || busyRef.current) return                 // a double click must not start the turn twice
-    busyRef.current = true
+    const key = pending?.sid ?? chatKeyRef.current
+    if (!pending || runningRef.current[key]) return           // a double click must not start the turn twice
     const plan = planFromOption(pending.text, settings?.models || {}, pending.goal, option)
     planRef.current = plan
     setDelegation(plan)
@@ -1597,17 +1698,17 @@ export default function Home() {
     setDelegateGoals([])
     setPendingTurn(null)
     setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateLog([])
-    setBusy(true); busyRef.current = true
+    beginTurn(key, pending.sid)
     setDelegateStatus(`Working with ${plan.model?.id || "the engine's default"}…`)
-    void runTurn(pending.text, pending.files, plan)
+    void runTurn(pending.text, pending.files, plan, key, pending.sid)
   }
 
   // "Run without a Way": the turn still runs, on the model the ladder would pick for the task, with no procedure
   // contract. Nothing is hidden: the panel says no Way was applied.
   const runWithoutWay = () => {
     const pending = pendingTurn
-    if (!pending || busyRef.current) return
-    busyRef.current = true
+    const key = pending?.sid ?? chatKeyRef.current
+    if (!pending || runningRef.current[key]) return
     const plan = planFromOption(pending.text, settings?.models || {}, pending.goal, null)
     planRef.current = plan
     setDelegation(plan)
@@ -1615,9 +1716,9 @@ export default function Home() {
     setDelegateGoals([])
     setPendingTurn(null)
     setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateLog([])
-    setBusy(true); busyRef.current = true
+    beginTurn(key, pending.sid)
     setDelegateStatus("Running without a Way — the engine's model does the work")
-    void runTurn(pending.text, pending.files, plan)
+    void runTurn(pending.text, pending.files, plan, key, pending.sid)
   }
 
   // Ask the delegated model directly, with the scoped brief only (app/api/delegate/ask): no files, no shell, no history.
@@ -1748,8 +1849,9 @@ export default function Home() {
 
   /** Stop the turn at its next safe point (reqs §5). Work that already ran is not undone, and the note says so. */
   const stop = async () => {
-    // The turn may belong to the chat that was open when it started, not the one now on screen.
-    const sid = runningSid.current || sessionID
+    // Stop the turn in the chat on screen. Other chats keep answering: their Stop is in their own chat (2026-11-17).
+    const t = runningRef.current[chatKeyRef.current]
+    const sid = t?.sid
     if (!sid || stopping) return
     setStopping(true)
     try {
@@ -2028,6 +2130,7 @@ export default function Home() {
   }
   const commands = [
     { id: "new-session", title: "New session", hint: "a fresh chat in this project", run: newSession },
+    { id: "rename-session", title: "Rename this chat", hint: "give the open chat your own name", run: () => { if (sessionID) startRename({ id: sessionID }) } },
     { id: "open-folder", title: "Open a folder…", hint: "choose the project kell works in", run: () => void openFolder() },
     { id: "refresh", title: "Refresh the changes", run: () => loadChanges(sessionID) },
     { id: "undo", title: "Undo kell's last changes", hint: "put the files back as they were", run: () => void undo() },
@@ -2710,7 +2813,7 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-                {busy && streamLive() && lines.at(-1)?.who !== "assistant" && (
+                {busy && lines.at(-1)?.who !== "assistant" && (
                   <div className="dg-run" data-agent="true">
                     <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
                     <div className="dg-col">
@@ -2862,16 +2965,6 @@ export default function Home() {
               {delegateStatus}
             </div>
           )}
-          {detachedView && runningSession && (
-            // A turn is still answering in the engine while the person reads another chat. Stop works from here; the
-            // finished answer is read back when they return (or when the turn ends, if it is the chat on screen).
-            <div className="dk-delegate-live" role="status" aria-live="polite">
-              <span className="dg-pulse" aria-hidden="true" />
-              {runningSession === sessionID
-                ? "This chat is still answering in the background. It catches up when the turn ends."
-                : "Another chat is still answering. Use Stop here, or open that chat when it finishes."}
-            </div>
-          )}
           {delegation?.model && (
             // The routed model for this turn, in the chat: clicking brings the delegation panel back in the right sidebar.
             <button type="button" className="dk-delegate-chip" onClick={() => showSidebar("right")}
@@ -2912,11 +3005,9 @@ export default function Home() {
               {busy && (
                 // The stop sits with the mode choice, above the message box: the turn it stops is the one the mode
                 // applies to, and it stays reachable without taking the send button's place.
-                <button type="button" className="dk-stop" onClick={() => void stop()} disabled={stopping || !(runningSession || sessionID)}
+                <button type="button" className="dk-stop" onClick={() => void stop()} disabled={stopping || !(busy || sessionID)}
                   aria-label="Stop kell"
-                  title={runningSession && runningSession !== sessionID
-                    ? "Stop the turn still running in the other chat. Steps that already ran stay; nothing is undone."
-                    : "Stop the turn. Steps that already ran stay; nothing is undone."}>
+                  title="Stop this chat's turn. Steps that already ran stay; nothing is undone.">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
                 </button>
               )}
@@ -3165,6 +3256,16 @@ export default function Home() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {doneNote && (
+        // A chat that finished while another was on screen: a quiet notice here, with the same news sent to the device
+        // by notifyDone. Opening it reads the answer (2026-11-17).
+        <div className="dk-done-toast" role="status" aria-live="polite">
+          <span className="dk-done-dot" aria-hidden="true" />
+          <span className="dk-done-text"><b>{doneNote.title}</b> {doneNote.why || "finished answering"}.</span>
+          <button type="button" className="dk-done-open" onClick={() => { const id = doneNote.id; setDoneNote(null); void openSession(id) }}>Open</button>
+          <button type="button" className="dk-done-x" aria-label="Dismiss" title="Dismiss" onClick={() => setDoneNote(null)}>×</button>
         </div>
       )}
     </section>
