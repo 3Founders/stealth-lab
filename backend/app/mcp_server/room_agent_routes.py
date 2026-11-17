@@ -510,6 +510,28 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             return _error(request, "the request body must be JSON", 400)
         way_id = str(data.get("way_id") or "").strip()[:200] if isinstance(data, dict) else ""
         text = str(data.get("text") or "").strip()[: rm.MAX_BODY] if isinstance(data, dict) else ""
+        # What the person changed in the procedure panel: a step's title and an added note, by order. The Way itself is
+        # still the approved one loaded below; only its wording changes (2026-11-17).
+        overrides: list[dict[str, Any]] = []
+        raw_steps = data.get("steps") if isinstance(data, dict) else None
+        if isinstance(raw_steps, list):
+            for s in raw_steps[:100]:
+                if not isinstance(s, dict):
+                    continue
+                try:
+                    order = int(s.get("order") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if order <= 0:
+                    continue
+                item: dict[str, Any] = {"order": order}
+                title = str(s.get("title") or "").strip()[:300]
+                if title:
+                    item["title"] = title
+                note = str(s.get("note") or "").strip()[:2000]
+                if note:
+                    item["note"] = note
+                overrides.append(item)
         if not way_id:
             return _error(request, "say which Way: {\"way_id\": \"<procedure id>\"}", 400)
         room_id = request.path_params["room_id"]
@@ -551,7 +573,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             return reply, (appended["accepted"][0] if appended["accepted"] else None)
 
         async def run_way() -> tuple[dict[str, Any], str, Any]:
-            view = await _way_runs.start(pool, way_id, owner_id=subject, input=text, mode="headless")
+            view = await _way_runs.start(pool, way_id, owner_id=subject, input=text, mode="headless",
+                                         overrides=overrides or None)
             reply, accepted = await finish(view)
             return view, reply, accepted
 
@@ -562,6 +585,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                 try:
                     view = await _way_runs.start(
                         pool, way_id, owner_id=subject, input=text, mode="headless",
+                        overrides=overrides or None,
                         on_progress=lambda ev: queue.put_nowait(dict(ev)))
                     reply, accepted = await finish(view)
                     queue.put_nowait({"event": "posted", "done": True, "text": reply, "event_row": accepted, "view": view})
@@ -597,6 +621,64 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             log.exception("room way: the run failed for room %s", str(room_id)[:8])
             return _error(request, str(exc)[:300] or "the run could not start", 502)
         return _json(request, {"posted": accepted is not None, "text": reply, "event": accepted, "view": view})
+
+    @server.custom_route("/v1/rooms/{room_id}/way/report", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def room_way_report(request: Request) -> Response:
+        """A person finished the human step a Way run waits on: report it, continue the run, and post the news.
+
+        The executor's human steps pause with `waiting_human` and a description of what the person must do (copy a
+        prompt's output into another tool, for instance). The room card offers "Done" with an optional note; this route
+        reports that and lets the run go on (2026-11-17)."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001
+            return _error(request, "the request body must be JSON", 400)
+        run_id = str(data.get("run_id") or "").strip()[:100] if isinstance(data, dict) else ""
+        note = str(data.get("note") or "").strip()[:4000] if isinstance(data, dict) else ""
+        if not run_id:
+            return _error(request, "say which run: {\"run_id\": \"<id>\"}", 400)
+        room_id = request.path_params["room_id"]
+        try:
+            await rm.recent_events(pool, subject, room_id, 1)
+        except rm.RoomError as exc:
+            return _error(request, str(exc), exc.status)
+        my_label = await rm.owner_label(pool, subject)
+        try:
+            people = await pool.fetchval(
+                "SELECT count(*) FROM room_members WHERE room_id::text = $1 AND removed_at IS NULL", str(room_id))
+        except Exception:  # noqa: BLE001
+            people = 0
+        post_handle = f"@{my_label}/kell" if (people or 0) > 1 else "@kell"
+        from app.execution import way_runs as _way_runs
+
+        try:
+            view = await _way_runs.report(pool, run_id, owner_id=subject, done=True, note=note)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("room way: the report failed for room %s", str(room_id)[:8])
+            return _error(request, str(exc)[:300] or "the step could not be reported", 400)
+        status = str(view.get("status") or "")
+        if status == "done":
+            body = str(view.get("result") or "Done.")
+        elif status == "failed":
+            body = f"It stopped at step {view.get('step')} of {view.get('of')}: {view.get('error') or 'a step failed'}"
+        elif status == "waiting_human":
+            w = view.get("waiting_on") or {}
+            body = (f"It needs you at step {w.get('order')}: {w.get('title') or 'a person step'}."
+                    + (f" {w.get('description')}" if w.get("description") else ""))
+        else:
+            body = str(view.get("result") or "The run is going on.")
+        events = rm.agent_events(post_handle, body)
+        appended = await rm.append_events(pool, subject, room_id, events)
+        return _json(request, {"view": view, "text": body, "posted": bool(appended["accepted"]),
+                               "event": appended["accepted"][0] if appended["accepted"] else None})
 
     @server.custom_route("/v1/rooms/{room_id}/agent/stop", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_stop(request: Request) -> Response:

@@ -104,6 +104,7 @@ export function roomsApi(deps: RoomsDeps) {
     runWay: async (
       id: string, wayId: string, text: string,
       onEvent: (ev: WayRunEvent) => void, signal?: AbortSignal,
+      steps?: Array<{ order: number; title?: string; note?: string }>,
     ): Promise<{ posted: boolean; text: string; event: { id: string; seq: number } | null; view: WayRunView | null }> => {
       const token = await deps.token();
       if (!token) throw new RoomsApiError("Sign in again to sync your rooms.", 401);
@@ -112,7 +113,7 @@ export function roomsApi(deps: RoomsDeps) {
         res = await doFetch(`${base}/v1/rooms/${e(id)}/way`, {
           method: "POST", signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "text/event-stream" },
-          body: JSON.stringify({ way_id: wayId, text }),
+          body: JSON.stringify({ way_id: wayId, text, ...(steps && steps.length ? { steps } : {}) }),
         });
       } catch (err) {
         if ((err as { name?: string })?.name === "AbortError") throw err;
@@ -146,6 +147,22 @@ export function roomsApi(deps: RoomsDeps) {
       if (failure) throw failure;
       if (!final) throw new RoomsApiError("The run ended before its result was posted.");
       return final;
+    },
+    /** The person finished the human step a Way run waits on: report it (with what they did) and continue the run. */
+    reportWay: async (id: string, runId: string, note: string): Promise<{ view: WayRunView | null; text: string }> => {
+      const token = await deps.token();
+      if (!token) throw new RoomsApiError("Sign in again to sync your rooms.", 401);
+      const res = await doFetch(`${base}/v1/rooms/${e(id)}/way/report`, {
+        method: "POST", cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ run_id: runId, note }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { view?: WayRunView | null; text?: string; error?: { message?: string } | string };
+      if (!res.ok) {
+        const msg = typeof j.error === "string" ? j.error : j.error?.message;
+        throw new RoomsApiError(msg || `The server answered ${res.status}.`, res.status);
+      }
+      return { view: j.view ?? null, text: String(j.text || "") };
     },
     /** A fresh sign-in link for one tool (links last 10 minutes). {link} to open, or {signedIn: true} when no sign-in is needed any more. */
     toolSignIn: async (server: string): Promise<{ link?: string; signedIn?: boolean }> => {
@@ -243,7 +260,7 @@ export type GoalChoice = { id: string; name: string; score?: number; hasWay?: bo
 
 /** One Way the router offered for a room message (the same shape as the desktop's picker cards). */
 export type WayChoice = {
-  id: string; name: string; approval: string; review?: string; why?: string; tool?: string;
+  id: string; name: string; approval: string; review?: string; why?: string; tool?: string; icon?: string;
   goal?: { id: string; name: string };
   steps: Array<{ order: number; title: string; kind?: string }>;
 };

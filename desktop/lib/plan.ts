@@ -117,6 +117,8 @@ export type WayOption = {
   approval: string
   review: string
   why: string
+  /** A Way's own icon, when it has one: shown above the title. Most have none, and then no tile is drawn. */
+  icon?: string
   /** The Goal this Way serves. Options can come from several Goals, so the card and the graph follow the picked Way's
    *  Goal rather than the first Goal in the catalog answer. */
   goal?: Delegation["goal"]

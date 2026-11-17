@@ -261,6 +261,18 @@
 .dk-delegate-status { display: flex; align-items: center; gap: 6px; margin: 2px 6px 4px; font-size: 12px; color: var(--grey); }
 .dk-delegate-status .dg-pulse { flex: none; }
 /* The same updates in the chat column, so closing the right panel does not hide what the worker is doing. */
+/* ChatGPT-like prompt rail on the chat's right edge: ticks appear when the pointer is near, each jumps to a prompt. */
+.dk-rail { position: absolute; right: 2px; top: 10px; bottom: 10px; width: 12px; z-index: 6; pointer-events: none;
+  opacity: 0; transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-rail[data-on] { opacity: 1; }
+.dk-rail button { position: absolute; right: 3px; width: 4px; height: 3px; padding: 0; border: 0; border-radius: 2px;
+  background: var(--grey); opacity: .75; cursor: pointer; pointer-events: auto; transform-origin: right center;
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+              opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-rail button:hover, .dk-rail button:focus-visible { transform: scaleX(2); background: var(--ink); opacity: 1; outline: none; }
+@media (prefers-reduced-motion: reduce) { .dk-rail, .dk-rail button { transition: none; } }
+/* A search hit's message, marked while the chat scrolls to it. */
+.dg-run.dk-found { outline: 2px solid var(--yellow); outline-offset: 3px; border-radius: 8px; }
 .dk-delegate-live { display: flex; align-items: center; gap: 6px; margin: 0 4px 6px; font-size: 12px; color: var(--grey);
   animation: dk-delegate-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
 .dk-delegate-live .dg-pulse { flex: none; }
@@ -419,9 +431,10 @@
   margin-inline: -12px; padding: 2px 12px 8px; scrollbar-width: thin; }
 .dk-pick-strip::-webkit-scrollbar { height: 6px; }
 .dk-pick-strip::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 999px; }
-/* The card is a panel, not a button: the top picks the Way, the foot expands its record. */
+/* A card is its title and evidence: the generated icon is gone. A Way with its own icon shows it above the title,
+   with Use beside it; without one the title starts at the card's edge (2026-11-17). */
 .dk-pick-card { box-sizing: border-box; flex: 0 0 min(300px, 84%); scroll-snap-align: start;
-  display: flex; flex-direction: column; padding: 10px; border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface);
+  display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface);
   color: var(--ink);
   transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
               box-shadow var(--dg-micro-d, 160ms) var(--dg-micro, ease);
@@ -429,39 +442,25 @@
   animation-delay: calc(var(--i, 0) * 60ms); }
 .dk-pick-card:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.10); }
 .dk-pick-card[data-open] { border-color: var(--ink); }
-.dk-pick-main { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto;
-  gap: 9px; align-items: center; cursor: pointer; border-radius: 8px;
+.dk-pick-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-height: 24px; }
+.dk-pick-icon { width: 28px; height: 28px; border-radius: 8px; object-fit: cover; flex: none; box-shadow: 0 2px 8px rgba(0,0,0,.14); }
+.dk-pick-use { all: unset; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 3px 3px 3px 9px;
+  border-radius: 8px; background: var(--ink); color: var(--paper); font-size: 10.5px; white-space: nowrap; cursor: pointer;
   transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
-.dk-pick-main:active { transform: scale(.995); }
-.dk-pick-main:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
-.dk-pick-foot { display: flex; justify-content: flex-end; margin-top: 4px; }
-.dk-pick-toggle { all: unset; display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 5px;
-  font-size: 10.5px; color: var(--grey); cursor: pointer; transition: color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
-.dk-pick-toggle:hover { color: var(--ink); }
-.dk-pick-toggle:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
-.dk-pick-toggle svg { transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
-.dk-pick-toggle svg[data-open] { transform: rotate(180deg); }
-.dk-pick-detail { margin-top: 6px; padding-top: 7px; border-top: 1px solid var(--rule); display: grid; gap: 6px;
-  animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
-.dk-pick-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin: 0; font-size: 10.5px; line-height: 1.4; }
-.dk-pick-dl dt { color: var(--grey); }
-.dk-pick-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.dk-pick-detail-why { margin: 0; font-size: 10.5px; line-height: 1.4; color: var(--grey); }
-.dk-pick-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
-.dk-pick-steps li { display: flex; gap: 5px; font-size: 10.5px; line-height: 1.35; color: var(--ink); }
-.dk-pick-steps .n { flex: none; color: var(--grey); font-variant-numeric: tabular-nums; }
-.dk-pick-steps .t { min-width: 0; }
-.dk-pick-steps .k { display: block; color: var(--grey); font-size: 9.5px; }
-.dk-pick-icon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: #fff;
-  box-shadow: 0 4px 12px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.35) inset; }
-.dk-pick-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dk-pick-use .sq { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; background: var(--yellow);
+  color: #171717; transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
+.dk-pick-use:hover .sq, .dk-pick-use:focus-visible .sq { transform: translate(2px, -2px); }
+.dk-pick-use:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dk-pick-open { all: unset; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; width: 100%; cursor: pointer;
+  border-radius: 8px; }
+.dk-pick-open:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
 .dk-pick-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .dk-pick-title b { font-weight: 500; font-size: 12.5px; line-height: 1.3; overflow: hidden; display: -webkit-box;
-  -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .dk-pick-best { flex: none; font-size: 9px; letter-spacing: .06em; text-transform: uppercase; background: var(--yellow);
   color: #171717; border-radius: 3px; padding: 2px 5px 1px; }
 .dk-pick-why { font-size: 11.5px; line-height: 1.35; color: var(--grey); overflow: hidden; display: -webkit-box;
-  -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .dk-pick-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .dk-pick-meta i { font-style: normal; font-size: 9.5px; line-height: 15px; padding: 0 5px; border-radius: 999px;
   color: var(--grey); border: 1px solid var(--rule); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -470,11 +469,49 @@
 .dk-pick-meta i.dk-pick-tool { color: var(--cobalt); border-color: color-mix(in oklab, var(--cobalt) 40%, rgba(0,0,0,0)); }
 .dk-pick-meta i.dk-pick-goal { color: var(--ink); border-color: var(--rule-strong); }
 .dk-pick-meta i.dk-pick-id { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; }
-.dk-pick-cta { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 4px 4px 4px 10px; border-radius: 8px;
-  background: var(--ink); color: var(--paper); font-size: 11px; white-space: nowrap; }
-.dk-pick-cta .sq { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; background: var(--yellow);
-  color: #171717; transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
-.dk-pick-card:hover .dk-pick-cta .sq, .dk-pick-card:focus-visible .dk-pick-cta .sq { transform: translate(2px, -2px); }
+
+/* The Way's record, on the right like the canvas panel: metadata, every step, and the step wording editable before
+   the run. Transform for the sheet, opacity for the scrim; both off under reduced motion (docs/ios_animation.md). */
+.dk-proc-layer { position: fixed; inset: 0; z-index: 80; }
+.dk-proc-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.3); animation: dk-proc-scrim-in 220ms var(--dg-micro, ease) both; }
+@keyframes dk-proc-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+.dk-proc-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 94vw); display: flex; flex-direction: column;
+  background: var(--surface); color: var(--ink); border-left: 1px solid var(--rule-strong);
+  box-shadow: -18px 0 48px rgba(0,0,0,.18); animation: dk-proc-in 420ms var(--dg-smooth, cubic-bezier(.32,.72,0,1)) both; }
+@keyframes dk-proc-in { from { transform: translateX(100%); } to { transform: none; } }
+.dk-proc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--rule); }
+.dk-proc-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dk-proc-icon { width: 36px; height: 36px; border-radius: 9px; object-fit: cover; flex: none; }
+.dk-proc-head h2 { margin: 0; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
+.dk-proc-head p { margin: 2px 0 0; font-size: 11.5px; color: var(--grey); }
+.dk-proc-x { all: unset; flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px;
+  color: var(--grey); font-size: 18px; line-height: 1; cursor: pointer; }
+.dk-proc-x:hover { background: rgba(0,0,0,.06); color: var(--ink); }
+.dk-proc-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.dk-proc-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; margin: 0; font-size: 11.5px; line-height: 1.45; }
+.dk-proc-dl dt { color: var(--grey); }
+.dk-proc-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.dk-proc-why { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--grey); }
+.dk-proc-body h3 { margin: 4px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--grey); }
+.dk-proc-body h3 span { font-weight: 400; margin-left: 4px; }
+.dk-proc-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dk-proc-steps li { display: flex; gap: 8px; align-items: flex-start; }
+.dk-proc-steps .n { flex: none; width: 18px; text-align: right; font-size: 11px; color: var(--grey);
+  font-variant-numeric: tabular-nums; padding-top: 6px; }
+.dk-proc-steps .fields { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.dk-proc-steps input { width: 100%; box-sizing: border-box; font: inherit; font-size: 11.5px; padding: 5px 8px;
+  border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); color: var(--ink); }
+.dk-proc-steps input:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-proc-steps .k { font-size: 10px; color: var(--grey); }
+.dk-proc-reset { align-self: flex-start; padding: 0; border: 0; background: none; font: inherit; font-size: 11px;
+  color: var(--grey); text-decoration: underline; cursor: pointer; }
+.dk-proc-reset:hover { color: var(--ink); }
+.dk-proc-foot { padding: 10px 16px 14px; border-top: 1px solid var(--rule); display: flex; justify-content: flex-end; }
+.dk-proc-use { all: unset; display: inline-flex; align-items: center; gap: 8px; padding: 5px 5px 5px 12px; border-radius: 8px;
+  background: var(--ink); color: var(--paper); font-size: 11.5px; cursor: pointer; }
+.dk-proc-use .sq { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; background: var(--yellow); color: #171717; }
+.dk-proc-use:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
 .dk-pick-skip { justify-self: start; margin: 0 2px; padding: 0; border: 0; background: none;
   font: inherit; font-size: 11.5px; color: var(--grey); text-decoration: underline; cursor: pointer; }
 .dk-pick-skip:hover { color: var(--ink); }
@@ -482,7 +519,7 @@
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .dk-pick { background: var(--surface); }
 }
-@media (prefers-reduced-motion: reduce) { .dk-pick, .dk-pick-card, .dk-pick-detail, .dk-pick-main, .dk-pick-toggle svg { animation: none !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .dk-pick, .dk-pick-card, .dk-proc-panel, .dk-proc-scrim, .dk-pick-use .sq { animation: none !important; transition: none !important; } }
 
 /* Direct / Auto / Ask: the procedure mode, in the row above the message box (chat.css already floats
    .dg-composer-meta there). The thumb slides between the three labels on the smooth spring; transform only, and the
@@ -1192,7 +1229,7 @@ button.dk-fold[aria-expanded="true"] svg { transform: none; }
 .dk-proc-empty small { font-size: 12px; }
 .dk-pick-sub, .dk-pick-why { font-size: 12.5px; }
 .dk-pick-title b { font-size: 13.5px; }
-.dk-pick-cta { font-size: 12px; }
+.dk-pick-use { font-size: 12px; }
 .dk-pick-skip { font-size: 12.5px; }
 .dk-viewer-head h2 { font-size: 12.5px; }
 .dk-code { font-size: 12.5px; }

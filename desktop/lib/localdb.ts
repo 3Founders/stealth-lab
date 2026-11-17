@@ -267,6 +267,17 @@ export function search(query: string, limit = 50): { session_id: string; message
   } catch { return [] }
 }
 
+/** A plain substring search for when FTS cannot parse the query (punctuation, a script it does not tokenise): newest first. */
+export function searchText(query: string, limit = 60): { session_id: string; message_id: string; text: string; created_at: number }[] {
+  const d = open()
+  if (!query.trim()) return []
+  const like = `%${query.replace(/[\\%_]/g, (m) => `\\${m}`)}%`
+  try {
+    return d.prepare(`select session_id, id as message_id, text, created_at from messages
+      where text like ? escape '\\' order by created_at desc limit ?`).all(like, limit) as any[]
+  } catch { return [] }
+}
+
 // ---- Projects -----------------------------------------------------------------------------------------------------
 // The recent-project list lives here, not in localStorage: the app's origin changes every start and the boot script used
 // to clear it. A project is a folder path; `last_opened_at` orders the list, `hidden` is the × in the sidebar.

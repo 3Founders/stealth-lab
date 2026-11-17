@@ -704,6 +704,34 @@ export default function Home() {
   const logContentRef = useRef<HTMLDivElement>(null)
   // The same spring scroll as the website chat: follows new text only while you are at the bottom, rubber-bands at the edges.
   const { follow, scrollToEnd, atEnd } = useSpringScroll(logRef, logContentRef, sessionID ?? "")
+  // ChatGPT-like prompt rail: the person's prompts as ticks along the chat's right edge. Hovering the edge shows them;
+  // clicking one scrolls that prompt into view (2026-11-17).
+  const [railOn, setRailOn] = useState(false)
+  const [railTicks, setRailTicks] = useState<{ i: number; pct: number; text: string }[]>([])
+  useEffect(() => {
+    const view = logRef.current, content = logContentRef.current
+    if (!view || !content) return
+    const measure = () => {
+      const prompts = [...content.querySelectorAll<HTMLElement>("[data-prompt]")]
+      const h = view.scrollHeight || 1
+      setRailTicks(prompts.map((el) => {
+        const top = el.getBoundingClientRect().top - view.getBoundingClientRect().top + view.scrollTop
+        const i = Number(el.dataset.prompt || 0)
+        const text = linesRef.current[i]?.text?.replace(/\s+/g, " ").trim().slice(0, 120) || "Prompt"
+        return { i, pct: Math.min(1, Math.max(0, top / h)), text }
+      }))
+    }
+    const frame = requestAnimationFrame(measure)
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null
+    ro?.observe(content)
+    return () => { cancelAnimationFrame(frame); ro?.disconnect() }
+  }, [lines, sessionID, agentView])
+  const jumpToPrompt = (i: number) => {
+    const el = logContentRef.current?.querySelector<HTMLElement>(`[data-prompt="${i}"]`)
+    if (!el) return
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    el.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" })
+  }
   const busyRef = useRef(false)                       // a late poll must not overwrite a turn that started after it
   // Messages sent while kell is working wait here and go out one at a time, in order, as each turn ends (× drops one).
   const [queued, setQueued] = useState<QueuedPrompt[]>([])
@@ -717,6 +745,20 @@ export default function Home() {
   const [paletteQ, setPaletteQ] = useState("")
   const [paletteIdx, setPaletteIdx] = useState(0)
   const [fileHits, setFileHits] = useState<{ name: string; path: string }[]>([])
+  // Chats from every folder that contain the query (app/api/search), and the hit a click is opening so the chat can
+  // scroll to that line once it has loaded (2026-11-17).
+  type ChatHit = { id: string; sessionID: string; title: string; directory: string | null; at: number; snippet: string }
+  const [chatHits, setChatHits] = useState<ChatHit[]>([])
+  const pendingHit = useRef<{ sid: string; at: number } | null>(null)
+  const scrollHit = (hit: { at: number }): boolean => {
+    const el = logContentRef.current?.querySelector<HTMLElement>(`[data-at="${hit.at}"]`)
+    if (!el) return false
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    el.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" })
+    el.classList.add("dk-found")
+    window.setTimeout(() => el.classList.remove("dk-found"), 1600)
+    return true
+  }
   const [stopping, setStopping] = useState(false)
   const [stopNote, setStopNote] = useState("")
 
@@ -904,6 +946,14 @@ export default function Home() {
       if (queued.length) {
         pendingLines.current = pendingLines.current.filter((x) => x.sid !== id)
         setLines((l) => [...l, ...queued.map((x) => x.line)])
+      }
+      // A search hit opened this chat: scroll to that line once the pane has drawn it.
+      const hit = pendingHit.current
+      if (hit?.sid === id) {
+        pendingHit.current = null
+        let tries = 0
+        const go = () => { if (scrollHit(hit) || ++tries > 12) return; window.setTimeout(go, 120) }
+        window.setTimeout(go, 80)
       }
       // The agents panel is rebuilt from the engine's own record (the app's local history keeps text, not tool calls), so
       // the subagents this chat already ran are still listed after a restart or when an older chat is opened.
@@ -2038,6 +2088,19 @@ export default function Home() {
     return () => { live = false; clearTimeout(timer) }
   }, [palette, directory, paletteQ])
 
+  // Search every chat (not just this folder) from the palette: FTS5 in the app's own store, newest first.
+  useEffect(() => {
+    if (!palette || paletteQ.trim().length < 2) { setChatHits([]); return }
+    let live = true
+    const timer = setTimeout(() => {
+      fetch(`/api/search?q=${encodeURIComponent(paletteQ)}`)
+        .then((r) => r.json())
+        .then((j) => { if (live) setChatHits(Array.isArray(j.results) ? j.results.slice(0, 8) : []) })
+        .catch(() => { if (live) setChatHits([]) })
+    }, 180)
+    return () => { live = false; clearTimeout(timer) }
+  }, [palette, paletteQ])
+
   // The rooms view follows the placeholder's rectangle while the Rooms pane shows, and hides on the coding pane.
   // The rooms view is placed when the WEBSITE session exists (or while its own email/password page is showing), not when the
   // coding token does. The website sign-in is the first step of the one sign-in; gating this on the coding token is what
@@ -2166,8 +2229,24 @@ export default function Home() {
   const matchedCommands = commands.filter((c) => !paletteQ2 || fuzzy(c.title, paletteQ2))
   const orderedCommands = paletteQ2 ? matchedCommands
     : [...matchedCommands].sort((a, b) => (recentCommands.indexOf(a.id) + 1 || 99) - (recentCommands.indexOf(b.id) + 1 || 99))
+  // A hit opens its chat (switching folder when it lives elsewhere) and scrolls that message into view.
+  const openHit = async (h: ChatHit) => {
+    setPalette(false); setPaletteQ(""); setPaletteIdx(0)
+    const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+    if (h.sessionID === sessionID) {
+      pendingHit.current = { sid: h.sessionID, at: h.at }
+      let n = 0
+      const go = () => { if (scrollHit(h) || ++n > 12) { pendingHit.current = null; return } window.setTimeout(go, 120) }
+      window.setTimeout(go, 80)
+      return
+    }
+    pendingHit.current = { sid: h.sessionID, at: h.at }
+    if (h.directory && (!directory || norm(h.directory) !== norm(directory))) await openProject(h.directory, h.sessionID)
+    else await openSession(h.sessionID)
+  }
   const paletteItems = [
     ...orderedCommands.map((c) => ({ id: c.id, title: c.title, hint: c.hint as string | undefined, kind: "command" as const, run: () => runCommand(c.run, c.id) })),
+    ...(paletteQ2.length >= 2 ? chatHits.map((h) => ({ id: `chat:${h.id}`, title: h.snippet || "(empty message)", hint: `${h.title || "Untitled chat"} · ${when(h.at)}`, kind: "chat" as const, run: () => void openHit(h) })) : []),
     ...(paletteQ2.length >= 2 ? fileHits.map((f) => ({ id: `file:${f.path}`, title: f.path, hint: undefined, kind: "file" as const, run: () => runCommand(() => void openFile(f.path)) })) : []),
   ].slice(0, 40)
   const runPaletteItem = (i: number) => { const it = paletteItems[i]; if (it) it.run() }
@@ -2555,11 +2634,26 @@ export default function Home() {
           </header>
 
           <div className="dg-scroll"
+            onPointerMove={(e) => {
+              const r = e.currentTarget.getBoundingClientRect()
+              setRailOn(e.clientX > r.right - 34)
+            }}
+            onPointerLeave={() => setRailOn(false)}
             onDragEnter={(e) => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); setDragFiles(true) } }}
             onDragOver={(e) => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy" } }}
             onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragFiles(false) }}
             onDrop={(e) => { e.preventDefault(); setDragFiles(false); void addBrowserFiles(Array.from(e.dataTransfer.files)) }}>
             {dragFiles && <div className="dg-drop" aria-hidden="true"><span>Drop files to attach</span></div>}
+            {railTicks.length > 0 && (
+              // ChatGPT's prompt rail: one tick per prompt at its place in the conversation; click to go there.
+              <div className="dk-rail" data-on={railOn || undefined} aria-hidden={!railOn}>
+                {railTicks.map((t) => (
+                  <button key={t.i} type="button" style={{ top: `${t.pct * 100}%` }} title={t.text}
+                    aria-label={`Go to prompt: ${t.text}`} tabIndex={railOn ? 0 : -1}
+                    onClick={() => jumpToPrompt(t.i)} />
+                ))}
+              </div>
+            )}
             <div className="dg-viewport" ref={logRef} aria-label="Messages">
               <div className={`dg-content${agentView !== "main" ? " dk-agent-content" : ""}`} ref={logContentRef}>
                 {agentView.startsWith("sub:") ? (
@@ -2759,7 +2853,8 @@ export default function Home() {
                   const live = busy && l.who === "assistant" && i === lines.length - 1   // the reply still arriving
                   const mine = l.who === "user"
                   return (
-                    <div className={`dg-run${mine ? " dk-you" : ""}`} data-agent={!mine} key={i}>
+                    <div className={`dg-run${mine ? " dk-you" : ""}`} data-agent={!mine} key={i}
+                      data-at={l.at} data-prompt={mine ? i : undefined}>
                       {mine
                         ? <span className="dg-avatar" data-kind="human" aria-hidden="true">You</span>
                         : <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>}
@@ -3180,8 +3275,8 @@ export default function Home() {
       {palette && (
         <div className="dk-palette-backdrop" onMouseDown={() => setPalette(false)}>
           <div className="dk-palette" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(e) => e.stopPropagation()}>
-            <input className="dk-palette-input" autoFocus value={paletteQ} placeholder="Type a command, or a file name…"
-              aria-label="Search commands and files" aria-controls="dk-palette-list"
+            <input className="dk-palette-input" autoFocus value={paletteQ} placeholder="Search chats, commands and files…"
+              aria-label="Search chats, commands and files" aria-controls="dk-palette-list"
               aria-activedescendant={paletteItems[paletteSelected] ? `dk-palette-${paletteSelected}` : undefined}
               onChange={(e) => { setPaletteQ(e.target.value); setPaletteIdx(0) }}
               onKeyDown={(e) => {
@@ -3195,7 +3290,7 @@ export default function Home() {
                   <button type="button" className="dk-palette-row" onMouseEnter={() => setPaletteIdx(i)} onClick={() => it.run()}>
                     <span className="t">{it.title}</span>
                     {it.hint && <span className="h">{it.hint}</span>}
-                    <span className="k">{it.kind === "file" ? "file" : ""}</span>
+                    <span className="k">{it.kind === "file" ? "file" : it.kind === "chat" ? "chat" : ""}</span>
                   </button>
                 </li>
               ))}

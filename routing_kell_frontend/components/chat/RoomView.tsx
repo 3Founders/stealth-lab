@@ -3,6 +3,7 @@ import { MessageScroller, useMessageScrollerScrollable } from "@shadcn/react/mes
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
@@ -76,7 +77,7 @@ const STATUS: Record<RelayTask["status"], string> = {
 type WayLine = {
   kind: "ways"; id: string; text: string; t: number;
   goal: { id: string; name: string } | null; ways: WayChoice[]; goals?: GoalChoice[];
-  state?: { picked?: string; running?: boolean; step?: number; of?: number; title?: string; done?: boolean; waiting?: boolean; error?: string };
+  state?: { picked?: string; running?: boolean; step?: number; of?: number; title?: string; done?: boolean; waiting?: boolean; error?: string; runId?: string };
 };
 type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number } | WayLine;
 
@@ -87,13 +88,6 @@ function withLinks(text: string) {
       ? <a key={i} href={part} target="_blank" rel="noreferrer noopener" className="dg-link">{part}</a>
       : part);
 }
-
-/** A stable hue per Way, so each procedure's tile is its own colour without an image (the sign-in card's recipe). */
-const wayHue = (name: string) => {
-  let h = 0;
-  for (const ch of name || "way") h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return h;
-};
 
 /** A message older than this when it arrives is history, not news: it raises no alert, bell entry or sound. */
 const NEW_MESSAGE_MS = 3 * 60 * 1000;
@@ -311,13 +305,23 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, []);
   /** pickWay is declared after askKell (it needs the line store); the ref lets Auto call it without a re-wiring loop. */
   const pickWayRef = useRef<((r: string, line: WayLine, way: WayChoice) => Promise<void>) | null>(null);
-  /** The Way cards expanded to their full record, by chat line and card index (2026-11-17). */
-  const [openWays, setOpenWays] = useState<Record<string, true>>({});
-  const toggleWay = useCallback((key: string) => setOpenWays((p) => {
-    const n = { ...p };
-    if (n[key]) delete n[key]; else n[key] = true;
-    return n;
-  }), []);
+  /** The Way record open on the right (like the canvas), and the step wording each card has edited (2026-11-17). */
+  type WayStepDraft = { order: number; title: string; kind?: string; note?: string };
+  const [wayDetail, setWayDetail] = useState<{ line: WayLine; way: WayChoice; key: string } | null>(null);
+  const [wayDrafts, setWayDrafts] = useState<Record<string, WayStepDraft[]>>({});
+  /** What the person did at a human step, per chat line, while the run waits on them. */
+  const [wayNotes, setWayNotes] = useState<Record<string, string>>({});
+  const waySteps = useCallback((w: WayChoice, key: string): WayStepDraft[] =>
+    wayDrafts[key] ?? w.steps.map((s) => ({ order: s.order, title: s.title, ...(s.kind ? { kind: s.kind } : {}) })), [wayDrafts]);
+  const editWayStep = useCallback((w: WayChoice, key: string, i: number, patch: Partial<WayStepDraft>) => {
+    setWayDrafts((d) => ({ ...d, [key]: waySteps(w, key).map((s, n) => (n === i ? { ...s, ...patch } : s)) }));
+  }, [waySteps]);
+  useEffect(() => {
+    if (!wayDetail) return;
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setWayDetail(null) };
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, [wayDetail]);
   /** Your thumbs on the agent's answers, by message id: sent to the server (it moves the tools those answers used) and kept on this
    *  device so the buttons show what you chose. */
   const [votes, setVotes] = useState<Record<string, -1 | 1>>({});
@@ -464,7 +468,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, []);
 
   /** The person picked a Way: run it headless and post the result into the room. The card becomes the run's progress. */
-  const pickWay = useCallback(async (r: string, line: WayLine, way: WayChoice) => {
+  const pickWay = useCallback(async (r: string, line: WayLine, way: WayChoice, steps?: WayStepDraft[]) => {
     const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
     if (!id) { note("This room is still syncing. Pick again in a moment.", r); return; }
     if (wayRuns.current.has(line.id)) return;
@@ -478,10 +482,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             title: ev.title, ...(ev.error ? { error: ev.error } : {}) });
         } else if (ev.type === "run") {
           setWayState(r, line.id, { running: false, done: ev.status === "done", waiting: ev.status === "waiting_human",
-            ...(ev.status === "failed" ? { error: ev.view?.error || "The run failed." } : {}) });
+            ...(ev.status === "failed" ? { error: ev.view?.error || "The run failed." } : {}),
+            ...(ev.view?.run_id ? { runId: ev.view.run_id } : {}) });
         }
+      }, undefined, steps?.map((s) => ({ order: s.order, ...(s.title ? { title: s.title } : {}), ...(s.note ? { note: s.note } : {}) })));
+      setWayState(r, line.id, {
+        running: false, done: out.view?.status === "done", waiting: out.view?.status === "waiting_human",
+        ...(out.view?.status === "failed" ? { error: out.view.error || "The run failed." } : {}),
+        ...(out.view?.run_id ? { runId: out.view.run_id } : {}),
       });
-      setWayState(r, line.id, { running: false, done: out.view?.status === "done" });
     } catch (err) {
       const why = err instanceof Error ? err.message : "That Way could not run.";
       setWayState(r, line.id, { running: false, error: why });
@@ -491,6 +500,26 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
   }, [roomsAgent, note, setWayState]);
   useEffect(() => { pickWayRef.current = pickWay; }, [pickWay]);
+
+  /** A human step's "Done": report what the person did and let the run go on (2026-11-17). */
+  const reportWay = useCallback(async (r: string, line: WayLine, runId: string, text: string) => {
+    const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
+    if (!id) { note("This room is still syncing. Try again in a moment.", r); return; }
+    setWayState(r, line.id, { running: true, waiting: false });
+    try {
+      const out = await roomsAgent.reportWay(id, runId, text);
+      const v = out.view;
+      setWayState(r, line.id, {
+        running: false, done: v?.status === "done", waiting: v?.status === "waiting_human",
+        ...(v?.status === "failed" ? { error: v.error || "The run failed." } : {}),
+        ...(v?.run_id ? { runId: v.run_id } : {}),
+      });
+    } catch (err) {
+      const why = err instanceof Error ? err.message : "That step could not be reported.";
+      setWayState(r, line.id, { running: false, error: why });
+      note(why, r);
+    }
+  }, [roomsAgent, note, setWayState]);
 
   /** "Run without a Way": the cards go and the agent answers the task as it always did. */
   const skipWay = useCallback((r: string, line: WayLine) => {
@@ -808,16 +837,36 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
               <ol className="dg-way-strip">
                 {l.ways.map((w, i) => {
                   const picked = st.picked === w.id;
-                  const hue = wayHue(w.name);
                   const key = `${l.id}-${i}`;
-                  const open = !!openWays[key];
+                  const edited = wayDrafts[key];
                   return (
-                    <li key={key} className="dg-way-item" data-picked={picked || undefined} data-open={open || undefined}>
-                      <span className="dg-way-icon" aria-hidden="true"
-                        style={{ background: `linear-gradient(145deg, hsl(${hue} 62% 42%), hsl(${hue + 38} 62% 30%))` }}>
-                        <span className="dg-way-mono">{(w.name || "?").trim().slice(0, 1).toUpperCase()}</span>
-                      </span>
-                      <span className="dg-way-text">
+                    <li key={key} className="dg-way-item" data-picked={picked || undefined} data-open={wayDetail?.key === key || undefined}>
+                      <div className="dg-way-top">
+                        {w.icon && <img className="dg-way-icon" src={w.icon} alt="" loading="lazy" />}
+                        {i === 0 && l.ways.length > 1 ? <span className="dg-way-best">Best fit</span> : null}
+                        {picked ? (
+                          <span className="dg-way-actions">
+                            <span className="dg-way-run" role="status" aria-live="polite">
+                              {st.error ? "Stopped"
+                                : st.done ? "Done"
+                                  : st.waiting ? "Waiting for you"
+                                    : `Step ${st.step || 0} of ${st.of || w.steps.length}${st.title ? ` · ${st.title}` : ""}`}
+                            </span>
+                            {st.error && !running ? (
+                              <button type="button" className="dg-way-btn" onClick={() => void pickWay(roomRef.current, l, w, edited)}>
+                                <span>Try again</span><span className="sq" aria-hidden="true">→</span>
+                              </button>
+                            ) : null}
+                          </span>
+                        ) : (
+                          <button type="button" className="dg-way-btn" disabled={running || Boolean(st.picked)}
+                            onClick={() => void pickWay(roomRef.current, l, w, edited)}>
+                            <span>Use</span><span className="sq" aria-hidden="true">→</span>
+                          </button>
+                        )}
+                      </div>
+                      <button type="button" className="dg-way-open" onClick={() => setWayDetail({ line: l, way: w, key })}
+                        aria-label={`Details for ${w.name}`}>
                         <span className="dg-way-name" title={w.name}>{w.name}</span>
                         {w.why && <span className="dg-way-desc">{w.why}</span>}
                         <span className="dg-way-meta">
@@ -826,35 +875,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                           <i>{w.steps.length} {w.steps.length === 1 ? "step" : "steps"}</i>
                           {w.tool && <i className="dg-way-tool" title={w.tool}>{w.tool}</i>}
                         </span>
-                        <button type="button" className="dg-way-more" aria-expanded={open} onClick={() => toggleWay(key)}>
-                          {open ? "Hide details" : "Details"}
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" data-open={open || undefined}>
-                            <path d="m6 9 6 6 6-6" />
-                          </svg>
-                        </button>
-                      </span>
-                      {i === 0 && l.ways.length > 1 ? <span className="dg-way-best">Best fit</span> : null}
-                      {picked ? (
-                        <span className="dg-way-actions">
-                          <span className="dg-way-run" role="status" aria-live="polite">
-                            {st.error ? "Stopped"
-                              : st.done ? "Done"
-                                : st.waiting ? "Waiting for you"
-                                  : `Step ${st.step || 0} of ${st.of || w.steps.length}${st.title ? ` · ${st.title}` : ""}`}
-                          </span>
-                          {st.error && !running ? (
-                            <button type="button" className="dg-way-btn" onClick={() => void pickWay(roomRef.current, l, w)}>
-                              <span>Try again</span><span className="sq" aria-hidden="true">→</span>
-                            </button>
-                          ) : null}
-                        </span>
-                      ) : (
-                        <button type="button" className="dg-way-btn" disabled={running || Boolean(st.picked)}
-                          onClick={() => void pickWay(roomRef.current, l, w)}>
-                          <span>Use</span><span className="sq" aria-hidden="true">→</span>
-                        </button>
-                      )}
+                      </button>
                       {picked && w.steps.length > 0 ? (
                         <ol className="dg-way-steps" aria-label={`${w.steps.length} steps`}>
                           {w.steps.map((s, n) => (
@@ -867,27 +888,16 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                           ))}
                         </ol>
                       ) : null}
-                      {open && (
-                        <div className="dg-way-detail">
-                          <dl className="dg-way-dl">
-                            <dt>Way</dt><dd>{w.id}</dd>
-                            {w.goal?.name && <><dt>Goal</dt><dd>{w.goal.name}{w.goal.id ? ` · ${w.goal.id}` : ""}</dd></>}
-                            <dt>Approval</dt><dd>{w.approval.replace(/_/g, " ")}</dd>
-                            {w.review && <><dt>Review</dt><dd>{w.review.replace(/_/g, " ")}</dd></>}
-                            {w.tool && <><dt>Tool</dt><dd>{w.tool}</dd></>}
-                            <dt>Steps</dt><dd>{w.steps.length}</dd>
-                          </dl>
-                          {w.why && <p className="dg-way-detail-why">{w.why}</p>}
-                          {!picked && w.steps.length > 0 && (
-                            <ol className="dg-way-detail-steps" aria-label={`${w.steps.length} steps`}>
-                              {w.steps.map((s, n) => (
-                                <li key={`${s.order}-${n}`}>
-                                  <span className="n">{s.order}.</span>
-                                  <span className="t">{s.title}{s.kind ? <span className="k">{s.kind}</span> : null}</span>
-                                </li>
-                              ))}
-                            </ol>
-                          )}
+                      {st.waiting && st.runId && (
+                        // A human step: the run waits until the person says they did it (and, optionally, what they did).
+                        <div className="dg-way-human">
+                          <input value={wayNotes[l.id] || ""} aria-label="What you did"
+                            placeholder="What you did (optional)"
+                            onChange={(e) => setWayNotes((p) => ({ ...p, [l.id]: e.target.value }))} />
+                          <button type="button" className="dg-way-btn"
+                            onClick={() => void reportWay(roomRef.current, l, st.runId!, wayNotes[l.id] || "")}>
+                            <span>Done</span><span className="sq" aria-hidden="true">→</span>
+                          </button>
                         </div>
                       )}
                     </li>
@@ -1610,6 +1620,69 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />)}
       {submitOpen && <SubmitPanel open={submitOpen} onClose={() => setSubmitOpen(false)} api={sapi} />}
       {desktopOpen && <DesktopPanel open={desktopOpen} onClose={() => setDesktopOpen(false)} api={kapi} onPending={setDesktopPending} />}
+      {wayDetail && createPortal(
+        // The Way's record on the right, like the canvas: metadata, every step, and the step wording editable before
+        // the run. Transform for the sheet, opacity for the scrim (docs/ios_animation.md), reduced motion off.
+        <div className="dg-proc-layer">
+          <div className="dg-proc-scrim" onClick={() => setWayDetail(null)} aria-hidden="true" />
+          <aside className="dg-proc-panel" role="dialog" aria-modal="true" aria-label={`${wayDetail.way.name} details`}>
+            <header className="dg-proc-head">
+              <div className="dg-proc-heading">
+                {wayDetail.way.icon && <img className="dg-proc-icon" src={wayDetail.way.icon} alt="" />}
+                <div>
+                  <h2>{wayDetail.way.name}</h2>
+                  <p>{wayDetail.way.goal?.name || "Procedure"}</p>
+                </div>
+              </div>
+              <button type="button" className="dg-proc-x" aria-label="Close" title="Close" onClick={() => setWayDetail(null)}>×</button>
+            </header>
+            <div className="dg-proc-body">
+              <dl className="dg-proc-dl">
+                <dt>Way</dt><dd>{wayDetail.way.id}</dd>
+                {wayDetail.way.goal?.name && <><dt>Goal</dt><dd>{wayDetail.way.goal.name}{wayDetail.way.goal.id ? ` · ${wayDetail.way.goal.id}` : ""}</dd></>}
+                <dt>Approval</dt><dd>{wayDetail.way.approval.replace(/_/g, " ")}</dd>
+                {wayDetail.way.review && <><dt>Review</dt><dd>{wayDetail.way.review.replace(/_/g, " ")}</dd></>}
+                {wayDetail.way.tool && <><dt>Tool</dt><dd>{wayDetail.way.tool}</dd></>}
+                <dt>Steps</dt><dd>{wayDetail.way.steps.length}</dd>
+              </dl>
+              {wayDetail.way.why && <p className="dg-proc-why">{wayDetail.way.why}</p>}
+              <h3>Steps <span>{waySteps(wayDetail.way, wayDetail.key).length}</span></h3>
+              <ol className="dg-proc-steps">
+                {waySteps(wayDetail.way, wayDetail.key).map((s, i) => (
+                  <li key={`${s.order}-${i}`}>
+                    <span className="n">{s.order || i + 1}</span>
+                    <span className="fields">
+                      <input value={s.title} aria-label={`Step ${i + 1} title`}
+                        onChange={(e) => editWayStep(wayDetail.way, wayDetail.key, i, { title: e.target.value })} />
+                      <input value={s.note || ""} placeholder="A note for this step" aria-label={`Step ${i + 1} note`}
+                        onChange={(e) => editWayStep(wayDetail.way, wayDetail.key, i, { note: e.target.value })} />
+                      {s.kind && <span className="k">{s.kind}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              {wayDrafts[wayDetail.key] && (
+                <button type="button" className="dg-proc-reset"
+                  onClick={() => setWayDrafts((d) => { const n = { ...d }; delete n[wayDetail.key]; return n })}>
+                  Reset the steps
+                </button>
+              )}
+            </div>
+            <footer className="dg-proc-foot">
+              <button type="button" className="dg-proc-use"
+                disabled={Boolean(wayDetail.line.state?.picked) || Boolean(wayDetail.line.state?.running)}
+                onClick={() => {
+                  const d = wayDetail
+                  setWayDetail(null)
+                  void pickWay(roomRef.current, d.line, d.way, wayDrafts[d.key])
+                }}>
+                Use this Way<span className="sq" aria-hidden="true">→</span>
+              </button>
+            </footer>
+          </aside>
+        </div>,
+        document.body,
+      )}
       {searchOpen && <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />}
       {manageOpen && (
         <ManageRooms

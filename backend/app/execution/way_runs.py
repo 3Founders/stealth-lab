@@ -456,16 +456,46 @@ async def advance(pool: Any, run: dict, finder: Optional[_lk.Lookup] = None,
 
 async def start(pool: Any, way_id: str, *, owner_id: str, input: str = "", mode: str = "session",
                 finder: Optional[_lk.Lookup] = None,
-                on_progress: Optional[Callable[[dict[str, Any]], Any]] = None) -> dict:
+                on_progress: Optional[Callable[[dict[str, Any]], Any]] = None,
+                overrides: Optional[list[dict]] = None) -> dict:
     """Load a Way into a run and go as far as kell can on its own. With `finder`, the steps JEV judged may need a
     lookup (once per version of the Way, way_lookups.hints) look up when the run reaches them. `on_progress` hears each
-    step start and end (see `advance`)."""
+    step start and end (see `advance`). `overrides` is what the person changed in the procedure panel: only a step's
+    title and an added note, by order, on the approved Way they were offered (2026-11-17). Tools, kinds and bindings
+    stay the Way's own, so editing never changes what the run may call."""
     if mode not in ("session", "headless"):
         raise RunError("mode is session or headless")
     way = await _way(pool, way_id, owner_id)
     plan = await expand(pool, way, owner_id)
     if not plan:
         raise RunError("this Way has no steps")
+    if overrides:
+        by_order: dict[int, dict] = {}
+        for o in overrides:
+            if not isinstance(o, dict):
+                continue
+            try:
+                n = int(o.get("order") or 0)
+            except (TypeError, ValueError):
+                continue
+            if n > 0:
+                by_order[n] = o
+        for step in plan:
+            o = by_order.get(int(step.get("order") or 0))
+            if not o:
+                continue
+            title = _text(o.get("title"))
+            if title:
+                step["title"] = title[:300]
+            note = _text(o.get("note"))[:2000]
+            if note:
+                added = f"\n\nFrom the person: {note}"
+                if step.get("instruction"):
+                    step["instruction"] = f"{step['instruction']}{added}"
+                elif step.get("prompt"):
+                    step["prompt"] = f"{step['prompt']}{added}"
+                else:
+                    step["instruction"] = note
     if finder is not None:
         try:
             _lk.apply_hints(plan, await _lk.hints(pool, way["id"], plan))
