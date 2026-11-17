@@ -11,6 +11,7 @@
 //
 // Each returns the inline OpenCode config the engine starts with. With neither, the engine keeps its previous behaviour
 // (OpenCode's own global config, e.g. a developer-held key lane).
+import { connectorServers } from "./connectors"
 import fs from "node:fs"
 import { SIGN_IN_TO_RUN, webToken } from "./websession"
 import { pluginDir, preparePlugin } from "./kellplugin"
@@ -109,6 +110,11 @@ function buildConfig(models: Model[], baseUrl: string, token: string, extraHeade
   // kell's MCP server through this app (app/api/mcp), which adds the current sign-in to each request: a token written here expired after
   // an hour and the engine's kell tools were gone until the app restarted (2026-11-08)
   if (cfg?.url) config.mcp = { servers: { kell: { type: "remote", url: `${localOrigin(env)}/api/mcp`, codemode: false } } }
+  // the person's connectors (lib/connectors.ts): Notion, Slack, Jira and the rest, kept across restarts
+  try {
+    const extra = connectorServers()
+    if (Object.keys(extra).length) config.mcp = { servers: { ...(config.mcp?.servers || {}), ...extra } }
+  } catch { /* the engine starts without them */ }
   return { content: JSON.stringify(config), key: modelKey ?? token, env: preparePlugin(ladder.map((m) => m.id), env) }
 }
 

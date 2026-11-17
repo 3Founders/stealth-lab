@@ -1316,3 +1316,32 @@ button.dk-fold[aria-expanded="true"] svg { transform: none; }
 button.dk-sess-group { cursor: pointer; }
 .dk-sess-folder { display: flex; gap: 6px; padding: 6px; }
 .dk-sess-folder input { flex: 1; min-width: 0; font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--rule-strong, rgba(0,0,0,.16)); background: var(--paper, #fff); color: inherit; }
+
+/* Inbox and scheduled tasks (components/Attention.tsx). */
+.dk-badged { position: relative; }
+.dk-badge { position: absolute; top: 2px; right: 2px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; font-size: 10px; line-height: 15px;
+  font-weight: 700; text-align: center; background: #c2453a; color: #fff; }
+.dk-modal-back { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.28); display: grid; place-items: center; padding: 16px; }
+.dk-modal { width: min(640px, 100%); max-height: min(80vh, 760px); display: flex; flex-direction: column; background: var(--paper, #F8F6EF);
+  color: inherit; border-radius: 14px; border: 1px solid var(--rule-strong, rgba(0,0,0,.16)); box-shadow: 0 18px 50px rgba(0,0,0,.25); }
+.dk-modal header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; }
+.dk-modal header h2 { margin: 0; font-size: 16px; }
+.dk-modal-body { overflow: auto; padding: 4px 16px 16px; }
+.dk-inbox, .dk-sched { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.dk-inbox li, .dk-sched li { border: 1px solid var(--rule, rgba(0,0,0,.1)); border-radius: 10px; padding: 10px 12px; }
+.dk-sched li[data-off] { opacity: .6; }
+.dk-inbox-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 13px; }
+.dk-inbox-h time { margin-left: auto; font-size: 12px; opacity: .6; }
+.dk-inbox p, .dk-sched-p { margin: 6px 0; font-size: 13px; overflow-wrap: anywhere; }
+.dk-sched-p { opacity: .85; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dk-linkish { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+.dk-sched-form { display: flex; flex-direction: column; gap: 10px; }
+.dk-sched-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.dk-sched-form input, .dk-sched-form textarea, .dk-sched-form select { font: inherit; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid var(--rule-strong, rgba(0,0,0,.16)); background: var(--paper, #fff); color: inherit; }
+.dk-sched-when { display: flex; flex-wrap: wrap; gap: 10px; }
+.dk-conn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+.dk-conn { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 9px 11px; border-radius: 10px; font: inherit; color: inherit; cursor: pointer;
+  border: 1px solid var(--rule-strong, rgba(0,0,0,.14)); background: var(--paper, #fff); }
+.dk-conn:hover { border-color: var(--ink, #222); }
+.dk-conn span { font-size: 12px; opacity: .7; }

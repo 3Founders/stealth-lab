@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Markdown from "@/components/chat/Markdown"
 import SmoothText, { Thinking } from "@/components/chat/SmoothText"
 import { DocCards, DocPreview, type Doc } from "@/components/DocPanel"
+import { ConnectorsPanel, InboxPanel, SchedulesPanel, type InboxItem } from "@/components/Attention"
 import MessageActions from "@/components/chat/MessageActions"
 import ThemeToggle, { ThemeWatcher } from "@/components/ThemeToggle"
 import { useSpringScroll } from "@/components/chat/useSpringScroll"
@@ -501,6 +502,8 @@ export default function Home() {
   const [sessionModel, setSessionModel] = useState<string | null>(null)
   const [ledger, setLedger] = useState<LedgerRow[]>([])
   const [sessionID, setSessionID] = useState<string | null>(null)
+  const sessionIDRef = useRef<string | null>(null)
+  sessionIDRef.current = sessionID
   // The chat being read from the app's store (or the engine's backfill): a switch says so instead of going blank.
   const [sessLoading, setSessLoading] = useState<string | null>(null)
   const sessionSeq = useRef(0)                             // only the last clicked chat may fill the pane
@@ -1167,6 +1170,59 @@ export default function Home() {
     const hi = n < lines.length ? (lines[n].at ?? Infinity) : Infinity
     return docs.filter((d) => d.at > lo && d.at <= hi)
   }
+
+  // What waits on the person (components/Attention.tsx): polled every 15 s; a new item is announced once (notification + badge).
+  const [inboxItems, setInboxItems] = useState<InboxItem[]>([])
+  const [showInbox, setShowInbox] = useState(false)
+  const [showSched, setShowSched] = useState(false)
+  const [showConn, setShowConn] = useState(false)
+  const seenInbox = useRef<Set<string> | null>(null)
+  const loadInbox = useCallback(async () => {
+    try {
+      const j = await (await fetch("/api/inbox", { signal: AbortSignal.timeout(8_000) })).json()
+      const items: InboxItem[] = Array.isArray(j.items) ? j.items : []
+      setInboxItems(items)
+      const before = seenInbox.current
+      seenInbox.current = new Set(items.map((x) => x.id))
+      if (!before) return                                    // the first read only sets what is already known
+      const fresh = items.filter((x) => !before.has(x.id) && !(x.kind === "permission" && x.sessionID === sessionIDRef.current))
+      if (fresh.length && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        const x = fresh[0]
+        const n = new Notification("kell needs you", { body: x.kind === "permission" ? `${x.title}: ${x.what}` : `${x.title}: ${x.status === "needs_you" ? "needs you" : x.status}`, tag: `kell-inbox-${x.id}` })
+        n.onclick = () => { window.focus(); setShowInbox(true); n.close() }
+      }
+    } catch { /* the badge keeps its last count */ }
+    // A scheduled run that finished since the last look: its chat joins the sidebar, and the person hears about it once.
+    try {
+      const sj = await (await fetch("/api/schedules", { signal: AbortSignal.timeout(8_000) })).json()
+      const ends = (Array.isArray(sj.schedules) ? sj.schedules : []).map((s: any) => ({ s, r: s.runs?.[0] })).filter((x: any) => x.r?.ended)
+      const newest = Math.max(0, ...ends.map((x: any) => Number(x.r.ended)))
+      const before = schedSeen.current
+      schedSeen.current = Math.max(before, newest)
+      if (before && newest > before) {
+        void loadSessions()
+        const done = ends.find((x: any) => Number(x.r.ended) === newest)
+        if (done && done.r.status === "done" && typeof Notification !== "undefined" && Notification.permission === "granted") {
+          const n = new Notification(`Scheduled: ${done.s.title}`, { body: String(done.r.summary || "Finished").slice(0, 180), tag: `kell-sched-${done.r.at}` })
+          n.onclick = () => { window.focus(); if (done.r.sessionID) void openAnyChatRef.current(done.r.sessionID); n.close() }
+        }
+      }
+    } catch { /* next time */ }
+  }, [loadSessions])
+  const schedSeen = useRef(0)
+  const openAnyChatRef = useRef<(sid: string) => Promise<void>>(async () => {})
+  useEffect(() => { void loadInbox(); const t = window.setInterval(() => void loadInbox(), 15_000); return () => window.clearInterval(t) }, [loadInbox])
+  /** Open a chat from anywhere (the inbox, a schedule): switch to its folder first when it lives in another one. */
+  const openAnyChat = async (sid: string) => {
+    setShowInbox(false); setShowSched(false)
+    try {
+      const j = await (await fetch(`/api/local/sessions?id=${encodeURIComponent(sid)}`)).json()
+      const dir = (sessions.find((x) => x.id === sid)?.directory) || j?.session?.directory
+      if (dir && (!directory || !samePath(dir, directory))) { setSideView("project"); await openProject(dir, sid); return }
+    } catch { /* open it here */ }
+    void openSession(sid)
+  }
+  openAnyChatRef.current = openAnyChat
 
   // The quick-ask box (Ctrl+Shift+Space, electron/presence.ts): a new chat in the chats folder, or in the open folder while
   // a turn is running there (switching folders would end it).
@@ -2755,6 +2811,17 @@ export default function Home() {
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
                 </button>
               )}
+              <button type="button" className="dk-icon dk-badged" aria-label={`Waiting on you${inboxItems.length ? `: ${inboxItems.length}` : ""}`} title="Waiting on you"
+                onClick={() => { setShowInbox(true); void loadInbox() }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg>
+                {inboxItems.length > 0 && <span className="dk-badge" aria-hidden="true">{inboxItems.length}</span>}
+              </button>
+              <button type="button" className="dk-icon" aria-label="Scheduled tasks" title="Scheduled tasks" onClick={() => setShowSched(true)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+              </button>
+              <button type="button" className="dk-icon" aria-label="Connectors" title="Connectors: Notion, Slack, Jira and more" onClick={() => setShowConn(true)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z" /></svg>
+              </button>
               <button type="button" className="dk-icon" aria-label="Route a task to a tool" title="Route a task to a tool" onClick={() => window.location.assign("/route")}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
               </button>
@@ -3583,6 +3650,9 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
           </div>
         </div>
       )}
+      {showInbox && <InboxPanel items={inboxItems} onClose={() => setShowInbox(false)} onOpenChat={(sid) => void openAnyChat(sid)} onAnswered={() => void loadInbox()} />}
+      {showConn && <ConnectorsPanel onClose={() => setShowConn(false)} />}
+      {showSched && <SchedulesPanel onClose={() => { setShowSched(false); void loadInbox() }} onOpenChat={(sid) => void openAnyChat(sid)} homeDir={homePath || homeRef.current} projectDir={directory} />}
       {sessMenu && (
         // A session row's actions: Rename or Delete. Delete asks once, in place, because it cannot be undone.
         <div className="dk-sess-menu" role="menu" style={{ left: sessMenu.x, top: sessMenu.y }}>
