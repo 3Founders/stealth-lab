@@ -104,6 +104,9 @@ function buildConfig(models: Model[], baseUrl: string, token: string, extraHeade
   // web search through kell's tools (Exa runs with no sign-in), not the engine's own: its built-in search was cancelled, and the model then
   // never asked kell (2026-11-08, the e2e test)
   config.websearch = false
+  // automatic compaction: when a chat reaches 95% of the model's window (owner, 2026-11-17), the engine summarises the older turns and goes on
+  // (the chat shows a note); /compact does the same on demand (2026-11-17)
+  config.compaction = { auto: true, buffer: "5%" }
   // the model asks in the chat, where the person can answer: the engine's question tool opened a form this app never showed, and the
   // turn waited on it for good (2026-11-08)
   config.permissions = [{ action: "question", resource: "*", effect: "deny" }]

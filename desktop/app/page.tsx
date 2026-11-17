@@ -208,6 +208,8 @@ type BtwThread = { id: string; sessionID: string | null; at: number; updated: nu
  *  send() is the dispatcher: /goal and /btw are both handled there, before anything reaches the engine. */
 const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
   { name: "/btw", hint: "ask a side question about this chat; answered from it, not added to it" },
+  { name: "/compact", hint: "summarise the older turns so a long chat costs less (automatic at 95% full)" },
+  { name: "/clear", hint: "start a fresh chat in this folder; this one stays in the list" },
   { name: "/goal", hint: "set a completion condition; kell keeps working until it holds" },
   { name: "/direct", hint: "send prompts straight to the model; never search for a procedure" },
   { name: "/auto", hint: "search for a procedure and use the best fit automatically" },
@@ -1660,6 +1662,22 @@ export default function Home() {
     const body = again ?? text
     const outgoing = again === undefined ? attachments : (filesOverride ?? [])
     if (!asGoal && /^\/goal\b/i.test(body.trim())) { goalCommand.current(body.trim()); return }
+    // /clear: a fresh chat with an empty context, in the same folder; the old chat stays in the list (2026-11-17).
+    if (!asGoal && /^\/clear\s*$/i.test(body.trim())) {
+      if (again === undefined) { setText(""); histPos.current = null }
+      newSession()
+      return
+    }
+    // /compact: the engine summarises the older turns of this chat and goes on from the summary.
+    if (!asGoal && /^\/compact\s*$/i.test(body.trim())) {
+      if (again === undefined) { setText(""); histPos.current = null }
+      if (!sessionID) { appendNote("Nothing to compact yet: this chat has no turns."); return }
+      appendNote("Compacting this chat: the older turns are being summarised…")
+      void fetch("/api/compact", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID }) })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); appendNote(r.ok ? "Compacted. kell continues from a summary of the earlier turns." : `Couldn't compact: ${j.error || r.status}`) })
+        .catch((err) => appendNote(`Couldn't compact: ${String(err?.message || err)}`))
+      return
+    }
     if (!asGoal && /^\/btw\b/i.test(body.trim())) { handleBtwCommand(body.trim()); if (again === undefined) { setText(""); histPos.current = null } return }
     if (!asGoal) {
       // Direct / Auto / Ask, switchable from the composer or by typing the command (the same names, one dispatcher).
@@ -1855,6 +1873,13 @@ export default function Home() {
           const patch = { tokens: tokensOf(d), cost: d.cost != null ? Number(d.cost) : undefined }
           if (live() && id) setLedger((rows) => rows.some((r) => r.id === id) ? rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) : [...rows, { id, ...patch }])
           if (live() && d.cost != null) setSpend((c) => c + Number(d.cost))
+        }
+        else if (t === "session.compaction.started") {
+          // automatic compaction (95% of the window) or /compact: say so, so a pause in the answer is explained
+          if (live()) setLines((l) => [...l, { who: "assistant", text: "_Compacting the conversation: the older turns are being summarised so the chat fits the model's window…_", at: Date.now() }])
+        }
+        else if (t === "session.compaction.ended") {
+          if (live()) setLines((l) => [...l, { who: "assistant", text: "_Compacted. kell goes on from a summary of the earlier turns._", at: Date.now() }])
         }
         else if (t === "permission.asked") {
           // the engine waits for this answer (reading a .env file asks first); without it the turn hung (2026-11-08, the e2e test)
