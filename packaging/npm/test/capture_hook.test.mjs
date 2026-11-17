@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  CAPTURE_HOOKS, buildReport, looksLikeTest, lookupIdentity, modelFromTranscript, onPostToolUse, onStop, promptEdits,
+  CAPTURE_HOOKS, buildReport, looksLikeTest, lookupIdentity, modelFromTranscript, onPostToolUse, onStop, promptEdits, promptSteps,
   rememberLookup, runCaptureHook, runCaptureWorker, sessionFile, testVerdict,
 } from "../lib/capture_hook.mjs";
 import { removeClaudeHook, upsertClaudeHook } from "../lib/clients.mjs";
@@ -329,4 +329,49 @@ test("buildReport: usage from another agent (kell_usage) is kept, whitelisted an
   assert.deepEqual([r.tokens_in, r.tokens_out, r.cost_usd, r.tokens_cached, r.secret], [1200, 300, 0.0004, undefined, undefined]);
   assert.deepEqual(usageFields(null), {});
   assert.equal(buildReport(session, { sessionId: "s", model: "m" }).scaffold, "claude-code");
+});
+
+// Non-coding tasks grow the library too (owner, 2026-11-17): a reusable task with no test run is kept, unverified, with its steps.
+function stepsTranscript(dir, calls) {
+  const file = path.join(dir, "steps.jsonl");
+  const use = (name, input) => JSON.stringify({ type: "assistant", message: { role: "assistant", model: "m", content: [{ type: "tool_use", name, input }] } });
+  fs.writeFileSync(file, [
+    use("Bash", { command: "echo from an earlier prompt" }),
+    JSON.stringify({ type: "user", message: { role: "user", content: "summarise this week's AI news" } }),
+    ...calls.map(([n, i]) => use(n, i)),
+    JSON.stringify({ type: "assistant", message: { role: "assistant", model: "m", content: [] } }),
+  ].join("\n") + "\n");
+  return file;
+}
+
+test("library auto: a non-coding reusable task with no test is kept unverified, with the steps it took", () => {
+  const env = tmpEnv();
+  const repo = stealthRepo();
+  const base = { session_id: "nc-1", prompt_id: "p", cwd: repo, prompt: "Summarise this week's AI news\nfive items with links" };
+  rememberLookup(base, RESOLVED, { env });
+  const t = stepsTranscript(env.STEALTHLAB_HOME, [
+    ["WebSearch", { query: "AI news this week" }], ["WebFetch", { url: "https://example.com/a" }], ["Read", { file_path: "x" }],
+    ["mcp__kell__web_search", { query: "AI news" }], ["WebSearch", { query: "AI news this week" }],
+  ])
+  assert.deepEqual(promptSteps(t, repo).map((s) => s.do),
+    ["Search the web for: AI news this week", "Read https://example.com/a", "Use kell / web_search: AI news"], "steps of this prompt only, no reads, no repeats");
+  const out = onStop({ ...base, transcript_path: t }, { env, hasToken: false });
+  assert.match(out.library_entry, /^L-[0-9a-f]+$/);
+  const lib = fs.readFileSync(path.join(repo, ".kell", "library.md"), "utf8");
+  assert.ok(lib.includes("Summarise this week's AI news"));
+  assert.ok(lib.includes("kind:procedure"), "tagged as an untested procedure");
+  assert.ok(lib.includes("Search the web for: AI news this week"));
+});
+
+test("library auto: no entry for a plain answer with no steps, a failing test, or when untested growth is off", () => {
+  const run = (env, calls, sid, tests) => {
+    const repo = stealthRepo();
+    const base = { session_id: sid, prompt_id: "p", cwd: repo, prompt: "Explain recursion" };
+    rememberLookup(base, RESOLVED, { env });
+    if (tests) onPostToolUse({ ...base, tool_name: "Bash", tool_input: { command: "pytest -q" }, tool_response: { stdout: tests } }, { env });
+    return onStop({ ...base, transcript_path: stepsTranscript(env.STEALTHLAB_HOME, calls) }, { env, hasToken: false }).library_entry;
+  };
+  assert.equal(run(tmpEnv(), [], "nc-2"), undefined, "an answer with no tool use");
+  assert.equal(run(tmpEnv(), [["WebSearch", { query: "q" }]], "nc-3", "1 failed in 0.1s"), undefined, "a failing test");
+  assert.equal(run({ ...tmpEnv(), STEALTHLAB_LIBRARY_UNTESTED: "off" }, [["WebSearch", { query: "q" }]], "nc-4"), undefined, "switched off");
 });

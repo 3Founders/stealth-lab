@@ -382,17 +382,83 @@ export function promptEdits(transcriptPath, cwd) {
   return [...edits];
 }
 
+// The steps this turn took, from its own tool calls after the last real user message: what a later, similar task can follow
+// (owner, 2026-11-17: non-coding tasks grow the library too). Each step is one line: the tool and what it was given (a command,
+// a URL, a search, a file). At most 12, repeats dropped; [] when the turn used no tools; null when the transcript cannot be read.
+export function promptSteps(transcriptPath, cwd) {
+  if (!transcriptPath) return null;
+  let text;
+  try {
+    const st = fs.statSync(transcriptPath);
+    const len = Math.min(st.size, 4 * 1024 * 1024);
+    const fd = fs.openSync(transcriptPath, "r");
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    text = buf.toString("utf8");
+  } catch { return null; }
+  const one = (v) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
+  const rel = (f) => { const r = cwd && path.isAbsolute(String(f)) ? path.relative(cwd, String(f)) : String(f); return r && !r.startsWith("..") ? r.split(path.sep).join("/") : path.basename(String(f)); };
+  let steps = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    if (o?.type === "user") {
+      const c = o?.message?.content;
+      const toolResult = Array.isArray(c) && c.length > 0 && c.every((b) => b?.type === "tool_result");
+      if (!toolResult && !o.isMeta) steps = [];                 // a new prompt starts here
+      continue;
+    }
+    if (o?.type !== "assistant") continue;
+    for (const b of o?.message?.content || []) {
+      if (b?.type !== "tool_use") continue;
+      const name = String(b.name || ""), i = b.input || {};
+      let step = null;
+      if (/^(Bash|PowerShell|shell)$/i.test(name) && i.command) step = { kind: "action", do: `Run: ${one(i.command)}` };
+      else if (/^WebFetch$/i.test(name) && i.url) step = { kind: "action", do: `Read ${one(i.url)}` };
+      else if (/^WebSearch$/i.test(name) && i.query) step = { kind: "action", do: `Search the web for: ${one(i.query)}` };
+      else if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(name) && (i.file_path || i.notebook_path)) step = { kind: "action", do: `${name === "Write" ? "Write" : "Edit"} ${rel(i.file_path || i.notebook_path)}` };
+      else if (/^(Read|Glob|Grep|LS|TodoWrite|TodoRead)$/i.test(name)) step = null;   // looking around is not a step to repeat
+      else if (name.startsWith("mcp__")) {
+        const tool = name.split("__").slice(1).join(" / ");
+        const arg = i.query ?? i.q ?? i.url ?? i.name ?? i.arguments?.query ?? i.arguments?.name ?? i.task ?? "";
+        step = { kind: "action", do: `Use ${one(tool)}${arg ? `: ${one(arg)}` : ""}` };
+      }
+      if (step && !steps.some((x) => x.do === step.do)) steps.push(step);
+    }
+  }
+  return steps.slice(0, 12);
+}
+
 // The local library half: one new .kell/library.md entry for a turn that ended with its tests passing and a diff.
 // Returns the entry id, or null (nothing to add, or growth switched off). Never throws to the hook.
 // `edits`: the files this turn edited (promptEdits). Without any, nothing is added: a question, or a turn that cannot be
 // told from one, is not a solved problem, and the diff of the whole working tree is not this turn's change.
 // tags: the tools the prompt used ("tool:<package or host>", lib/tool_outcomes.mjs), so a later lookup sees what the
 // solution used
-export function recordLibraryEntry(s, { env = process.env, now = new Date(), gitImpl, edits = null, tags = [] } = {}) {
+export function recordLibraryEntry(s, { env = process.env, now = new Date(), gitImpl, edits = null, tags = [], steps = null } = {}) {
   if (!libraryAutoEnabled(env) || !s || s.library_added || s.library_match || !s.cwd || !s.title) return null;
   if (!fs.existsSync(path.join(s.cwd, ".kell"))) return null;
   const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
-  if (!last || !passedRun(last, s) || !last.command) return null;
+  if (!last || !passedRun(last, s) || !last.command) {
+    // Not a tested code change. A reusable task (the lookup knew it) that ended without a failing test is still kept,
+    // unverified, with the steps it took and its diff if it changed files: research, writing, data and office tasks grow the
+    // library too (owner, 2026-11-17). A failing test is never a solution.
+    if ((s.tests || []).length) return null;          // a test ran without a clear pass: not kept, tested or not
+    if (env.STEALTHLAB_LIBRARY_UNTESTED === "off") return null;
+    const did = Array.isArray(steps) ? steps : [];
+    const changed = Array.isArray(edits) && edits.length
+      ? diffFromGit(s.cwd, "HEAD", { files: edits, ...(gitImpl ? { gitImpl } : {}) }) : "";
+    if (!did.length && !changed.trim()) return null;   // a plain answer with no steps is nothing to repeat
+    const entry = addEntry(s.cwd, { title: s.title, outcome: "pass", verify: false, diff: changed, route: s.route || null,
+                                    steps: did.length ? did : wayStepsForEntry(changed),
+                                    tags: [...tags, changed.trim() ? "kind:change-untested" : "kind:procedure"] },
+                           { now, ...(gitImpl ? { gitImpl } : {}) });
+    s.library_added = entry.id;
+    autoTidy(s.cwd, env);
+    return entry.id;
+  }
   if (!Array.isArray(edits) || !edits.length) return null;
   const diff = diffFromGit(s.cwd, "HEAD", { files: edits, ...(gitImpl ? { gitImpl } : {}) });
   if (!diff.trim()) return null;                    // nothing changed: not a solved problem
@@ -431,7 +497,7 @@ export function onStop(payload, { env = process.env, hasToken, spawnWorker = spa
   }
   let added = null;
   try {
-    added = recordLibraryEntry(s, { env, edits: promptEdits(payload?.transcript_path, s?.cwd),
+    added = recordLibraryEntry(s, { env, edits: promptEdits(payload?.transcript_path, s?.cwd), steps: promptSteps(payload?.transcript_path, s?.cwd),
                                     tags: (toolsOutcome?.used || []).map((u) => `tool:${u.ref}`) });
     if (added) { writeSession(file, s); logHook(env, "capture-stop", `library entry ${added} added`); }
   } catch (err) {

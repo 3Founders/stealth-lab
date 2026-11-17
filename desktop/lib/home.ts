@@ -31,6 +31,10 @@ export function ensureHome(): string {
   fs.mkdirSync(dir, { recursive: true })
   const agents = path.join(dir, "AGENTS.md")
   if (!fs.existsSync(agents)) fs.writeFileSync(agents, AGENTS)
+  // kell's reuse library for chats with no project (packaging/npm/lib/capture_hook.mjs): a task kell can look up again, such as a
+  // research or writing routine, is kept here with the steps it took (owner, 2026-11-17).
+  const kell = path.join(dir, ".kell")
+  if (!fs.existsSync(kell)) { fs.mkdirSync(kell, { recursive: true }); fs.writeFileSync(path.join(kell, "routing.md"), "") }
   return dir
 }
 
