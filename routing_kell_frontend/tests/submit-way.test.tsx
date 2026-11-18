@@ -45,6 +45,8 @@ function fakeApi(): SubmissionsApi & { calls: Record<string, unknown[][]> } {
     list: rec("list", () => []),
     get: rec("get", () => submitted()),
     fix: rec("fix", () => submitted({ status: "ai_approved", steps: submitted().steps.map((s) => ({ ...s, status: "ai_approved" as const, reason: "" })) })),
+    removeStep: rec("removeStep", () => submitted({ status: "reviewing" })),
+    suggestions: rec("suggestions", () => ({ 2: [{ name: "Summarise papers", goal: "ML research", why: "does this step" }] })),
     run: rec("run", () => ({ id: "run1", status: "waiting_human", next_step: 1, error: null, outputs: [],
       waiting_on: { kind: "step", order: 1, title: "Copy the links", description: "Search arxiv and copy 5 links" } })),
     getRun: rec("getRun", () => ({})),
@@ -135,5 +137,29 @@ describe("Submit a Way", () => {
   it("cleans a step for the server", () => {
     expect(cleanStep({ kind: "human", description: "  do it ", prompt: "dropped", locator: "x" })).toEqual({ kind: "human", description: "do it" });
     expect(cleanStep({ kind: "automated", title: "", prompt: "p", locator: "  https://a.b " })).toEqual({ kind: "automated", prompt: "p", locator: "https://a.b" });
+  });
+
+  it("keeps what was typed when the step's tag changes between a person and automated", async () => {
+    // A regression guard: the two kinds write to different fields (description / prompt), so switching the tag used to show
+    // an empty box as if the words had been deleted. They must travel with the step, and only one field may carry them,
+    // because the server refuses a human step that still has a prompt.
+    const api = fakeApi();
+    root = createRoot(host);
+    act(() => root!.render(<SubmitWay api={api} />));
+    // Step 1 only: the form starts with a person step and an automated one, so both the box and the tag must come from the
+    // same card or the test switches one step while reading another (and then proves nothing).
+    const step1 = () => host.querySelectorAll("li.sw-step")[0] as HTMLLIElement;
+    const box = () => step1().querySelector("textarea") as HTMLTextAreaElement;
+    const tag = (who: "A person" | "Automated") =>
+      [...step1().querySelectorAll('[role="radiogroup"] button')].find((b) => b.textContent?.trim() === who) as HTMLButtonElement;
+
+    type(box(), "Search arxiv and copy the top 5 links");
+    act(() => tag("Automated").click());                          // a person -> automated
+    expect(box().value).toBe("Search arxiv and copy the top 5 links");
+
+    type(box(), "summarise each link in two lines");
+    expect(box().value).toBe("summarise each link in two lines");   // typed into the prompt, as kell's step
+    act(() => tag("A person").click());                              // automated -> a person
+    expect(box().value).toBe("summarise each link in two lines");
   });
 });

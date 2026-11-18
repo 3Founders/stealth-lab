@@ -75,6 +75,20 @@ async def fix_step(pool: Any, owner_id: str, submission_id: str, order: int, ste
     return await _reviewed(pool, submission_id, owner_id, wait)
 
 
+async def remove_step(pool: Any, owner_id: str, submission_id: str, order: int, *, wait: float = REVIEW_WAIT) -> dict:
+    """Take a step out of a submission the person owns. Not rate-limited: removing a step costs no reviewer call of its
+    own (the steps that remain are re-reviewed because the Way changed, which is the same review they would get anyway)."""
+    await store.remove_step(pool, submission_id, owner_id, int(order))
+    return await _reviewed(pool, submission_id, owner_id, wait)
+
+
+async def suggestions(pool: Any, owner_id: str, submission_id: str) -> dict:
+    """Better Ways for each rejected step, searched now rather than remembered (review.suggest_for_submission)."""
+    from app.submissions import review
+
+    return await review.suggest_for_submission(pool, submission_id, owner_id=owner_id)
+
+
 async def get(pool: Any, owner_id: str, submission_id: str) -> dict:
     out = await store.get(pool, submission_id, owner_id=owner_id)
     if out is None:

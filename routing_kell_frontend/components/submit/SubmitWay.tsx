@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  runnable, STATUS_LABEL, type Run, type RunRow, type StepIn, type Submission, type SubmissionRow, type SubmissionsApi,
+  runnable, STATUS_LABEL, type Run, type RunRow, type StepIn, type Submission, type SubmissionRow, type SubmissionsApi, type Suggestion,
 } from "@/lib/submissions-api";
 import "./submit.css";
 
@@ -172,13 +172,31 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
 function StepEditor({ step, n, onChange }: { step: StepIn; n: number; onChange: (s: StepIn) => void }) {
   const set = (k: keyof StepIn, v: string) => onChange({ ...step, [k]: v });
   const locator = typeof step.locator === "string" ? step.locator : step.locator?.value || "";
+  // Switching who does the step carries the words across instead of leaving them behind: the two kinds write to different
+  // fields (a person has a description, kell has a prompt), so the text used to look deleted when the field changed
+  // (2026-11-18). The text MOVES rather than being kept in both, because the server refuses a human step that still
+  // carries a prompt (submissions/intake.py:145).
+  const setKind = (kind: StepIn["kind"]) => {
+    if (kind === step.kind) return;
+    const words = kind === "human" ? (step.prompt || "").trim() : (step.description || "").trim();
+    const next: StepIn = { ...step, kind };
+    if (kind === "human") {
+      next.description = words || step.description || "";
+      delete next.prompt;
+      delete next.locator;
+    } else {
+      next.prompt = words || step.prompt || "";
+      delete next.description;
+    }
+    onChange(next);
+  };
   return (
     <div className="sw-step-body">
       <div className="sw-step-head">
         <b>Step {n}</b>
         <span className="sw-seg" role="radiogroup" aria-label={`Who does step ${n}`}>
-          <button type="button" role="radio" aria-checked={step.kind === "human"} onClick={() => onChange({ ...step, kind: "human" })}>A person</button>
-          <button type="button" role="radio" aria-checked={step.kind === "automated"} onClick={() => onChange({ ...step, kind: "automated" })}>Automated</button>
+          <button type="button" role="radio" aria-checked={step.kind === "human"} onClick={() => setKind("human")}>A person</button>
+          <button type="button" role="radio" aria-checked={step.kind === "automated"} onClick={() => setKind("automated")}>Automated</button>
         </span>
       </div>
       {step.kind === "human" ? (
@@ -190,12 +208,13 @@ function StepEditor({ step, n, onChange }: { step: StepIn; n: number; onChange: 
             placeholder="A prompt for kell, e.g. For each link from step 1, write its method and main result in two lines" />
           <input aria-label={`Link or tool for step ${n}`} value={locator} onChange={(e) => onChange({ ...step, locator: e.target.value })}
             placeholder="Optional: a website, a file or script link (GitHub works), or a tool name" />
-          {!step.prompt?.trim() && locator.trim() && (
-            <input aria-label={`Title for step ${n}`} value={step.title || ""} onChange={(e) => set("title", e.target.value)}
-              placeholder="What this step achieves (needed when there is no prompt)" />
-          )}
         </>
       )}
+      {/* The step's heading, always editable: it names the step in the list, in review and in the run's output, so it is not
+          something to show only when a locator happens to need it (2026-11-18). kell fills it in from the words when it is
+          left out, so it stays optional. */}
+      <input aria-label={`Heading for step ${n}`} value={step.title || ""} onChange={(e) => set("title", e.target.value)}
+        placeholder="Heading for this step (optional: kell writes one from the words above)" />
     </div>
   );
 }
@@ -244,6 +263,9 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
   const [error, setError] = useState("");
   const [fixing, setFixing] = useState<{ order: number; step: StepIn } | null>(null);
   const [busy, setBusy] = useState(false);
+  // Better Ways for the rejected steps, searched when this opens (never stored: a deleted Way must not linger here).
+  const [better, setBetter] = useState<Record<string, Suggestion[]>>({});
+  const [searched, setSearched] = useState(false);
 
   const load = useCallback(async () => {
     try { setSub(await api.get(id)); setError(""); } catch (e) { setError((e as Error).message); }
@@ -256,10 +278,24 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
     return () => window.clearInterval(t);
   }, [sub?.status, load]);
 
+  const anyRejected = !!sub?.steps.some((s) => s.status === "rejected");
+  useEffect(() => {
+    if (!anyRejected || searched) return;
+    setSearched(true);
+    void api.suggestions(id).then(setBetter).catch(() => setBetter({}));
+  }, [anyRejected, searched, api, id]);
+
   const fix = async () => {
     if (!fixing) return;
     setBusy(true); setError("");
-    try { setSub(await api.fix(id, fixing.order, fixing.step)); setFixing(null); }
+    try { setSub(await api.fix(id, fixing.order, fixing.step)); setFixing(null); setSearched(false); setBetter({}); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async (order: number) => {
+    setBusy(true); setError("");
+    try { setSub(await api.removeStep(id, order)); setSearched(false); setBetter({}); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -286,6 +322,27 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
               {s.kind !== "human" && s.locator?.value && <LocatorLine locator={s.locator} />}
               {matchNote(s) && <p className="sw-dim">{matchNote(s)}</p>}
               {s.status === "rejected" && s.reason && <p className="sw-reason"><b>Why:</b> {s.reason}</p>}
+              {(better[String(s.order)] ?? []).length > 0 && (
+                // Searched for this look, not remembered: a Way renamed or deleted since cannot show up here.
+                <div className="sw-better" aria-label={`Ways that could do step ${s.order} instead`}>
+                  <p className="sw-dim">kell found {better[String(s.order)].length === 1 ? "a Way" : "Ways"} that could do this step instead:</p>
+                  <ul>
+                    {better[String(s.order)].map((b) => (
+                      <li key={`${b.way_id || b.name}-${s.order}`}>
+                        <b>{b.name}</b>
+                        {b.why && <span className="sw-dim"> — {b.why}</span>}
+                        {b.steps?.length ? <span className="sw-dim"> ({b.steps.slice(0, 4).join(" · ")})</span> : null}
+                        <button type="button" className="btn-line sw-btn" disabled={busy}
+                          title="Start this step from that Way's words; kell reviews it again"
+                          onClick={() => setFixing({ order: s.order, step: {
+                            kind: "automated", title: b.name, prompt: b.steps?.length ? b.steps.join("\n") : b.name } })}>
+                          Change this step to it
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {s.status !== "reviewing" && (fixing?.order === s.order ? (
                 <div className="sw-fix">
                   <StepEditor step={fixing.step} n={s.order} onChange={(x) => setFixing({ order: s.order, step: x })} />
@@ -296,9 +353,18 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
                   </div>
                 </div>
               ) : (
-                <button type="button" className="btn-line sw-btn" onClick={() => setFixing({ order: s.order, step: {
-                  kind: s.kind, title: s.title, description: s.description, prompt: s.prompt, locator: s.locator?.value || "" } })}>
-                  {s.status === "rejected" ? "Fix this step" : "Change this step"}</button>
+                <div className="sw-row">
+                  <button type="button" className="btn-line sw-btn" onClick={() => setFixing({ order: s.order, step: {
+                    kind: s.kind, title: s.title, description: s.description, prompt: s.prompt, locator: s.locator?.value || "" } })}>
+                    {s.status === "rejected" ? "Fix this step" : "Change this step"}</button>
+                  {/* A step can always be taken out, except the last one: a Way with no steps is not a Way (the server
+                      refuses it too, so this is a courtesy, not the rule). Removing one re-reviews the rest. */}
+                  {sub.steps.length > 1 && (
+                    <button type="button" className="btn-line sw-btn" disabled={busy}
+                      title="Remove this step; the others are re-reviewed, because a Way that lost a step is not the Way that passed"
+                      onClick={() => void remove(s.order)}>Remove this step</button>
+                  )}
+                </div>
               ))}
             </div>
           </li>

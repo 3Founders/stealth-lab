@@ -317,6 +317,71 @@ async def _record(pool: Any, step_id: int, status: str, reason: str, checks: dic
         step_id, status, reason, checks, reviewer)
 
 
+async def suggest_for_submission(pool: Any, submission_id: str, *, owner_id: str, limit: int = 3) -> dict:
+    """Better Ways for every step of a submission, searched NOW (owner, 2026-11-18).
+
+    Nothing is stored: the search runs when the person looks, over the Ways kell has at that moment. That is deliberate --
+    a suggestion list kept on a step goes stale the day a Way is renamed, deleted or superseded, and a dead "try this
+    instead" is worse than none at all. The cost is one catalog search per look, paid by the panel, never by the reviewer.
+
+    The step's own words are the query, narrowed by its goal. A step that already passed is not searched: the question is
+    only "then what should this step be?" for the ones that were turned down. Never raises -- a failing search is an empty
+    answer, not an error the person has to read.
+    """
+    sub = await get(pool, submission_id, owner_id=owner_id)
+    if sub is None:
+        raise LookupError("no submission of yours with that id")
+    out: dict[str, list] = {}
+    for step in sub.get("steps") or []:
+        if step.get("status") not in ("rejected", "needs_changes"):
+            continue
+        out[str(step.get("order"))] = await _suggest_better(step, limit=limit)
+    return {"submission_id": submission_id, "suggestions": out}
+
+
+async def _suggest_better(step: dict, *, limit: int = 3) -> list:
+    """Better Ways for a step the reviewer turned down: find_ways over the step's own words.
+
+    A suggestion only. Taking one is an ordinary fix (POST .../steps/{order}), which puts the step back through review,
+    so a Way can never pass on a step its author has not read.
+    """
+    query = "\n".join(x for x in (step.get("title"), step.get("description"), step.get("prompt")) if x).strip()
+    if not query:
+        return []
+    try:
+        from app.mcp_server import server as _server       # find_ways is the one catalog search kell has
+
+        out = await _server.find_ways(query, None, top_k=limit, detail="brief")
+        payload = json.loads(out) if isinstance(out, str) else out
+    except Exception:  # noqa: BLE001 -- a suggestion is an addition; it never fails the page
+        log.debug("could not search for a better Way", exc_info=True)
+        return []
+    ways = (payload or {}).get("ways") if isinstance(payload, dict) else None
+    if not isinstance(ways, list):
+        return []
+    found = []
+    for w in ways[:limit]:
+        if not isinstance(w, dict):
+            continue
+        name = str(w.get("goal") or w.get("name") or "").strip()
+        if not name:
+            continue
+        entry = {"name": name[:200], "goal": name[:200]}
+        for key in ("procedure_id", "way_id"):
+            if w.get(key):
+                entry["way_id"] = str(w[key])
+                break
+        why = str(w.get("why") or "").strip()
+        if why:
+            entry["why"] = why[:400]
+        steps = w.get("steps")
+        if isinstance(steps, list):
+            entry["steps"] = [str((s or {}).get("title") or (s or {}).get("do") or "")[:200]
+                              for s in steps[:8] if isinstance(s, dict)]
+        found.append(entry)
+    return found
+
+
 async def _steps(pool: Any, submission_id: str) -> list[dict]:
     rows = await pool.fetch(
         """SELECT id, step_order AS "order", kind, title, description, prompt, locator, goal_id::text AS goal_id,

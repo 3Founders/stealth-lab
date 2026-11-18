@@ -78,14 +78,29 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
             return early
         return await _answer(request, api.get(pool, subject, request.path_params["submission_id"]))
 
-    @server.custom_route("/v1/goals/submissions/{submission_id}/steps/{order:int}", methods=["POST", "OPTIONS"],
+    @server.custom_route("/v1/goals/submissions/{submission_id}/steps/{order:int}", methods=["POST", "DELETE", "OPTIONS"],
                          include_in_schema=False)
     async def submission_fix_step(request: Request) -> Response:
         subject, pool, early = await _begin(request)
         if early is not None:
             return early
+        order = request.path_params["order"]
+        if request.method == "DELETE":
+            # A step taken out of a Way that is still being written (not only a failed one): the rest close the gap and
+            # are reviewed again, because a Way that lost a step is not the Way that passed.
+            return await _answer(request, api.remove_step(pool, subject, request.path_params["submission_id"], order))
         return await _answer(request, api.fix_step(pool, subject, request.path_params["submission_id"],
-                                                   request.path_params["order"], await _body(request)))
+                                                   order, await _body(request)))
+
+    @server.custom_route("/v1/goals/submissions/{submission_id}/suggestions", methods=["GET", "OPTIONS"],
+                         include_in_schema=False)
+    async def submission_suggestions(request: Request) -> Response:
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        # Searched when asked, never stored: a remembered suggestion goes stale when a Way is renamed or deleted
+        # (owner's call, 2026-11-18), and a dead "try this instead" is worse than none.
+        return await _answer(request, api.suggestions(pool, subject, request.path_params["submission_id"]))
 
     @server.custom_route("/v1/goals/submissions/{submission_id}/runs", methods=["POST", "OPTIONS"],
                          include_in_schema=False)

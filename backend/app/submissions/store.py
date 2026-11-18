@@ -177,6 +177,55 @@ async def replace_step(pool: Any, submission_id: str, owner_id: str, order: int,
     return {**step.as_dict(), **way, "status": "reviewing", "revision": row["revision"] + 1}
 
 
+async def remove_step(pool: Any, submission_id: str, owner_id: str, order: int) -> dict:
+    """The submitter takes one step out of a submission. Its own Way is retired, the steps after it move up one so the
+    numbering stays 1..n, the mode is worked out again (a submission can stop being Human+AI when its last human step
+    goes), and what is left goes back to review: a Way that lost a step is not the Way that was approved.
+    A submission cannot be emptied: the last step stays, because a Way with no steps is not a Way.
+    The parent Way is quarantined like a changed step's (review.settle does the same when a change fails review)."""
+    row = await pool.fetchrow(
+        """SELECT s.id, s.procedure_row_id::text AS procedure_row_id, s.goal_id::text AS goal_id
+           FROM goal_submission_steps s JOIN goal_submissions g ON g.id = s.submission_id
+           WHERE s.submission_id = $1::uuid AND s.step_order = $2 AND g.owner_id = $3""", submission_id, order, owner_id)
+    if row is None:
+        raise SubmissionError(f"no step {order} in a submission of yours with that id")
+    count = await pool.fetchval("SELECT count(*) FROM goal_submission_steps WHERE submission_id = $1::uuid", submission_id)
+    if (count or 0) <= 1:
+        raise SubmissionError("a Way needs at least one step; change this one instead of removing it")
+    async with pool.acquire() as conn, conn.transaction():
+        if row["procedure_row_id"]:
+            await conn.execute("UPDATE procedures SET t_invalid = now(), approval_status = 'rejected' "
+                               "WHERE id = $1::uuid AND t_invalid IS NULL", row["procedure_row_id"])
+        await conn.execute("DELETE FROM goal_submission_steps WHERE id = $1", row["id"])
+        # Close the gap: everything after the removed step moves up one, in order, so no two rows collide in between.
+        await conn.execute(
+            """UPDATE goal_submission_steps SET step_order = step_order - 1
+               WHERE submission_id = $1::uuid AND step_order > $2""", submission_id, order)
+        if row["goal_id"]:
+            await _retire_unused_goal(conn, row["goal_id"], owner_id)
+        kinds = [r["kind"] for r in await conn.fetch(
+            "SELECT kind FROM goal_submission_steps WHERE submission_id = $1::uuid ORDER BY step_order", submission_id)]
+        from app.submissions.intake import mode_of
+
+        # The Way as a whole no longer matches what was approved: quarantine it, as a failed change would.
+        await conn.execute(
+            """UPDATE procedures SET availability = 'quarantined', t_invalid = now()
+               WHERE id = (SELECT parent_procedure_id FROM goal_submissions WHERE id = $1::uuid)
+                 AND t_invalid IS NULL""", submission_id)
+        await conn.execute(
+            """UPDATE goal_submissions SET parent_procedure_id = NULL, status = 'reviewing', mode = $2, updated_at = now()
+               WHERE id = $1::uuid""", submission_id, mode_of(kinds))
+    return await _plain_submission(pool, submission_id)
+
+
+async def _plain_submission(pool: Any, submission_id: str) -> dict:
+    """What get() returns, without the owner filter: the caller has already checked who is asking."""
+    out = await get(pool, submission_id)
+    if out is None:
+        raise SubmissionError("the submission is gone")
+    return out
+
+
 async def _retire_unused_goal(conn: Any, goal_id: str, owner_id: str) -> None:
     """A fixed step moved to another goal: the goal it left is retired when this person made it, it never went public,
     and nothing else uses it (no live Way, no other submission or step)."""

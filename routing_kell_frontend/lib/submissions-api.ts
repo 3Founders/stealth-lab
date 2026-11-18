@@ -18,6 +18,8 @@ export interface Step {
   reason: string; reviewer: string | null; revision: number;
   goal_match?: { decision?: string; goal?: string | null } | null;
 }
+/** A Way kell found for a rejected step. Searched when the panel asks, never stored (review.suggest_for_submission). */
+export interface Suggestion { name: string; goal: string; way_id?: string; why?: string; steps?: string[] }
 export interface Submission {
   id: string; goal_name: string; description: string; mode: string; mode_label: string;
   status: "reviewing" | "needs_changes" | "ai_approved" | "approved" | "withdrawn"; parent_procedure_id: string | null;
@@ -91,6 +93,10 @@ export function submissionsApi(deps: SubmissionsDeps) {
     list: () => call<{ submissions: SubmissionRow[] }>("GET", "/submissions").then((r) => r.submissions),
     get: (id: string) => call<Submission>("GET", `/submissions/${encodeURIComponent(id)}`),
     fix: (id: string, order: number, step: StepIn) => call<Submission>("POST", `/submissions/${encodeURIComponent(id)}/steps/${order}`, cleanStep(step)),
+    removeStep: (id: string, order: number) => call<Submission>("DELETE", `/submissions/${encodeURIComponent(id)}/steps/${order}`),
+    // Searched when asked, never stored: a remembered suggestion goes stale when a Way is renamed or deleted.
+    suggestions: (id: string) =>
+      call<{ suggestions: Record<string, Suggestion[]> }>("GET", `/submissions/${encodeURIComponent(id)}/suggestions`).then((r) => r.suggestions),
     run: (id: string, input: string) => call<Run>("POST", `/submissions/${encodeURIComponent(id)}/runs`, { input }),
     getRun: (runId: string) => call<Run>("GET", `/runs/${encodeURIComponent(runId)}`),
     done: (runId: string, note: string) => call<Run>("POST", `/runs/${encodeURIComponent(runId)}/done`, { note }),
