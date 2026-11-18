@@ -51,15 +51,29 @@ export async function POST(req: Request) {
   if (!e) return new Response("engine is down; open a project first", { status: 502 })
   try {
     const body = await req.json()
+    // Stop (2026-11-18): the app stops listening (it aborts this request) or the engine reports the turn interrupted. Either
+    // way this stream ends, and an abort also interrupts the engine, so a turn whose session id the app did not know yet
+    // (a new chat's first message) stops too.
+    let stopped = false
+    let turnSession = ""
+    let closeStream: (() => void) | null = null
     const stream = new ReadableStream({
+      async cancel() {
+        stopped = true
+        closeStream?.()
+        if (turnSession) { try { await (await clientFor(e)).session.interrupt({ sessionID: turnSession }) } catch { /* already over */ } }
+      },
       async start(ctrl) {
-        const enc = (obj: any) => ctrl.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(obj)}\n\n`))
+        let closed = false
+        const close = () => { if (closed) return; closed = true; try { ctrl.close() } catch { /* already closed */ } }
+        closeStream = close
+        const enc = (obj: any) => { if (closed) return; try { ctrl.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(obj)}\n\n`)) } catch { closed = true } }
         // The personal lane spends the person's own wallet: with nothing left, say "you need a plan" instead of letting the
         // gateway's refusal come back as a raw engine error. (A balance that cannot be read is left to the model call.)
         const way = body.plan && typeof body.plan === "object" ? (body.plan as Delegation) : null
         if (!pooledEngineConfig() && !ownKeyLane()) {
           const left = await walletRemaining()
-          if (left !== null && left <= 0) { enc({ type: "need_plan" }); enc({ type: "done", outcome: "need_plan" }); ctrl.close(); return }
+          if (left !== null && left <= 0) { enc({ type: "need_plan" }); enc({ type: "done", outcome: "need_plan" }); close(); return }
           // A Way of many steps on a nearly empty wallet stops partway (2026-11-15: a 16-step research Way stopped at
           // step 6). Say so before it starts; the run is kept, so it can go on after a top-up.
           if (left !== null && way?.way && way.steps.length >= LONG_WAY_STEPS && left < LOW_FOR_LONG_WAY_USD)
@@ -69,6 +83,8 @@ export async function POST(req: Request) {
         // Subscribe before prompting: otherwise the turn's session.idle can fire before the stream starts.
         const sessionID: string = body.sessionID ||
           (await client.session.create({ location: { directory: e.directory }, metadata: { kell: true } })).id
+        turnSession = sessionID
+        if (stopped) { try { await client.session.interrupt({ sessionID }) } catch { /* nothing ran */ } close(); return }
         enc({ type: "session", sessionID })
         // Write the person's message to the app's own store before the engine runs. History is an addition: a local
         // write failure must never stop the turn.
@@ -88,6 +104,7 @@ export async function POST(req: Request) {
         const pump = (async () => {
           try {
             for await (const ev of client.event.subscribe()) {
+              if (stopped) break
               const k = (ev as any).type as string
               if (!k.startsWith("session.") && k !== "permission.asked") continue   // a permission ask waits on the person
               const d = (ev as any).data ?? {}
@@ -98,7 +115,9 @@ export async function POST(req: Request) {
                 const why = JSON.stringify(d)
                 enc(isNeedPlan(why) ? { type: "need_plan" } : { type: "error", error: reasonOf(d) })
               }
-              if (k === "session.execution.succeeded" || k === "session.execution.failed" || k === "session.idle") {
+              // interrupted: the person pressed Stop. It ends the turn like the others (it used to be ignored, so the turn
+              // never ended: "kell is thinking" stayed and the next message waited forever, 2026-11-18).
+              if (k === "session.execution.succeeded" || k === "session.execution.failed" || k === "session.execution.interrupted" || k === "session.idle") {
                 enc({ type: "done", outcome: k })
                 break
               }
@@ -108,9 +127,9 @@ export async function POST(req: Request) {
             }
           } catch (err: any) {
             const msg = String(err?.message || err)
-            enc(isNeedPlan(msg) ? { type: "need_plan" } : { type: "error", error: msg })
+            if (!stopped) enc(isNeedPlan(msg) ? { type: "need_plan" } : { type: "error", error: msg })
           }
-          ctrl.close()
+          close()
         })()
         // This app's rules for its engine (lib/tools.ts), as the session's instruction; kell's plugin adds the task lookup and the tool note
         // itself. An engine that refuses the entry still runs the prompt.
@@ -151,6 +170,7 @@ export async function POST(req: Request) {
             value: contract ? `${rulesFor(isHome(e.directory))}\n\n${contract}` : rulesFor(isHome(e.directory)) } as any)
         } catch { /* the prompt still runs */ }
         try {
+          if (stopped) { close(); return }
           await client.session.prompt({ sessionID, text: promptText, ...(model ? { model } : {}), ...(attached.files.length ? { files: attached.files } : {}) } as any)
           await pump
         } finally {

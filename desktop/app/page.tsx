@@ -1089,6 +1089,8 @@ export default function Home() {
     const b = !!running[chatKey]
     setBusy(b); busyRef.current = b
   }, [running, chatKey])
+  // Each running turn's request, so Stop can end it here at once (2026-11-18), keyed by the chat's key and its session id.
+  const turnCtl = useRef<{ key: string; sid: string; ctl: AbortController }[]>([])
   const beginTurn = (key: string, sid: string | null) => { if (!runningRef.current[key]) runningWrite({ ...runningRef.current, [key]: { sid } }) }
   const endTurn = (key: string) => {
     if (!key || !runningRef.current[key]) return
@@ -1796,8 +1798,11 @@ export default function Home() {
   const runTurnInner = async (sent: string, outgoing: Attachment[], plan: Delegation | null, turn: { key: string; sid: string; text: string }) => {
     if (plan && onScreen.current === turn.sid) { setDelegateAnswer(""); setDelegateErr("") }
     const live = () => !!turn.sid && onScreen.current === turn.sid
+    const ctl = new AbortController()
+    const mine = { key: turn.key, sid: turn.sid, ctl }
+    turnCtl.current.push(mine)
     const payload = { sessionID: turn.sid || undefined, directory, text: sent, model: plan?.model ?? undefined, plan: plan ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
-    const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) })
+    const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: ctl.signal })
     if (!r.ok || !r.body) {
       const err = await r.text()
       if (live()) setLines((l) => [...l, { who: "assistant", text: `kell could not reach the engine: ${err.slice(0, 200)}`, at: Date.now() }])
@@ -1835,6 +1840,7 @@ export default function Home() {
             const from = turn.key
             const here = chatKeyRef.current === from
             turn.sid = nextSid
+            mine.sid = nextSid
             turn.key = nextSid
             moveTurn(from, nextSid)
             // A new session's id belongs to the chat the turn was started in. If the person is still there, show it.
@@ -1958,11 +1964,13 @@ export default function Home() {
     const turn = { key, sid: startSid ?? "", text: "" }
     try { await runTurnInner(sent, outgoing, plan, turn) }
     catch (err) {
+      if ((err as any)?.name === "AbortError") return     // Stop: the note says so; this is not a broken connection
       const why = String((err as any)?.message || err).slice(0, 200)
       if (turn.sid && onScreen.current === turn.sid) appendAssistant(`The connection to the engine broke: ${why}`)
       else if (turn.sid) notifyDone(turn.sid, chatTitle(turn.sid), "the connection broke")
     }
     finally {
+      turnCtl.current = turnCtl.current.filter((x) => x.key !== turn.key)
       endTurn(turn.key)
       if (turn.key !== turn.sid) endTurn(turn.sid)
       if (turn.sid) delete turnText.current[turn.sid]
@@ -2173,17 +2181,30 @@ export default function Home() {
   /** Stop the turn at its next safe point (reqs §5). Work that already ran is not undone, and the note says so. */
   const stop = async () => {
     // Stop the turn in the chat on screen. Other chats keep answering: their Stop is in their own chat (2026-11-17).
-    const t = runningRef.current[chatKeyRef.current]
-    const sid = t?.sid
-    if (!sid || stopping) return
+    // The turn ends HERE at once: its request is aborted (the server then interrupts the engine, even for a new chat
+    // whose session id is not known yet), a procedure search it may still be in is dropped, and the composer is free for
+    // the next message. It used to wait for the engine's stream to end, which an interrupt never did (2026-11-18).
+    const key = chatKeyRef.current
+    const t = runningRef.current[key]
+    if (!t || stopping) return
+    const sid = t.sid || ""
     setStopping(true)
+    turnGen.current++                                       // a search still running for this turn is dropped
+    const hit = (x: { key: string; sid: string }) => x.key === key || (!!sid && x.sid === sid)
+    for (const x of turnCtl.current.filter(hit)) x.ctl.abort()
+    turnCtl.current = turnCtl.current.filter((x) => !hit(x))
+    endTurn(key)
+    if (sid && sid !== key) endTurn(sid)
+    setDelegateStatus("")
     try {
-      const r = await fetch("/api/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: sid }) })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(j.error || `stop failed (${r.status})`)
+      if (sid) {
+        const r = await fetch("/api/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: sid }) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(j.error || `stop failed (${r.status})`)
+      }
       setStopNote("Stopped. Steps that already ran stay; nothing is undone.")
     } catch (e: any) {
-      setStopNote(`Could not stop the turn: ${String(e?.message || e)}`)
+      setStopNote(`Stopped here; the engine said: ${String(e?.message || e)}`)
     } finally { setStopping(false) }
   }
 
@@ -3482,7 +3503,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
               {busy && (
                 // The stop sits with the mode choice, above the message box: the turn it stops is the one the mode
                 // applies to, and it stays reachable without taking the send button's place.
-                <button type="button" className="dk-stop" onClick={() => void stop()} disabled={stopping || !(busy || sessionID)}
+                <button type="button" className="dk-stop" onClick={() => void stop()} disabled={stopping}
                   aria-label="Stop kell"
                   title="Stop this chat's turn. Steps that already ran stay; nothing is undone.">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
