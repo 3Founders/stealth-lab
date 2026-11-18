@@ -72,6 +72,27 @@ export function preparePlugin(models: string[], env: NodeJS.ProcessEnv = process
   // `fallbacks` is the whole ladder the plugin walks when a model is denied or a provider fails; `fallback` stays for an
   // older plugin that reads only one rung.
   write(settingsFile, { mode: "session", cheap: `kell/${plan.cheap}`, strong: `kell/${plan.strong}`, fallback: `kell/${plan.fallback}`,
-                        fallbacks: models.map((m) => `kell/${m}`), settings: [hooksFile] })
+                        fallbacks: models.map((m) => `kell/${m}`), settings: [hooksFile], pins: pinsFile(env) })
   return { KELL_OC_CONFIG: settingsFile, KELL_OC_SETTINGS: hooksFile }
+}
+
+/** The models people chose in the composer, per session: `{ [sessionID]: "provider/model" }`. The plugin reads it on every prompt
+ *  and runs a pinned session on that model instead of re-picking by triage (2026-11-18: the picker was overridden every turn). */
+export const pinsFile = (env: NodeJS.ProcessEnv = process.env) => path.join(home(env), "desktop", "model-pins.json")
+
+/** Pins a session to the model the person chose, or (ref null) lets kell pick again. Never throws: a turn still runs without it. */
+export function pinModel(sessionID: string, ref: string | null, env: NodeJS.ProcessEnv = process.env): void {
+  if (!sessionID) return
+  try {
+    const file = pinsFile(env)
+    let pins: Record<string, string> = {}
+    try { pins = JSON.parse(fs.readFileSync(file, "utf8")) || {} } catch { /* none yet */ }
+    if ((pins[sessionID] ?? null) === ref) return
+    if (ref) pins[sessionID] = ref; else delete pins[sessionID]
+    const keys = Object.keys(pins)
+    for (const k of keys.slice(0, Math.max(0, keys.length - 500))) delete pins[k]      // the oldest go first; a few hundred chats is plenty
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(pins, null, 2) + "\n")
+    fs.renameSync(`${file}.tmp`, file)
+  } catch { /* the turn runs on the model it was sent with */ }
 }

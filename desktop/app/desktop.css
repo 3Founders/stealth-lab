@@ -1038,7 +1038,7 @@
   padding: min(14vh, 120px) 16px 16px; animation: dg-fade var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both;
   -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 .dk-palette { width: min(620px, 100%); max-height: min(70vh, 560px); display: flex; flex-direction: column; overflow: hidden;
-  border: 1px solid var(--rule-strong); border-radius: 16px;
+  border: 1px solid var(--rule-strong); border-radius: 16px; color: var(--ink);
   animation: dg-glass-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; transform-origin: top center; }
 .dk-palette-input { font: inherit; font-size: 16px; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--rule); background: transparent; color: var(--ink); outline: none; }
 .dk-palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
@@ -1099,7 +1099,7 @@
 .dk-sw-backdrop { position: fixed; inset: 0; z-index: 86; background: rgba(23,23,23,.28); display: grid; place-items: center; padding: 16px;
   -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: dg-fade var(--dg-smooth-d) var(--dg-smooth) both; }
 .dk-sw { width: min(680px, 100%); max-height: min(84vh, 760px); display: flex; flex-direction: column; gap: 10px; padding: 16px;
-  border: 1px solid var(--rule-strong); border-radius: 16px;
+  border: 1px solid var(--rule-strong); border-radius: 16px; color: var(--ink);
   animation: dg-glass-in var(--dg-smooth-d) var(--dg-smooth) both; }
 .dk-sw-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .dk-sw-head h2 { margin: 0; font-size: 18px; }

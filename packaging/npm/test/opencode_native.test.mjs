@@ -13,7 +13,7 @@ test("model choice: cheap by default, the session's own model for a hard task or
   assert.equal(chooseModel({ work: "unclear_change", kind: "repo_specific" }, m).which, "strong")
   assert.equal(chooseModel({ work: "answer", kind: "repo_specific", confidence: 0.85 }, m).which, "cheap")
   assert.equal(chooseModel({ work: "change", kind: "reusable_task", confidence: 0.98, category: "repo_change" }, m).which, "cheap")
-  assert.equal(chooseModel(null, m).which, "strong")
+  assert.deepEqual(chooseModel(null, m), { which: "session", ref: null })   // a failed triage leaves the session's model alone
   assert.equal(isHard({ work: "change" }), false)
 })
 
@@ -154,4 +154,30 @@ test("the retry hook switches away from a model the organization does not allow,
   await hooks.retry(e)
   assert.deepEqual(switches, [{ sessionID: "s1", model: { providerID: "kell", id: "glm-5.3-flash" } }])
   assert.deepEqual(e.decision, { retry: true, delay: 0 })
+})
+
+test("a model the person pinned is the one a prompt runs on, whatever triage says; an unpinned session follows triage", async () => {
+  const fs = await import("node:fs"), os = await import("node:os"), path = await import("node:path")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kell-pins-"))
+  const pins = path.join(dir, "pins.json")
+  fs.writeFileSync(pins, JSON.stringify({ s1: "kell/kimi-k3" }))
+  const hooks = {}
+  const switches = []
+  const ctx = {
+    session: { hook: async (name, cb) => { hooks[name] = cb }, switchModel: async (x) => { switches.push(x) } },
+    tool: { hook: async () => {} },
+    mcp: {},
+  }
+  const saved = process.env.STEALTHLAB_MCP_URL
+  process.env.STEALTHLAB_MCP_URL = "http://127.0.0.1:9/mcp"          // nothing listens: triage gives no verdict
+  try {
+    await installNative(ctx, { cheap: "kell/deepseek-v4.1-flash", strong: "kell/deepseek-v4-pro", pins })
+    await hooks.prompt({ sessionID: "s1", prompt: { text: "fix the failing test" } })
+    assert.deepEqual(switches, [{ sessionID: "s1", model: { providerID: "kell", id: "kimi-k3" } }])
+    await hooks.prompt({ sessionID: "s2", prompt: { text: "fix the failing test" } })
+    assert.equal(switches.length, 1)                                  // no verdict, no pin: the session keeps its model
+  } finally {
+    if (saved === undefined) delete process.env.STEALTHLAB_MCP_URL; else process.env.STEALTHLAB_MCP_URL = saved
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

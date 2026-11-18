@@ -54,6 +54,15 @@ function payload(reply: Rpc): any {
 /** A kell REST route (not an MCP tool): `/procedure`, `/triage`. The configured `url` is the MCP endpoint
  *  (`https://…/mcp`); these routes live at the host root. Same sign-in and bearer as a tool call. */
 export async function callKellRoute(path: string, body: unknown, timeoutMs = 8000): Promise<any> {
+  try { return await routeOnce(path, body, timeoutMs) } catch (err: any) {
+    if (err?.status !== 401) throw err
+    // A 401 with a saved refresh token is a token that went stale, not a person who signed out: refresh it and ask once more.
+    await freshSignIn(process.env, fetch, true)
+    return await routeOnce(path, body, timeoutMs)
+  }
+}
+
+async function routeOnce(path: string, body: unknown, timeoutMs: number): Promise<any> {
   await freshSignIn()
   const { url, token } = config()
   if (!url) throw Object.assign(new Error("kell is not signed in on this machine"), { status: 401 })
@@ -85,10 +94,18 @@ export async function callMcpTool(name: string, args: Record<string, unknown>, t
   let lastErr: any
   // A hosted edge can terminate a long semantic lookup (the transport says "terminated"). One retry on a fresh MCP
   // session is cheap and makes the plan reliable; a 401 is final (the sign-in is gone).
+  let refreshed = false
   for (let attempt = 0; attempt < 2; attempt++) {
     try { return await once(name, args, timeoutMs) } catch (err: any) {
       lastErr = err
-      if (err?.status === 401 || err?.status === 400) break
+      if (err?.status === 400) break
+      // A 401 is a stale token, not a signed-out person, while a refresh token is saved: refresh it once and try again
+      // ("kell's sign-in expired" on My submissions while the saved sign-in could still be renewed, 2026-11-18).
+      if (err?.status === 401) {
+        if (refreshed) break
+        refreshed = true
+        await freshSignIn(process.env, fetch, true)
+      }
     }
   }
   throw lastErr

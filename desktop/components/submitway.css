@@ -49,7 +49,10 @@
 .sw-btn { min-height: 38px; padding: 0 14px; transition: transform var(--sw-micro-d) var(--sw-micro), box-shadow var(--sw-micro-d) var(--sw-micro), background-color var(--sw-micro-d) var(--sw-micro), color var(--sw-micro-d) var(--sw-micro), border-color var(--sw-micro-d) var(--sw-micro); }
 .sw-btn:hover:not(:disabled) { transform: translateY(-1px); }
 .sw-btn:active:not(:disabled) { transform: scale(.97); }
-.sw-mode { margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--soft); font-weight: 600; }
+/* The mode line sets its own background, so it sets its own text colour too: inherited, it took the panel's text colour and in dark mode
+   read as dark on --soft's dark yellow, i.e. invisible (2026-11-18). The same for the whole form, wherever it is mounted. */
+.sw { color: var(--ink); }
+.sw-mode { margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--soft); color: var(--ink); font-weight: 600; }
 .sw-error { margin: 0; color: #b3261e; }
 .sw-dim { margin: 0; color: var(--text-2); font-size: .9em; overflow-wrap: anywhere; }
 .sw-loc { margin: 0; font-size: 0.9em; overflow-wrap: anywhere; }

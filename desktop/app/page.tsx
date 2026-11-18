@@ -1869,7 +1869,8 @@ export default function Home() {
     // A new session was started while the search ran: its picker, card, or error belongs to the chat the person left.
     if (turnGen.current !== gen) { endTurn(key); return }
     // JEV judged this ordinary work: no picker, no card, the model starts as if kell held nothing.
-    if (routed?.skip) { if (onScreen.current === sessionID) setDelegateStatus(""); await runTurn(sent, outgoing, null, key, sessionID); return }
+    // The composer's model applies here too: this path sent no model at all, so the picker did nothing on ordinary work (2026-11-18).
+    if (routed?.skip) { if (onScreen.current === sessionID) setDelegateStatus(""); await runTurn(sent, outgoing, chatModel ? withChatModel(planFromOption(sent, settings?.models || {}, null, null)) : null, key, sessionID); return }
     if (routed && procMode === "auto") {
       // Auto: the best-fitting Way is applied without a click. No Way means the model does the work, with no card.
       const best = routed.options[0] ?? null
@@ -1919,7 +1920,9 @@ export default function Home() {
     const ctl = new AbortController()
     const mine = { key: turn.key, sid: turn.sid, ctl }
     turnCtl.current.push(mine)
-    const payload = { sessionID: turn.sid || undefined, directory, text: sent, model: plan?.model ?? undefined, plan: plan ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
+    // pinned: the model is the person's own pick in the composer (withChatModel), so kell's plugin keeps it for the whole turn.
+    const payload = { sessionID: turn.sid || undefined, directory, text: sent, model: plan?.model ?? undefined, plan: plan ?? undefined,
+      pinned: !!plan?.model && plan.why.startsWith("you chose"), files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: ctl.signal })
     if (!r.ok || !r.body) {
       const err = await r.text()

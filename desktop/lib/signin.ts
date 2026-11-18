@@ -12,18 +12,20 @@ const configPath = (env: NodeJS.ProcessEnv) => path.join(env.STEALTHLAB_HOME || 
 
 let inFlight: Promise<void> | null = null
 
-/** Refreshes the saved sign-in when it is about to expire (one refresh at a time); never throws. */
-export function freshSignIn(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch): Promise<void> {
-  if (!inFlight) inFlight = refresh(env, fetchImpl).finally(() => { inFlight = null })
+/** Refreshes the saved sign-in when it is about to expire (one refresh at a time); never throws. `force`: refresh even though the
+ *  saved expiry says it is still good, for a call the server just answered 401 (another process may have rotated it, or the
+ *  clock and the server disagree). */
+export function freshSignIn(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch, force = false): Promise<void> {
+  if (!inFlight) inFlight = refresh(env, fetchImpl, force).finally(() => { inFlight = null })
   return inFlight
 }
 
-async function refresh(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch): Promise<void> {
+async function refresh(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch, force: boolean): Promise<void> {
   try {
     const p = configPath(env)
     const cfg = JSON.parse(fs.readFileSync(p, "utf8")) || {}
     if (!cfg.refresh_token || !cfg.oauth?.token_endpoint || !cfg.oauth?.client_id) return
-    if (cfg.expires_at && cfg.expires_at - REFRESH_SKEW_MS > Date.now()) return
+    if (!force && cfg.expires_at && cfg.expires_at - REFRESH_SKEW_MS > Date.now()) return
     const res = await fetchImpl(cfg.oauth.token_endpoint, {
       method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
       signal: AbortSignal.timeout(15_000),
