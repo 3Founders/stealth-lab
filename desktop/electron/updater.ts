@@ -1,9 +1,15 @@
 // Updates (owner, 2026-11-17: an installed app sat on 0.1.22 while 0.1.25 was out, with nothing to say why). The installed app asks
 // the public releases-only repo (build.publish in package.json) for a newer installer at start and every few hours, downloads it
 // quietly, and says so: a dialog offers "Restart now", and it also installs when the app closes. Every step and error goes to
-// updater.log in the app's logs folder (%APPDATA%\kell\logs on Windows), so a stuck update can be read later. Before the first check,
-// installers left in the updater's cache from versions this app already is (or is past), and half-downloaded temp files, are removed:
-// an old leftover there was the likeliest thing holding updates back. No token is involved: the releases are public.
+// updater.log in the app's logs folder (%APPDATA%\kell-desktop\logs on Windows), so a stuck update can be read later. Before the
+// first check, installers left in the updater's cache from versions this app already is (or is past), and half-downloaded temp
+// files, are removed: an old leftover there was the likeliest thing holding updates back. No token is involved: the releases
+// are public.
+//
+// 2026-11-18: the log could start at the first check and nothing before it. main.ts's re-exported `ulog` is read ONCE, when it
+// imports this module, so everything logged before that import landed was written by the fallback (a no-op) and lost. This
+// module now owns its sink and writes on every call, and says which path it writes to at the top, so "no log" can never again
+// mean "the check never ran, the module never loaded, or the file could not be opened".
 import { app, dialog, type BrowserWindow } from "electron"
 import { autoUpdater } from "electron-updater"
 import fs from "node:fs"
@@ -18,6 +24,9 @@ function logFile() {
   try { return path.join(app.getPath("logs"), "updater.log") } catch { return path.join(app.getPath("userData"), "updater.log") }
 }
 
+/** Written once, on the first line, and repeated in every failure dialog: the path is the one fact a stuck update needs. */
+let announced = false
+
 export function ulog(...a: unknown[]) {
   const line = `${new Date().toISOString()} ${a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ")}\n`
   console.log("KELL_UPDATE", line.trim())
@@ -25,8 +34,13 @@ export function ulog(...a: unknown[]) {
     const f = logFile()
     fs.mkdirSync(path.dirname(f), { recursive: true })
     if (fs.existsSync(f) && fs.statSync(f).size > 512 * 1024) fs.renameSync(f, f + ".old")
-    fs.appendFileSync(f, line)
-  } catch { /* logging never stops the app */ }
+    const head = announced ? "" : `# updater log: ${f} (kell ${app.getVersion()}, ${process.platform})\n`
+    announced = true
+    fs.appendFileSync(f, head + line)
+  } catch (e) {
+    // A log that cannot be opened is still worth seeing once, in the main process's own output.
+    console.error("KELL_UPDATE log write failed:", String((e as Error)?.message || e), logFile())
+  }
 }
 
 // "1.2.3" > "1.2.2"; anything unparseable counts as old.
@@ -35,6 +49,13 @@ function newer(a: string, b: string) {
   const [x, y] = [p(a), p(b)]
   for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]
   return false
+}
+
+/** A failed check in words a person can act on: the TLS failures seen on this machine (2026-11-18) read as a raw code. */
+function whyCheckFailed(msg: string) {
+  if (/ERR_SSL_PROTOCOL_ERROR|ERR_CERT|SSL/i.test(msg))
+    return `Could not reach GitHub over a secure connection (${msg}).\n\nA proxy, a VPN or antivirus inspecting HTTPS can cause this. The update check retries at the next start; "${logFile()}" has every attempt.\n\nA stable connection fixes it; if one is already there, download the installer from the releases page.`
+  return `${msg}\n\nThe log is at ${logFile()}`
 }
 
 /** Remove installers in the updater cache that are not newer than this app, and partial downloads. */
@@ -76,12 +97,12 @@ export async function checkForUpdates(win: () => BrowserWindow | undefined, manu
   try {
     const r = await autoUpdater.checkForUpdates()
     const v = r?.updateInfo?.version
-    if (manual && (!v || !newer(v, app.getVersion()))) void dialog.showMessageBox({ type: "info", message: "kell is up to date", detail: `You have kell ${app.getVersion()}.` })
+    if (manual && (!v || !newer(v, app.getVersion()))) void dialog.showMessageBox({ type: "info", message: "kell is up to date", detail: `You have kell ${app.getVersion()}${v ? `, the newest release (${v})` : ""}.` })
     else if (manual && v) void dialog.showMessageBox({ type: "info", message: `Downloading kell ${v}`, detail: "You'll be asked to restart when it's ready." })
   } catch (e) {
     const msg = String((e as Error)?.message || e).slice(0, 400)
     ulog(`check failed: ${msg}`)
-    if (manual) void dialog.showMessageBox({ type: "warning", message: "Couldn't check for updates", detail: `${msg}\n\nThe log is at ${logFile()}` })
+    if (manual) void dialog.showMessageBox({ type: "warning", message: "Couldn't check for updates", detail: whyCheckFailed(msg) })
   }
 }
 
@@ -90,6 +111,13 @@ export function startUpdates(win: () => BrowserWindow | undefined) {
   started = true
   ulog(`kell ${app.getVersion()} starting update checks`)
   clearStale()
+  // Where the check goes, as the packaged app reads it (resources/app-update.yml). A feed pointing at an old repo is the
+  // other way an update "never arrives", and it is now one line in the log rather than a guess.
+  try {
+    const cfg = path.join(process.resourcesPath || "", "app-update.yml")
+    if (fs.existsSync(cfg)) ulog(`feed: ${fs.readFileSync(cfg, "utf8").replace(/\s+/g, " ").trim()}`)
+    else ulog("feed: no app-update.yml beside the app; updates cannot run")
+  } catch { /* the check below reports its own failure */ }
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.logger = { info: (m: unknown) => ulog("info", m), warn: (m: unknown) => ulog("warn", m), error: (m: unknown) => ulog("error", m), debug: () => {} }
