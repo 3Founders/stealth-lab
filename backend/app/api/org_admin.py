@@ -153,6 +153,17 @@ async def members(org_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_cont
     return {"organization_id": org_id, "members": json.loads(json.dumps(rows, default=str))}
 
 
+@router.get("/roles")
+async def roles(org_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> dict:
+    """The four roles, the capability each holds, and how many members hold each. Descriptive only; every route
+    enforces its own role check."""
+    _, actor_roles = _caller(ctx, org_id)
+    try:
+        return await gov.role_catalog(pool, actor_roles=actor_roles, org_id=org_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
 @router.patch("/members/{user_id}")
 async def set_member_role(org_id: str, user_id: str, body: MemberRoleBody, pool=Depends(get_pool),
                           ctx=Depends(get_auth_context)) -> dict:
@@ -427,6 +438,16 @@ class AgentBody(BaseModel):
     expires_days: Optional[int] = None
 
 
+class AgentUpdateBody(BaseModel):
+    """Only the fields sent are changed. `scopes: []` clears the scopes, `budget_usd_month: ""` clears the budget,
+    and `clear_expiry` removes the expiry."""
+    scopes: Optional[list[str]] = None
+    data_ceiling: Optional[str] = None
+    budget_usd_month: Optional[Any] = None
+    expires_days: Optional[int] = None
+    clear_expiry: bool = False
+
+
 @router.get("/agents")
 async def list_agents(org_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> list[dict]:
     """The relay agents owned by this organisation's members, with owner, status and recorded containment."""
@@ -445,6 +466,21 @@ async def create_agent(org_id: str, body: AgentBody, pool=Depends(get_pool), ctx
                                              actor_roles=roles, org_id=org_id, name=body.name, kind=body.kind,
                                              scopes=body.scopes, data_ceiling=body.data_ceiling,
                                              budget_usd_month=body.budget_usd_month, expires_days=body.expires_days)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.patch("/agents/{agent_id}")
+async def update_agent(org_id: str, agent_id: str, body: AgentUpdateBody, pool=Depends(get_pool),
+                       ctx=Depends(get_auth_context)) -> dict:
+    """Change the containment recorded for one agent without revoking it."""
+    caller, roles = _caller(ctx, org_id)
+    try:
+        return await org_agents.update_agent(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                             actor_roles=roles, org_id=org_id, agent_id=agent_id,
+                                             scopes=body.scopes, data_ceiling=body.data_ceiling,
+                                             budget_usd_month=body.budget_usd_month, expires_days=body.expires_days,
+                                             clear_expiry=body.clear_expiry)
     except gov.GovernanceError as exc:
         raise _http(exc) from exc
 

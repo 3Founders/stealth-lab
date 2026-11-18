@@ -13,9 +13,10 @@ An invite is a random secret shown once; only its SHA-256 is stored. The code al
 (`sl1_<org id as 32 hex>_<secret>`), so redeeming it can bind the right tenant before reading anything, and a wrong or
 used code gets the same answer as an unknown one. Redeeming twice as the same person consumes one use.
 
-Limits: no email delivery (the admin shares the command), no per-invite role (everyone joins as `member`), no removal or
-role-change route (list_members says the same), and `ready` means "made at least one settled gateway call", which a
-self-test satisfies but does not prove their editor works.
+Limits: email delivery is best effort (Resend, when configured; the admin always gets the one-time code), `ready` means
+"made at least one settled gateway call", which a self-test satisfies but does not prove their editor works. Removing a
+member expires their memberships and revokes the agents and grants they held here; their account and personal work are
+untouched.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ from typing import Any, Collection, Mapping, Optional
 
 from app.config import settings
 from app.services import org_governance as gov
-from app.services import org_keys
+from app.services import org_keys, org_mail
 from app.services.access import tenant_transaction
 from app.services.auth_context import AuthContext
 
@@ -91,13 +92,33 @@ async def create_invite(pool: Any, *, actor_subject: str, actor_user_id: Optiona
             "VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8) RETURNING id::text AS id, created_at",
             str(org_id), _hash(secret), (label or "").strip() or None, actor_subject, expires, max_uses, role,
             (email or "").strip() or None)
+        org_name = await conn.fetchval(
+            "SELECT name FROM organizations WHERE id = $1::uuid AND t_expired IS NULL", str(org_id)) or "your organization"
         await gov._audit(conn, actor_subject=actor_subject, actor_user_id=actor_user_id, action="org_invite.create",
                          object_type="org_invite", object_id=row["id"], org_id=org_id,
                          details={"label": label, "expires_at": expires.isoformat(), "max_uses": max_uses,
                                   "role": role, "email": (email or None)})
-    # the only time the code exists in the clear
+    # The code exists in the clear only in this response and (when an address was given) the message sent now.
+    address = (email or "").strip() or None
+    sent = False
+    if address:
+        origin = (settings.frontend_origin or "").split(",")[0].strip().rstrip("/")
+        link = f"{origin}/join?code={code}" if origin else ""
+        try:
+            sent = await org_mail.send_invite(to=address, org_name=org_name, code=code, role=role,
+                                              expires_at=expires.isoformat(), link=link)
+        except Exception:  # noqa: BLE001 -- a mail bug must not fail an invite that is already valid
+            sent = False
+        if sent:
+            try:
+                async with tenant_transaction(pool, gov._scope(org_id)) as conn:
+                    await conn.execute("UPDATE org_invites SET email_sent_at = now() WHERE id = $1::uuid",
+                                       row["id"])
+            except Exception:  # noqa: BLE001 -- the invite is already valid; a timestamp is not worth failing it
+                pass
     return {"id": row["id"], "code": code, "expires_at": expires.isoformat(), "max_uses": max_uses, "label": label,
-            "role": role, "email": (email or "").strip() or None}
+            "role": role, "email": address, "email_sent": sent,
+            "email_sent_at": datetime.now(timezone.utc).isoformat() if sent else None}
 
 
 async def list_invites(pool: Any, *, actor_roles: Collection[str], org_id: str) -> list[dict[str, Any]]:
@@ -105,10 +126,12 @@ async def list_invites(pool: Any, *, actor_roles: Collection[str], org_id: str) 
     async with tenant_transaction(pool, gov._scope(org_id)) as conn:
         rows = await conn.fetch(
             "SELECT id::text AS id, label, role, email, created_by, created_at, expires_at, max_uses, uses, revoked_at, "
+            "email_sent_at, "
             "(revoked_at IS NULL AND expires_at > now() AND uses < max_uses) AS active "
             "FROM org_invites WHERE organization_id = $1::uuid ORDER BY created_at DESC LIMIT 200", str(org_id))
     return [{**dict(r), "created_at": r["created_at"].isoformat(), "expires_at": r["expires_at"].isoformat(),
-             "revoked_at": r["revoked_at"].isoformat() if r["revoked_at"] else None} for r in rows]
+             "revoked_at": r["revoked_at"].isoformat() if r["revoked_at"] else None,
+             "email_sent_at": r["email_sent_at"].isoformat() if r["email_sent_at"] else None} for r in rows]
 
 
 async def revoke_invite(pool: Any, *, actor_subject: str, actor_user_id: Optional[str], actor_roles: Collection[str],
@@ -182,10 +205,22 @@ async def _is_owner(conn: Any, org_id: str, user_id: str) -> bool:
         str(org_id), str(user_id)))
 
 
+async def _is_admin(conn: Any, org_id: str, user_id: str) -> bool:
+    """Owner or admin. Used only to decide who may change or remove another administrator."""
+    return bool(await conn.fetchval(
+        "SELECT 1 FROM org_memberships m JOIN roles r ON r.id = m.role_id "
+        "WHERE m.organization_id = $1::uuid AND m.user_id = $2::uuid AND m.t_expired IS NULL "
+        "AND r.name IN ('owner', 'admin') LIMIT 1", str(org_id), str(user_id)))
+
+
 async def set_member_role(pool: Any, *, actor_subject: str, actor_user_id: Optional[str], actor_roles: Collection[str],
                           org_id: str, user_id: str, role: str) -> dict[str, Any]:
-    """Give one member a different role. Expires the old membership and writes the new one; the last owner cannot be
-    demoted, and only an owner can create another owner."""
+    """Give one member a different role. Expires the old membership and writes the new one.
+
+    An owner may change anyone. An admin may change members and viewers, and may step down from admin themselves;
+    an owner's or another admin's role is an owner's decision. The last owner cannot be demoted, and only an owner
+    can create another owner.
+    """
     gov._require(actor_roles, gov.ADMIN_ROLES, "changing a member's role")
     role = (role or "").strip().lower()
     if role not in ROLE_IDS:
@@ -195,6 +230,10 @@ async def set_member_role(pool: Any, *, actor_subject: str, actor_user_id: Optio
     async with tenant_transaction(pool, gov._scope(org_id)) as conn:
         sub = await _member_subject(conn, org_id, user_id)
         was_owner = await _is_owner(conn, org_id, user_id)
+        was_admin = await _is_admin(conn, org_id, user_id)
+        same_person = actor_user_id is not None and str(user_id) == str(actor_user_id)
+        if (was_owner or was_admin) and "owner" not in actor_roles and not same_person:
+            raise gov.NotAuthorized("only an owner can change an owner's or another admin's role")
         if was_owner and role != "owner" and await _owner_count(conn, org_id) <= 1:
             raise gov.Conflict("an organization needs at least one owner")
         await conn.execute(
@@ -206,37 +245,57 @@ async def set_member_role(pool: Any, *, actor_subject: str, actor_user_id: Optio
             str(org_id), str(user_id), ROLE_IDS[role], actor_user_id)
         await gov._audit(conn, actor_subject=actor_subject, actor_user_id=actor_user_id, action="org_member.role",
                          object_type="org_member", object_id=str(user_id), org_id=org_id,
-                         details={"role": role, "was_owner": was_owner})
+                         details={"role": role, "was_owner": was_owner, "was_admin": was_admin})
     return {"user_id": str(user_id), "subject": sub, "role": role}
 
 
 async def remove_member(pool: Any, *, actor_subject: str, actor_user_id: Optional[str], actor_roles: Collection[str],
                         org_id: str, user_id: str) -> dict[str, Any]:
     """Take one person out of the organization: their memberships expire, and the relay agents they owned are revoked.
-    The last owner cannot be removed. Their account and personal work are untouched."""
+
+    The last owner cannot be removed; only an owner can remove an owner or another admin. A person may remove
+    themselves (unless they are the last owner). The person-owned tables are closed by RLS, so their rows are revoked
+    and their grants deleted BEFORE the membership expires: after expiry the tenant policy can no longer see them.
+    Their account and personal work are untouched.
+    """
     gov._require(actor_roles, gov.ADMIN_ROLES, "removing a member")
     async with tenant_transaction(pool, gov._scope(org_id)) as conn:
         sub = await _member_subject(conn, org_id, user_id)
         was_owner = await _is_owner(conn, org_id, user_id)
+        was_admin = await _is_admin(conn, org_id, user_id)
+        same_person = actor_user_id is not None and str(user_id) == str(actor_user_id)
         if was_owner:
             if "owner" not in actor_roles:
                 raise gov.NotAuthorized("only an owner can remove an owner")
             if await _owner_count(conn, org_id) <= 1:
                 raise gov.Conflict("an organization needs at least one owner")
-        status = await conn.execute(
-            "UPDATE org_memberships SET t_expired = now() WHERE organization_id = $1::uuid AND user_id = $2::uuid "
-            "AND t_expired IS NULL", str(org_id), str(user_id))
+        elif was_admin and "owner" not in actor_roles and not same_person:
+            raise gov.NotAuthorized("only an owner can remove another admin")
         revoked = 0
         try:
             if await conn.fetchval("SELECT to_regclass('public.delegate_agents') IS NOT NULL"):
                 done = await conn.execute(
                     "UPDATE delegate_agents SET revoked_at = now() WHERE owner_sub = $1 AND revoked_at IS NULL", sub)
-                revoked = int(str(done).rsplit(" ", 1)[-1])
+                revoked = int(str(done).rsplit(" ", 1)[-1]) if done else 0
         except Exception:  # noqa: BLE001 -- removal must not fail because an optional table is missing
             revoked = 0
+        # A person who is no longer in the organization must not keep a grant to call someone's desktop or agent,
+        # nor let someone keep calling theirs. The tables are optional (older deployments); skip when absent.
+        for table, sql in (
+            ("desktop_grants", "DELETE FROM desktop_grants WHERE owner_id = $1 OR grantee_id = $1"),
+            ("agent_links", "DELETE FROM agent_links WHERE owner_sub = $1 OR peer_sub = $1"),
+        ):
+            try:
+                if await conn.fetchval(f"SELECT to_regclass('public.{table}') IS NOT NULL"):
+                    await conn.execute(sql, sub)
+            except Exception:  # noqa: BLE001 -- same reason as above
+                pass
+        status = await conn.execute(
+            "UPDATE org_memberships SET t_expired = now() WHERE organization_id = $1::uuid AND user_id = $2::uuid "
+            "AND t_expired IS NULL", str(org_id), str(user_id))
         await gov._audit(conn, actor_subject=actor_subject, actor_user_id=actor_user_id, action="org_member.remove",
                          object_type="org_member", object_id=str(user_id), org_id=org_id,
-                         details={"was_owner": was_owner, "agents_revoked": revoked})
+                         details={"was_owner": was_owner, "was_admin": was_admin, "agents_revoked": revoked})
     return {"user_id": str(user_id), "subject": sub, "removed": status.endswith("1"), "agents_revoked": revoked}
 
 
@@ -316,6 +375,10 @@ async def onboarding_status(pool: Any, *, actor_roles: Collection[str], org_id: 
         joined = await conn.fetchval(
             "SELECT count(DISTINCT user_id) FROM org_memberships WHERE organization_id = $1::uuid AND t_expired IS NULL",
             str(org_id))
+        pending = await conn.fetchval(
+            "SELECT count(*) FROM tool_approvals a JOIN users u ON u.external_subject = a.owner_id "
+            "JOIN org_memberships m ON m.user_id = u.id AND m.organization_id = $1::uuid AND m.t_expired IS NULL "
+            "WHERE a.status = 'pending' AND a.expires_at > now()", str(org_id))
     try:
         policy = await gov.load_policy(pool, org_id)
         policy_ok, kill = True, policy.kill_switch
@@ -323,6 +386,6 @@ async def onboarding_status(pool: Any, *, actor_roles: Collection[str], org_id: 
         policy_ok, kill = False, False
     return {"organization_id": str(org_id), "provider_keys": int(keys or 0), "policy_set": policy_ok,
             "kill_switch": kill, "active_invites": int(invites or 0), "members": int(joined or 0),
-            "members_ready": int(ready or 0),
+            "members_ready": int(ready or 0), "pending_approvals": int(pending or 0),
             "next_step": ("connect_key" if not keys else "set_policy" if not policy_ok else "running" if ready
                           else "waiting_for_developers" if (invites or joined > 1) else "invite_developers")}

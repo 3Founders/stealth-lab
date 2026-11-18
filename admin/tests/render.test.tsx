@@ -151,3 +151,15 @@ describe("layout: the date-range controls sit on one horizontal row", () => {
     });
   }
 });
+
+describe("Team page (sample data)", () => {
+  it("renders members, the role matrix, the invitation and the recent changes", async () => {
+    const t = await show(() => import("@/app/team/page"), /Platform team/);
+    expect(t).toContain("Members of Demo Organisation");
+    expect(t).toContain("Roles and permissions");
+    expect(t).toContain("Platform team");
+    expect(t).toContain("Recent membership changes");
+    expect(t).not.toContain("not built yet");
+    expect(crashes()).toEqual([]);
+  });
+});

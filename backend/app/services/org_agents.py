@@ -12,7 +12,7 @@ the person who owns it. Every write is audited through the organization's govern
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Collection, Optional
 
 from app.services import org_governance as gov
@@ -27,6 +27,17 @@ MAX_SCOPES = 50
 
 def _iso(v: Any) -> Optional[str]:
     return v.isoformat() if v is not None else None
+
+
+def _status(revoked_at: Any, last_seen: Any, expires_at: Any, now: datetime) -> str:
+    """One word a page can render without re-deriving the rule: revoked, expired, online, offline."""
+    if revoked_at is not None:
+        return "revoked"
+    if expires_at is not None and expires_at <= now:
+        return "expired"
+    if last_seen is not None and (now - last_seen).total_seconds() <= 60:
+        return "online"
+    return "offline"
 
 
 def _clean_scopes(value: Any) -> list[str]:
@@ -60,6 +71,7 @@ async def list_agents(pool: Any, *, actor_roles: Collection[str], org_id: str) -
             "id": r["id"], "name": r["name"], "kind": r["kind"], "owner_sub": r["owner_sub"],
             "owner_name": r["owner_name"], "owner_email": r["owner_email"],
             "created_at": _iso(r["created_at"]), "last_seen": _iso(last), "revoked_at": _iso(r["revoked_at"]),
+            "status": _status(r["revoked_at"], last, r["expires_at"], now),
             "online": bool(last and (now - last).total_seconds() <= 60),
             "scopes": list(r["scopes"] or []), "data_ceiling": r["data_ceiling"],
             "budget_usd_month": str(r["budget_usd_month"]) if r["budget_usd_month"] is not None else None,
@@ -107,9 +119,96 @@ async def create_agent(pool: Any, *, actor_subject: str, actor_user_id: Optional
                          object_type="agent", object_id=row["id"], org_id=org_id,
                          details={"name": name, "kind": kind, "scopes": clean_scopes, "data_ceiling": ceiling})
     return {"id": row["id"], "name": row["name"], "kind": row["kind"], "owner_sub": actor_subject,
+            "owner_name": None, "owner_email": None, "last_seen": None, "revoked_at": None, "online": False,
             "scopes": clean_scopes, "data_ceiling": ceiling,
             "budget_usd_month": str(budget) if budget is not None else None,
-            "created_at": _iso(row["created_at"])}
+            "created_at": _iso(row["created_at"]), "status": "offline",
+            "expires_at": _iso(datetime.now(timezone.utc) + timedelta(days=expires_days)) if expires_days else None}
+
+
+async def update_agent(pool: Any, *, actor_subject: str, actor_user_id: Optional[str], actor_roles: Collection[str],
+                       org_id: str, agent_id: str, scopes: Any = None, data_ceiling: Optional[str] = None,
+                       budget_usd_month: Any = None, expires_days: Optional[int] = None,
+                       clear_expiry: bool = False) -> dict[str, Any]:
+    """Change the containment recorded for one agent without revoking it.
+
+    Omitted fields are left alone; `scopes: []` clears the scopes, `budget_usd_month: ""` clears the budget, and
+    `clear_expiry` removes the expiry. The gate still does not read these fields; this is the review record.
+    """
+    gov._require(actor_roles, gov.ADMIN_ROLES, "editing an agent")
+    if expires_days is not None and (not isinstance(expires_days, int) or not 1 <= expires_days <= 365):
+        raise gov.Invalid("expires_days must be a whole number from 1 to 365")
+    clean_scopes = _clean_scopes(scopes) if scopes is not None else None
+    ceiling = None
+    if data_ceiling is not None:
+        ceiling = data_ceiling.strip().upper()
+        if ceiling not in DATA_CEILINGS:
+            raise gov.Invalid(f"data ceiling must be one of {', '.join(DATA_CEILINGS)}")
+    budget: Any = None
+    clear_budget = False
+    if budget_usd_month is not None:
+        if str(budget_usd_month).strip() == "":
+            clear_budget = True
+        else:
+            budget = gov._clean_money("budget_usd_month", budget_usd_month)
+    sets: list[str] = []
+    args: list[Any] = [str(org_id), str(agent_id)]
+    def add(fragment: str, value: Any) -> None:
+        args.append(value)
+        sets.append(fragment.replace("?", f"${len(args)}"))
+    if clean_scopes is not None:
+        add("scopes = ?::text[]", clean_scopes)
+    if ceiling is not None:
+        add("data_ceiling = ?", ceiling)
+    if clear_budget:
+        sets.append("budget_usd_month = NULL")
+    elif budget is not None:
+        add("budget_usd_month = ?", budget)
+    if clear_expiry:
+        sets.append("expires_at = NULL")
+    elif expires_days is not None:
+        add("expires_at = now() + make_interval(days => ?::int)", expires_days)
+    if not sets:
+        raise gov.Invalid("nothing to change")
+    async with tenant_transaction(pool, gov._scope(org_id)) as conn:
+        before = await conn.fetchrow(
+            """SELECT a.id::text AS id, a.owner_sub, a.name, a.scopes, a.data_ceiling, a.budget_usd_month, a.expires_at
+                 FROM delegate_agents a
+                 JOIN users u ON u.external_subject = a.owner_sub
+                 JOIN org_memberships m ON m.user_id = u.id AND m.organization_id = $1::uuid AND m.t_expired IS NULL
+                WHERE a.id = $2::uuid""", str(org_id), str(agent_id))
+        if before is None:
+            raise gov.NotFound("no such agent in this organization")
+        if before["owner_sub"] != actor_subject and "owner" not in actor_roles and "admin" not in actor_roles:
+            raise gov.NotAuthorized("only an owner or admin can edit another person's agent")
+        args.append(actor_subject)
+        await conn.execute(
+            f"UPDATE delegate_agents SET {', '.join(sets)}, updated_at = now(), updated_by = ${len(args)} "
+            "WHERE id = $2::uuid", *args)
+        row = await conn.fetchrow(
+            """SELECT a.id::text AS id, a.name, a.kind, a.created_at, a.last_seen, a.revoked_at, a.scopes,
+                      a.data_ceiling, a.budget_usd_month, a.expires_at, a.owner_sub,
+                      u.display_name AS owner_name, u.email AS owner_email
+                 FROM delegate_agents a JOIN users u ON u.external_subject = a.owner_sub
+                WHERE a.id = $1::uuid""", str(agent_id))
+        await gov._audit(conn, actor_subject=actor_subject, actor_user_id=actor_user_id, action="org_agent.update",
+                         object_type="agent", object_id=str(agent_id), org_id=org_id,
+                         details={"name": row["name"], "before": {
+                             "scopes": list(before["scopes"] or []), "data_ceiling": before["data_ceiling"],
+                             "budget_usd_month": str(before["budget_usd_month"]) if before["budget_usd_month"] is not None else None,
+                             "expires_at": _iso(before["expires_at"])},
+                             "after": {"scopes": list(row["scopes"] or []), "data_ceiling": row["data_ceiling"],
+                                       "budget_usd_month": str(row["budget_usd_month"]) if row["budget_usd_month"] is not None else None,
+                                       "expires_at": _iso(row["expires_at"])}})
+    now = datetime.now(timezone.utc)
+    return {"id": row["id"], "name": row["name"], "kind": row["kind"], "owner_sub": row["owner_sub"],
+            "owner_name": row["owner_name"], "owner_email": row["owner_email"],
+            "created_at": _iso(row["created_at"]), "last_seen": _iso(row["last_seen"]),
+            "revoked_at": _iso(row["revoked_at"]), "status": _status(row["revoked_at"], row["last_seen"], row["expires_at"], now),
+            "online": bool(row["last_seen"] and (now - row["last_seen"]).total_seconds() <= 60),
+            "scopes": list(row["scopes"] or []), "data_ceiling": row["data_ceiling"],
+            "budget_usd_month": str(row["budget_usd_month"]) if row["budget_usd_month"] is not None else None,
+            "expires_at": _iso(row["expires_at"])}
 
 
 async def revoke_agent(pool: Any, *, actor_subject: str, actor_user_id: Optional[str], actor_roles: Collection[str],
@@ -142,6 +241,8 @@ async def revoke_agent(pool: Any, *, actor_subject: str, actor_user_id: Optional
 async def list_approvals(pool: Any, *, actor_roles: Collection[str], org_id: str,
                          status: str = "pending") -> list[dict[str, Any]]:
     gov._require(actor_roles, gov.ADMIN_ROLES, "listing approvals")
+    if status and status != "all" and status not in approvals.STATUSES:
+        raise gov.Invalid(f"status must be one of {', '.join(approvals.STATUSES)} or all")
     where = "a.status = $2" if status and status != "all" else "TRUE"
     args: list[Any] = [str(org_id)] + ([status] if where != "TRUE" else [])
     async with tenant_transaction(pool, gov._scope(org_id)) as conn:

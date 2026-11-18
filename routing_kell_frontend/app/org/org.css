@@ -67,3 +67,14 @@
 .org-setup-show { justify-self: start; }
 .org-setup-error { padding: 12px 14px; }
 @media (max-width: 640px) { .org-setup-step { align-items: flex-start; flex-wrap: wrap; } .org-setup-step a { margin-left: 36px; } }
+
+/* Team administration: a role's state and the permission matrix. */
+.org-status { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: 12px; letter-spacing: .03em; background: var(--soft); color: var(--grey); white-space: nowrap; }
+.org-status[data-status="online"] { color: #1e7a45; background: #e7f5ec; }
+.org-status[data-status="offline"] { color: var(--grey); background: var(--soft); }
+.org-status[data-status="expired"] { color: #8a5a00; background: #fbf1dc; }
+.org-status[data-status="revoked"] { color: #b3261e; background: #fdecea; }
+.org-matrix td:first-child { min-width: 220px; }
+.org-matrix th.org-matrix-role, .org-matrix td.org-matrix-cell { text-align: center; white-space: nowrap; }
+.org-matrix td.org-matrix-cell { font-size: 16px; color: var(--ink); }
+.org-matrix td.org-matrix-cell .dim { font-size: 14px; }

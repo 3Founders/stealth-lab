@@ -345,6 +345,135 @@ def test_onboarding_status_walks_the_admin_through_the_steps():
         run(org_onboarding.onboarding_status(None, actor_roles={"member"}, org_id=ORG))
 
 
+# ------------------------------------------------------------------ team administration: roles and removal
+
+def _role_pool(*, owner=False, admin=False, owners=2, subject="sub-ada"):
+    return FakePool({
+        "SELECT u.external_subject FROM users u": subject,
+        "r.name = 'owner' LIMIT 1": owner,
+        "r.name IN ('owner', 'admin') LIMIT 1": admin,
+        "count(DISTINCT m.user_id)": owners,
+        "UPDATE org_memberships": "UPDATE 1",
+        "INSERT INTO org_memberships": "INSERT 0 1",
+        "INSERT INTO audit_events": {"id": 1},
+    })
+
+
+def test_an_admin_cannot_demote_an_owner_or_change_another_admin():
+    with pytest.raises(gov.NotAuthorized, match="only an owner"):
+        run(org_onboarding.set_member_role(_role_pool(owner=True, admin=True), actor_subject="u-admin",
+                                           actor_user_id="u-admin", actor_roles={"admin"}, org_id=ORG,
+                                           user_id="u-ada", role="member"))
+    with pytest.raises(gov.NotAuthorized, match="only an owner"):
+        run(org_onboarding.set_member_role(_role_pool(owner=False, admin=True), actor_subject="u-admin",
+                                           actor_user_id="u-admin", actor_roles={"admin"}, org_id=ORG,
+                                           user_id="u-ada", role="member"))
+
+
+def test_an_admin_may_step_down_themselves():
+    out = run(org_onboarding.set_member_role(_role_pool(owner=False, admin=True), actor_subject="u-ada",
+                                             actor_user_id="u-ada", actor_roles={"admin"}, org_id=ORG,
+                                             user_id="u-ada", role="member"))
+    assert out["role"] == "member"
+
+
+def test_the_last_owner_cannot_be_demoted():
+    with pytest.raises(gov.Conflict, match="at least one owner"):
+        run(org_onboarding.set_member_role(_role_pool(owner=True, admin=True, owners=1), actor_subject="u-owner",
+                                           actor_user_id="u-owner", actor_roles={"owner"}, org_id=ORG,
+                                           user_id="u-ada", role="admin"))
+
+
+def test_removing_an_owner_needs_an_owner_and_another_owner():
+    with pytest.raises(gov.NotAuthorized, match="only an owner"):
+        run(org_onboarding.remove_member(_role_pool(owner=True, admin=True), actor_subject="u-admin",
+                                         actor_user_id="u-admin", actor_roles={"admin"}, org_id=ORG,
+                                         user_id="u-ada"))
+    with pytest.raises(gov.Conflict, match="at least one owner"):
+        run(org_onboarding.remove_member(_role_pool(owner=True, admin=True, owners=1), actor_subject="u-owner",
+                                         actor_user_id="u-owner", actor_roles={"owner"}, org_id=ORG,
+                                         user_id="u-ada"))
+
+
+def test_removing_an_admin_needs_an_owner():
+    with pytest.raises(gov.NotAuthorized, match="only an owner"):
+        run(org_onboarding.remove_member(_role_pool(owner=False, admin=True), actor_subject="u-admin",
+                                         actor_user_id="u-admin", actor_roles={"admin"}, org_id=ORG,
+                                         user_id="u-ada"))
+
+
+def test_removal_revokes_agents_and_grants_before_the_membership_expires():
+    pool = _role_pool(owner=False, admin=False)
+    pool.conn.answers.update({
+        "SELECT to_regclass('public.delegate_agents') IS NOT NULL": True,
+        "UPDATE delegate_agents": "UPDATE 2",
+        "SELECT to_regclass('public.desktop_grants') IS NOT NULL": True,
+        "DELETE FROM desktop_grants": "DELETE 1",
+        "SELECT to_regclass('public.agent_links') IS NOT NULL": True,
+        "DELETE FROM agent_links": "DELETE 1",
+    })
+    out = run(org_onboarding.remove_member(pool, actor_subject="u-admin", actor_user_id="u-admin",
+                                           actor_roles={"admin"}, org_id=ORG, user_id="u-ada"))
+    assert out["removed"] is True and out["agents_revoked"] == 2
+    order = [s for s, _ in pool.conn.log]
+    revoke_at = next(i for i, s in enumerate(order) if "UPDATE delegate_agents" in s)
+    expire_at = next(i for i, s in enumerate(order) if "UPDATE org_memberships" in s)
+    assert revoke_at < expire_at
+    assert any("DELETE FROM desktop_grants" in s for s in order)
+    assert any("DELETE FROM agent_links" in s for s in order)
+
+
+def test_an_invite_can_name_an_email_and_the_send_is_best_effort(monkeypatch):
+    async def sent(**kw):
+        assert kw["to"] == "ada@acme.co" and kw["role"] == "admin"
+        return True
+
+    monkeypatch.setattr(org_onboarding.org_mail, "send_invite", sent)
+    pool = FakePool({"INSERT INTO org_invites": {"id": "i1", "created_at": datetime.now(timezone.utc)},
+                     "FROM organizations": "Acme", "INSERT INTO audit_events": {"id": 1},
+                     "UPDATE org_invites SET email_sent_at": "UPDATE 1"})
+    out = run(org_onboarding.create_invite(pool, actor_subject="u", actor_user_id=None, actor_roles={"owner"},
+                                           org_id=ORG, label=None, days=7, max_uses=5, role="admin",
+                                           email="ada@acme.co"))
+    assert out["email_sent"] is True and out["email_sent_at"] is not None
+    assert pool.statements("UPDATE org_invites SET email_sent_at")
+
+    async def failed(**kw):
+        return False
+
+    monkeypatch.setattr(org_onboarding.org_mail, "send_invite", failed)
+    out = run(org_onboarding.create_invite(FakePool({"INSERT INTO org_invites": {"id": "i2", "created_at": datetime.now(timezone.utc)},
+                                                     "FROM organizations": "Acme", "INSERT INTO audit_events": {"id": 1}}),
+                                           actor_subject="u", actor_user_id=None, actor_roles={"owner"},
+                                           org_id=ORG, label=None, days=7, max_uses=5, email="ada@acme.co"))
+    assert out["email_sent"] is False and out["email_sent_at"] is None
+
+
+def test_an_admin_cannot_invite_an_owner_and_a_bad_address_is_refused():
+    with pytest.raises(gov.NotAuthorized, match="only an owner"):
+        run(org_onboarding.create_invite(None, actor_subject="u", actor_user_id=None, actor_roles={"admin"},
+                                         org_id=ORG, label=None, days=7, max_uses=5, role="owner"))
+    with pytest.raises(gov.Invalid, match="email"):
+        run(org_onboarding.create_invite(None, actor_subject="u", actor_user_id=None, actor_roles={"owner"},
+                                         org_id=ORG, label=None, days=7, max_uses=5, email="not-an-address"))
+
+
+def test_the_role_catalog_lists_four_roles_and_their_capabilities():
+    pool = FakePool({"FROM roles r LEFT JOIN org_memberships m": [
+        {"name": "owner", "members": 1}, {"name": "admin", "members": 2},
+        {"name": "member", "members": 4}, {"name": "viewer", "members": 0},
+    ]})
+    out = run(gov.role_catalog(pool, actor_roles={"admin"}, org_id=ORG))
+    assert [r["id"] for r in out["roles"]] == ["owner", "admin", "member", "viewer"]
+    assert out["members"] == 7
+    admin = next(r for r in out["roles"] if r["id"] == "admin")
+    assert "manage_members" in admin["capabilities"] and "billing" not in admin["capabilities"]
+    viewer = next(r for r in out["roles"] if r["id"] == "viewer")
+    assert "use_models" not in viewer["capabilities"]
+    with pytest.raises(gov.NotAuthorized):
+        run(gov.role_catalog(pool, actor_roles={"member"}, org_id=ORG))
+
+
 # ------------------------------------------------------------------ the REST layer
 
 def _human(roles):
@@ -394,6 +523,39 @@ def test_joining_needs_a_signed_in_person_and_an_invite_that_works(api):
     r = _req(api, "POST", "/v1/join", json={"code": "garbage"})
     assert r.status_code == 404 and "not valid" in r.text
     assert _req(api, "POST", "/v1/join", json={"code": _code()}).status_code == 404     # the fake finds no invite
+
+
+def test_the_role_catalog_is_admin_only_and_lists_the_matrix(api):
+    api.state.ctx = _human({ORG: {"member"}})
+    assert _req(api, "GET", f"/v1/orgs/{ORG}/roles").status_code == 403
+    api.state.ctx = _human({ORG: {"admin"}})
+    api.app.state.pool = FakePool({"FROM roles r LEFT JOIN org_memberships m": [
+        {"name": "owner", "members": 1}, {"name": "admin", "members": 1},
+        {"name": "member", "members": 2}, {"name": "viewer", "members": 0}]})
+    r = _req(api, "GET", f"/v1/orgs/{ORG}/roles")
+    assert r.status_code == 200
+    body = r.json()
+    assert [role["id"] for role in body["roles"]] == ["owner", "admin", "member", "viewer"]
+    assert body["members"] == 4 and any(c["id"] == "manage_members" for c in body["capabilities"])
+
+
+def test_editing_an_agent_is_wired_and_admin_only(api, monkeypatch):
+    api.state.ctx = _human({ORG: {"member"}})
+    assert _req(api, "PATCH", f"/v1/orgs/{ORG}/agents/a1", json={"scopes": ["read"]}).status_code == 403
+    api.state.ctx = _human({ORG: {"admin"}})
+
+    async def fake(pool, **kw):
+        return {"id": kw["agent_id"], "scopes": kw["scopes"], "status": "offline"}
+
+    monkeypatch.setattr(org_admin.org_agents, "update_agent", fake)
+    r = _req(api, "PATCH", f"/v1/orgs/{ORG}/agents/a1", json={"scopes": ["read"]})
+    assert r.status_code == 200 and r.json()["scopes"] == ["read"]
+
+
+def test_an_unknown_approval_status_is_a_validation_error(api):
+    api.state.ctx = _human({ORG: {"admin"}})
+    r = _req(api, "GET", f"/v1/orgs/{ORG}/approvals?status=waiting")
+    assert r.status_code == 422 and "status must be one of" in r.text
 
 
 # ------------------------------------------------------------------ data-handling declarations (migration 158)

@@ -42,6 +42,10 @@ describe("client", () => {
     await a.calls("o1", "2026-10-01", "2026-10-29", { model: "m", status: "failed", user: "u", limit: 50 }); await a.denials("o1", "2026-10-01", "2026-10-29");
     await a.providerKeys("o1"); await a.putProviderKey("o1", "main", { provider: "p", base_url: "https://x", units: [], allowed_data_classes: ["PUBLIC_SOURCE"] });
     await a.onboarding("o1"); await a.clientConfig("o1");
+    await a.roles("o1"); await a.setMemberRole("o1", "u1", "member"); await a.removeMember("o1", "u1");
+    await a.agents("o1"); await a.createAgent("o1", { name: "reviewer" }); await a.updateAgent("o1", "a1", { scopes: ["read"] });
+    await a.revokeAgent("o1", "a1"); await a.approvals("o1", "pending");
+    await a.approveApproval("o1", "ap_1"); await a.denyApproval("o1", "ap_1");
     expect(r.seen.map((s) => `${s.init.method} ${s.url.replace("https://mcp.example.org", "")}`)).toEqual([
       "GET /v1/orgs/o1/policy", "PUT /v1/orgs/o1/policy", "POST /v1/orgs/o1/policy/recommended", "POST /v1/orgs/o1/kill-switch",
       "GET /v1/orgs/o1/members", "GET /v1/orgs/o1/invites", "POST /v1/orgs/o1/invites", "POST /v1/join", "GET /v1/orgs/o1/budget",
@@ -49,6 +53,9 @@ describe("client", () => {
       "GET /v1/orgs/o1/calls?since=2026-10-01&until=2026-10-29&model=m&status=failed&user=u&limit=50",
       "GET /v1/orgs/o1/denials?since=2026-10-01&until=2026-10-29", "GET /v1/orgs/o1/provider-keys", "PUT /v1/orgs/o1/provider-keys/main",
       "GET /v1/orgs/o1/onboarding", "GET /v1/orgs/o1/client-config",
+      "GET /v1/orgs/o1/roles", "PATCH /v1/orgs/o1/members/u1", "DELETE /v1/orgs/o1/members/u1",
+      "GET /v1/orgs/o1/agents", "POST /v1/orgs/o1/agents", "PATCH /v1/orgs/o1/agents/a1", "DELETE /v1/orgs/o1/agents/a1",
+      "GET /v1/orgs/o1/approvals?status=pending", "POST /v1/orgs/o1/approvals/ap_1/approve", "POST /v1/orgs/o1/approvals/ap_1/deny",
     ]);
     expect(JSON.parse(String(r.seen[1].init.body))).toEqual({ policy: { monthly_budget_usd: "5" }, expected_version: 3 });
     expect(JSON.parse(String(r.seen[3].init.body))).toEqual({ on: true, reason: "why" });

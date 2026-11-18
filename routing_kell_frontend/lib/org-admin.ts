@@ -27,13 +27,16 @@ export interface OrgPolicy {
 export type PolicyChanges = Partial<Pick<OrgPolicy, "allowed_providers" | "allowed_models" | "allowed_tools" | "allowed_data_classes" | "monthly_budget_usd" | "per_user_daily_budget_usd">>;
 
 export interface Member { user_id: string; subject: string; display_name: string | null; email: string | null; is_active: boolean; roles: Role[]; member_since: string }
-export interface Invite { id: string; label: string | null; role: Role; email: string | null; created_by: string | null; created_at: string; expires_at: string; max_uses: number; uses: number; revoked_at: string | null; active: boolean }
-export interface CreatedInvite { id: string; code: string; expires_at: string; max_uses: number; label: string | null; role: Role; email: string | null }
+export interface Invite { id: string; label: string | null; role: Role; email: string | null; created_by: string | null; created_at: string; expires_at: string; max_uses: number; uses: number; revoked_at: string | null; email_sent_at: string | null; active: boolean }
+export interface CreatedInvite { id: string; code: string; expires_at: string; max_uses: number; label: string | null; role: Role; email: string | null; email_sent: boolean; email_sent_at: string | null }
 export interface OrgAgent {
   id: string; name: string; kind: string; owner_sub: string; owner_name: string | null; owner_email: string | null;
-  created_at: string; last_seen: string | null; revoked_at: string | null; online: boolean;
-  scopes: string[]; data_ceiling: string; budget_usd_month: string | null; expires_at: string | null;
+  created_at: string; last_seen: string | null; revoked_at: string | null; status: "online" | "offline" | "revoked" | "expired";
+  online: boolean; scopes: string[]; data_ceiling: string; budget_usd_month: string | null; expires_at: string | null;
 }
+export interface Capability { id: string; label: string; roles: Role[] }
+export interface RoleDefinition { id: Role; label: string; summary: string; capabilities: string[]; members: number }
+export interface RoleCatalog { organization_id: string; roles: RoleDefinition[]; capabilities: Capability[]; members: number }
 export interface OrgApproval {
   id: string; owner_id: string; task_id: string | null; goal_id: string | null; server: string; tool: string;
   args_hash: string; risk: string; data_class: string; cert_id: string | null;
@@ -76,6 +79,7 @@ export interface ProviderKeyInput {
 
 export interface Onboarding {
   organization_id: string; provider_keys: number; policy_set: boolean; kill_switch: boolean; active_invites: number; members: number; members_ready: number;
+  pending_approvals: number;
   next_step: "connect_key" | "set_policy" | "running" | "waiting_for_developers" | "invite_developers";
 }
 export interface ClientConfig { organization_id: string; name: string; gateway: string; models: string[]; profiles: unknown }
@@ -138,6 +142,7 @@ export function orgApi(deps: OrgDeps) {
     killSwitch: (org: string, on: boolean, reason: string) => call<OrgPolicy>("POST", `${o(org)}/kill-switch`, { on, reason }),
 
     members: async (org: string) => (await call<{ members: Member[] }>("GET", `${o(org)}/members`)).members,
+    roles: (org: string) => call<RoleCatalog>("GET", `${o(org)}/roles`),
     setMemberRole: (org: string, userId: string, role: Role) =>
       call<{ user_id: string; subject: string; role: Role }>("PATCH", `${o(org)}/members/${enc(userId)}`, { role }),
     removeMember: (org: string, userId: string) => call<void>("DELETE", `${o(org)}/members/${enc(userId)}`),
@@ -158,6 +163,8 @@ export function orgApi(deps: OrgDeps) {
     agents: (org: string) => call<OrgAgent[]>("GET", `${o(org)}/agents`),
     createAgent: (org: string, v: { name: string; kind?: string; scopes?: string[]; data_ceiling?: string; budget_usd_month?: string; expires_days?: number }) =>
       call<OrgAgent>("POST", `${o(org)}/agents`, v),
+    updateAgent: (org: string, id: string, v: { scopes?: string[]; data_ceiling?: string; budget_usd_month?: string; expires_days?: number; clear_expiry?: boolean }) =>
+      call<OrgAgent>("PATCH", `${o(org)}/agents/${enc(id)}`, v),
     revokeAgent: (org: string, id: string) => call<void>("DELETE", `${o(org)}/agents/${enc(id)}`),
     approvals: async (org: string, status: "pending" | "all" | "approved" | "denied" | "expired" | "used" = "pending") =>
       (await call<{ approvals: OrgApproval[] }>("GET", `${o(org)}/approvals${qs({ status })}`)).approvals,

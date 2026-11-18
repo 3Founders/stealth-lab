@@ -4,8 +4,10 @@
  *
  * The provider key is write-only here: the backend never returns it, only a hint (the last four characters).
  */
-import { API_URL, apiDelete, apiGet, apiPost, apiPut, type ApiState } from "@/lib/api";
+import { API_URL, apiDelete, apiGet, apiPatch, apiPost, apiPut, type ApiState } from "@/lib/api";
 import type { OrgPolicy } from "@/lib/org-api";
+
+export type InviteRole = "owner" | "admin" | "member" | "viewer";
 
 export interface ModelUnit {
   model: string;
@@ -29,12 +31,15 @@ export interface ProviderKey {
 export interface Invite {
   id: string;
   label: string | null;
+  role: InviteRole;
+  email: string | null;
   created_by: string;
   created_at: string;
   expires_at: string;
   max_uses: number;
   uses: number;
   revoked_at: string | null;
+  email_sent_at: string | null;
   active: boolean;
 }
 
@@ -44,7 +49,15 @@ export interface CreatedInvite {
   expires_at: string;
   max_uses: number;
   label: string | null;
+  role: InviteRole;
+  email: string | null;
+  email_sent: boolean;
+  email_sent_at: string | null;
 }
+
+export interface Capability { id: string; label: string; roles: InviteRole[] }
+export interface RoleDefinition { id: InviteRole; label: string; summary: string; capabilities: string[]; members: number }
+export interface RoleCatalog { organization_id: string; roles: RoleDefinition[]; capabilities: Capability[]; members: number }
 
 export type NextStep = "connect_key" | "set_policy" | "invite_developers" | "waiting_for_developers" | "running";
 
@@ -56,6 +69,7 @@ export interface Onboarding {
   active_invites: number;
   members: number;
   members_ready: number;
+  pending_approvals: number;
   next_step: NextStep;
 }
 
@@ -64,6 +78,13 @@ const o = (orgId: string) => `/v1/orgs/${encodeURIComponent(orgId)}`;
 export const getOnboarding = (orgId: string, signal?: AbortSignal) => apiGet<Onboarding>(`${o(orgId)}/onboarding`, signal);
 export const getProviderKeys = (orgId: string, signal?: AbortSignal) => apiGet<ProviderKey[]>(`${o(orgId)}/provider-keys`, signal);
 export const getInvites = (orgId: string, signal?: AbortSignal) => apiGet<Invite[]>(`${o(orgId)}/invites`, signal);
+export const getRoles = (orgId: string, signal?: AbortSignal) => apiGet<RoleCatalog>(`${o(orgId)}/roles`, signal);
+
+export const setMemberRole = (orgId: string, userId: string, role: InviteRole) =>
+  apiPatch<{ user_id: string; subject: string; role: InviteRole }>(`${o(orgId)}/members/${encodeURIComponent(userId)}`, { role });
+
+export const removeMember = (orgId: string, userId: string) =>
+  apiDelete<void>(`${o(orgId)}/members/${encodeURIComponent(userId)}`);
 
 export const putProviderKey = (orgId: string, connectionId: string, body: { provider: string; base_url: string; units: ModelUnit[]; api_key?: string }) =>
   apiPut<ProviderKey>(`${o(orgId)}/provider-keys/${encodeURIComponent(connectionId)}`, body);
@@ -73,7 +94,7 @@ export const deleteProviderKey = (orgId: string, connectionId: string) => apiDel
 export const applyRecommendedPolicy = (orgId: string, monthly: string, perUserDaily: string) =>
   apiPost<OrgPolicy>(`${o(orgId)}/policy/recommended`, { monthly_budget_usd: monthly.trim(), per_user_daily_budget_usd: perUserDaily.trim() });
 
-export const createInvite = (orgId: string, body: { label?: string; days: number; max_uses: number }) => apiPost<CreatedInvite>(`${o(orgId)}/invites`, body);
+export const createInvite = (orgId: string, body: { label?: string; days: number; max_uses: number; role?: InviteRole; email?: string }) => apiPost<CreatedInvite>(`${o(orgId)}/invites`, body);
 
 export const revokeInvite = (orgId: string, inviteId: string) => apiDelete<void>(`${o(orgId)}/invites/${encodeURIComponent(inviteId)}`);
 

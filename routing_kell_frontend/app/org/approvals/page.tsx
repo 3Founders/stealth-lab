@@ -9,13 +9,21 @@ const hash = (s: string) => String(s || "").replace(/^sha256:/, "").slice(0, 12)
 const STATUS: Record<string, string> = {
   pending: "Waiting", approved: "Approved", denied: "Denied", expired: "Expired", used: "Used",
 };
+type Tab = "pending" | "approved" | "denied" | "expired" | "all";
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "pending", label: "Waiting" },
+  { id: "approved", label: "Approved" },
+  { id: "denied", label: "Denied" },
+  { id: "expired", label: "Expired" },
+  { id: "all", label: "All" },
+];
 
 /** Tool calls a member's agent is waiting on: the exact call shape, who asked, and the one-use decision. */
 export default function ApprovalsPage() {
   const { api, org, admin } = useOrg();
   const id = org.organization_id;
-  const [tab, setTab] = useState<"pending" | "all">("pending");
-  const approvals = useLoad(() => api.approvals(id, tab), `${tab}${id}`);
+  const [tab, setTab] = useState<Tab>("pending");
+  const approvals = useLoad(() => admin ? api.approvals(id, tab) : Promise.resolve([]), `${tab}${id}`);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
@@ -36,24 +44,25 @@ export default function ApprovalsPage() {
       {error && <p className="org-banner small" role="alert">{error}</p>}
       <div className="org-filters">
         <div role="tablist" aria-label="Approvals" className="org-tabs">
-          <button type="button" role="tab" aria-selected={tab === "pending"} onClick={() => setTab("pending")}>Waiting</button>
-          <button type="button" role="tab" aria-selected={tab === "all"} onClick={() => setTab("all")}>All</button>
+          {TABS.map((t) => (
+            <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</button>
+          ))}
         </div>
       </div>
 
       <div className="profile-card">
         <h2 className="h3">Tool approvals</h2>
-        <p className="small dim">An approval is bound to one exact call — owner, task, server, tool, argument hash and certificate — and is single-use. A changed argument is a different approval.</p>
+        <p className="small dim">An approval is bound to one exact call — owner, task, server, tool, argument hash and certificate — and is single-use. A changed argument is a different approval. <b>Allow once</b> extends the window and lets the next identical call run; it does not approve anything else.</p>
         <LoadState loaded={approvals.loaded} reload={approvals.reload} what="approvals" />
         {approvals.loaded.state === "ok" && (approvals.loaded.data.length === 0
-          ? <p className="small dim">{tab === "pending" ? "Nothing is waiting on you." : "No approvals yet."}</p>
+          ? <p className="small dim">{tab === "pending" ? "Nothing is waiting on you." : `No ${tab === "all" ? "" : `${STATUS[tab]?.toLowerCase() ?? tab} `}approvals.`}</p>
           : (
             <div className="org-table-wrap">
               <table className="org-table">
                 <thead><tr><th>When</th><th>Person</th><th>Tool</th><th>Risk</th><th>Data</th><th>Arguments</th><th>Expires</th><th>Status</th><th /></tr></thead>
                 <tbody>
                   {approvals.loaded.data.map((a) => (
-                    <tr key={a.id} data-status={a.status === "denied" ? "failed" : undefined}>
+                    <tr key={a.id} data-status={a.status === "denied" || a.status === "expired" ? "failed" : undefined}>
                       <td>{when(a.requested_at)}</td>
                       <td>{a.owner_name || a.owner_email || a.owner_id}</td>
                       <td><b>{a.tool}</b><span className="dim"> · {a.server}</span></td>

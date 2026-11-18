@@ -205,6 +205,37 @@ const members = () => ({
   })),
 });
 
+const roleCatalog = () => ({
+  organization_id: DEMO_ORG_ID,
+  roles: [
+    { id: "owner", label: "Owner", summary: "Everything, including billing and other owners.", capabilities: ["view_org", "use_models", "manage_members", "manage_admins", "manage_agents", "decide_approvals", "billing"], members: 1 },
+    { id: "admin", label: "Admin", summary: "Runs the organization day to day.", capabilities: ["view_org", "use_models", "manage_members", "manage_agents", "decide_approvals"], members: 1 },
+    { id: "member", label: "Member", summary: "Uses the organization's models and rooms.", capabilities: ["view_org", "use_models"], members: PEOPLE - 2 },
+    { id: "viewer", label: "Viewer", summary: "Read-only access to shared work.", capabilities: ["view_org"], members: 0 },
+  ],
+  capabilities: [
+    { id: "view_org", label: "See the organization", roles: ["owner", "admin", "member", "viewer"] },
+    { id: "use_models", label: "Make model calls", roles: ["owner", "admin", "member"] },
+    { id: "manage_members", label: "Invite and remove people", roles: ["owner", "admin"] },
+    { id: "manage_admins", label: "Change another administrator", roles: ["owner"] },
+    { id: "manage_agents", label: "Manage relay agents", roles: ["owner", "admin"] },
+    { id: "decide_approvals", label: "Decide tool approvals", roles: ["owner", "admin"] },
+    { id: "billing", label: "Billing", roles: ["owner"] },
+  ],
+  members: PEOPLE,
+});
+
+const invites = () => ([
+  { id: "demo-invite-1", label: "Platform team", role: "member", email: "new.person@example.invalid", created_by: "demo",
+    created_at: "2026-01-10T09:00:00Z", expires_at: "2026-01-17T09:00:00Z", max_uses: 5, uses: 1,
+    revoked_at: null, email_sent_at: null, active: true },
+]);
+
+const onboarding = () => ({
+  organization_id: DEMO_ORG_ID, provider_keys: 1, policy_set: true, kill_switch: false, active_invites: 1,
+  members: PEOPLE, members_ready: Math.max(0, PEOPLE - 2), pending_approvals: 0, next_step: "running",
+});
+
 function budgetMonthly(b: Base) {
   const month = b.today.slice(0, 7);
   const used = b.groups.filter((g) => g.day.startsWith(month)).reduce((s, g) => s + cost(g), 0);
@@ -299,6 +330,9 @@ export function demoResponse(path: string): ApiState<never> {
   if (route === "performance") return ok({ organization_id: DEMO_ORG_ID, rows: performanceDaily(b, since, until) });
   if (route === "performance/summary") return ok(performanceSummary(b, since, until, q.get("group_by") ?? "total"));
   if (route === "members") return ok(members());
+  if (route === "roles") return ok(roleCatalog());
+  if (route === "invites") return ok(invites());
+  if (route === "onboarding") return ok(onboarding());
   if (route === "policy") return ok(policy(b));
   if (route === "budget") return ok(budget(b));
   if (route === "calls") return ok(calls(b, q));

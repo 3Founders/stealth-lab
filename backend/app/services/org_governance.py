@@ -31,6 +31,46 @@ ADMIN_ROLES = frozenset({"owner", "admin"})
 OWNER_ROLES = frozenset({"owner"})
 MAX_EXPORT_ROWS = 10_000
 
+# The team-administrator model, in one place. The API returns this catalog so a page can explain a role without
+# guessing, and the capability ids match the checks the services actually make.
+ROLE_ORDER = ("owner", "admin", "member", "viewer")
+CAPABILITIES: tuple[Mapping[str, Any], ...] = (
+    {"id": "view_org", "label": "See the organization and its connection details",
+     "roles": ("owner", "admin", "member", "viewer")},
+    {"id": "use_models", "label": "Make model calls through the organization's gateway",
+     "roles": ("owner", "admin", "member")},
+    {"id": "view_usage", "label": "See spend, calls and refusals",
+     "roles": ("owner", "admin")},
+    {"id": "manage_policy", "label": "Set the policy and the kill switch",
+     "roles": ("owner", "admin")},
+    {"id": "manage_keys", "label": "Connect and remove provider keys",
+     "roles": ("owner", "admin")},
+    {"id": "manage_members", "label": "Invite people, change a member's role and remove a member",
+     "roles": ("owner", "admin")},
+    {"id": "manage_admins", "label": "Change an owner's or another admin's role",
+     "roles": ("owner",)},
+    {"id": "manage_agents", "label": "See, create, edit and revoke the team's relay agents",
+     "roles": ("owner", "admin")},
+    {"id": "decide_approvals", "label": "Allow or deny a member's pending tool call",
+     "roles": ("owner", "admin")},
+    {"id": "billing", "label": "Billing, plans and prepaid credits",
+     "roles": ("owner",)},
+    {"id": "legal_hold", "label": "Place and release a legal hold",
+     "roles": ("owner",)},
+    {"id": "erase_data", "label": "Request and execute an erasure",
+     "roles": ("owner",)},
+)
+ROLE_CATALOG: tuple[Mapping[str, Any], ...] = (
+    {"id": "owner", "label": "Owner",
+     "summary": "Everything, including billing, legal holds and who else is an owner."},
+    {"id": "admin", "label": "Admin",
+     "summary": "Runs the organization day to day: policy, keys, people, agents and approvals. Not billing or ownership."},
+    {"id": "member", "label": "Member",
+     "summary": "Uses the organization's models, agents and rooms. Sees only their own connection details."},
+    {"id": "viewer", "label": "Viewer",
+     "summary": "Read-only access to shared work. Cannot make model calls through the gateway."},
+)
+
 POLICY_LIST_FIELDS = ("allowed_providers", "allowed_models", "allowed_tools", "allowed_data_classes")
 POLICY_MONEY_FIELDS = ("monthly_budget_usd", "per_user_daily_budget_usd")
 POLICY_FIELDS = POLICY_LIST_FIELDS + POLICY_MONEY_FIELDS
@@ -542,12 +582,42 @@ def _next_cursor(rows: list[dict[str, Any]], limit: int) -> Optional[str]:
     return f"{rows[-1]['created_at'].isoformat()}|{rows[-1]['id']}" if len(rows) == limit else None
 
 
+def capabilities_for(role: str) -> list[str]:
+    """The capability ids one role holds. Pure, so a page and a test read the same list."""
+    return [str(c["id"]) for c in CAPABILITIES if role in c["roles"]]
+
+
+async def role_catalog(pool: Any, *, actor_roles: Collection[str], org_id: str) -> dict[str, Any]:
+    """The four roles, what each can do, and how many people hold each. The source the Members page renders.
+
+    This is descriptive, not the enforcement point: every service still checks the caller's roles itself.
+    """
+    _require(actor_roles, ADMIN_ROLES, "viewing the role catalog")
+    async with tenant_transaction(pool, _scope(org_id)) as conn:
+        rows = await conn.fetch(
+            "SELECT r.name, count(DISTINCT m.user_id) AS members "
+            "FROM roles r LEFT JOIN org_memberships m ON m.role_id = r.id "
+            "AND m.organization_id = $1::uuid AND m.t_expired IS NULL "
+            "GROUP BY r.name", str(org_id))
+    counts = {str(r["name"]): int(r["members"] or 0) for r in rows}
+    return {
+        "organization_id": str(org_id),
+        "roles": [{**dict(role), "capabilities": capabilities_for(str(role["id"])),
+                   "members": counts.get(str(role["id"]), 0)} for role in ROLE_CATALOG],
+        "capabilities": [{**dict(c), "roles": list(c["roles"])} for c in CAPABILITIES],
+        "members": sum(counts.values()),
+    }
+
+
 async def list_members(pool: Any, *, actor_roles: Collection[str], org_id: str) -> list[dict[str, Any]]:
     """The organisation's current members with their roles. `subject` is the identity provider's user id: it is the value
     that appears as `user_id` in the usage, call and denial data, so a dashboard can show a name for it. Admin/owner only.
-    Inviting, changing a role and removing a member are not built (they need an invitation and notification design)."""
+
+    Inviting, changing a role and removing a member live in services/org_onboarding.py. Reads run inside the tenant
+    transaction like every other organization query, so the same connection posture works after the application role
+    is narrowed."""
     _require(actor_roles, ADMIN_ROLES, "listing members")
-    async with pool.acquire() as conn:
+    async with tenant_transaction(pool, _scope(org_id)) as conn:
         rows = await conn.fetch(
             "SELECT u.id::text AS user_id, u.external_subject AS subject, u.display_name, u.email, u.is_active, "
             "array_agg(r.name ORDER BY CASE r.name WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 WHEN 'member' THEN 3 "

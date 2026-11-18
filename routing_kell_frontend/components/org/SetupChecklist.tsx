@@ -1,10 +1,8 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useOrg } from "@/components/org/OrgShell";
 import { useLoad } from "@/components/org/useLoad";
-import { relay } from "@/lib/chat/relay-client";
-import { getAccessToken } from "@/lib/session";
 
 const DISMISSED = "kell.org.setup.dismissed";
 const REVIEWED = "kell.org.setup.reviewed";
@@ -32,8 +30,7 @@ export default function SetupChecklist() {
   const { api, org, admin } = useOrg();
   const id = org.organization_id;
   const onboarding = useLoad(() => api.onboarding(id), `onb${id}`);
-  const rel = useMemo(() => relay({ token: getAccessToken }), []);
-  const agents = useLoad(() => rel.agents(), `agents${id}`);
+  const agents = useLoad(() => api.agents(id), `agents${id}`);
   const [dismissed, setDismissed] = useState(false);
   const [reviewed, setReviewed] = useState(false);
 
@@ -58,6 +55,7 @@ export default function SetupChecklist() {
     { id: "invite", title: "Invite your team", why: "Everyone joins as a member; you can change a role or remove someone later.", href: "/org/members", cta: "Invite people", done: o.active_invites > 0 || o.members > 1 },
     { id: "agent", title: "Connect an agent", why: "Give an agent an owner, a scope and a budget before it does any work.", href: "/org/agents", cta: "Add an agent", done: agentCount > 0 },
     { id: "task", title: "Run a first task", why: "A settled call through the gateway is what makes a person “ready”.", href: "/chat", cta: "Open the chat", done: o.members_ready > 0 },
+    { id: "approvals", title: "Clear the approvals queue", why: "A tool call that needs a person waits until someone decides it.", href: "/org/approvals", cta: "Review approvals", done: (o.pending_approvals ?? 0) === 0 },
     { id: "review", title: "Review the activity", why: "See what was called, what it cost, and what the policy refused.", href: "/org/activity", cta: "See activity", done: reviewed, onOpen: () => { setReviewed(true); write(REVIEWED, true); } },
   ];
   const done = steps.filter((s) => s.done).length;

@@ -49,7 +49,7 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<Api
  */
 async function apiWrite<T>(
   path: string,
-  method: "POST" | "PUT" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   body: BodyInit | undefined,
   extraHeaders: Record<string, string>,
   signal?: AbortSignal,
@@ -90,6 +90,9 @@ export const apiPost = <T>(path: string, body: unknown, signal?: AbortSignal) =>
 
 export const apiPut = <T>(path: string, body: unknown, signal?: AbortSignal) =>
   apiWrite<T>(path, "PUT", JSON.stringify(body), { "Content-Type": "application/json" }, signal);
+
+export const apiPatch = <T>(path: string, body: unknown, signal?: AbortSignal) =>
+  apiWrite<T>(path, "PATCH", JSON.stringify(body), { "Content-Type": "application/json" }, signal);
 
 export const apiDelete = <T>(path: string, signal?: AbortSignal) =>
   apiWrite<T>(path, "DELETE", undefined, {}, signal);
