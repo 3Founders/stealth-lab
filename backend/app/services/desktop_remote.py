@@ -147,6 +147,11 @@ async def level_for(pool: Any, asker: str, owner: str) -> Optional[str]:
     return await pool.fetchval("SELECT level FROM desktop_grants WHERE owner_id = $1 AND grantee_id = $2", owner, asker)
 
 
+async def has_desktop(pool: Any, owner: str) -> bool:
+    """Whether `owner` has ever connected a kell desktop (for "they have not given you access" rather than silence)."""
+    return bool(await pool.fetchval("SELECT 1 FROM desktop_devices WHERE owner_id = $1 LIMIT 1", owner))
+
+
 async def reachable(pool: Any, sub: str, room_id: Optional[str] = None) -> list[dict[str, Any]]:
     """The desktop sessions `sub` may call: their own, and those of people who granted them access. In a room, a
     teammate's desktop only when that teammate is in the room too."""

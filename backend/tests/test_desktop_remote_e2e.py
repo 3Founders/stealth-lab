@@ -254,3 +254,21 @@ def test_history_is_for_the_owner_only_and_only_handed_to_a_desktop_that_can_ans
     assert done["status"] == "done"
     assert run(pool, rm.list_events(pool, ANUJ, r["id"]))["events"] == []    # nothing posted anywhere
     assert run(pool, dr.recent_asks(pool, ANUJ)) == []                       # and not listed as an ask
+
+
+def test_a_teammates_kell_says_when_their_desktop_is_not_shared(pool):
+    # @anuj/kell asked by Chaitanya, who has no grant: kell is told to say so (2026-11-18), not to answer as if there were no desktop
+    from app.mcp_server.room_agent_routes import _hand_to_desktop
+
+    r = shared_room(pool)
+
+    async def cheap(prompt):
+        return '{"session": 1, "confidence": 0.9}'
+
+    hand = lambda: run(pool, _hand_to_desktop(None, pool, CHAIT, r["id"], "did the webhook fix land on your laptop?", [], "@anuj/kell",
+                                              their_sub=ANUJ, call=cheap))
+    assert hand() is None                                     # Anuj has no desktop at all: nothing to say
+    run(pool, dr.heartbeat(pool, ANUJ, DEV, "laptop", SESSIONS))
+    note = hand()
+    assert isinstance(note, str) and "has not given" in note and "anuj" in note
+    assert run(pool, dr.has_desktop(pool, ANUJ)) and not run(pool, dr.has_desktop(pool, CHAIT))

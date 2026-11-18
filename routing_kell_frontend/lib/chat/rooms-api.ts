@@ -96,9 +96,10 @@ export function roomsApi(deps: RoomsDeps) {
     vote: (id: string, event: string, vote: -1 | 0 | 1) => call<{ recorded: boolean; vote?: number }>("POST", `/${e(id)}/agent/vote`, { event, vote }),
     agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent?: string[]; sign_in?: string[] }>("POST", `/${e(id)}/agent`, { text }),
     /** Which Ways fit this message (the Goal catalog, the same answer as the desktop picker). An empty list means the
-     *  message goes to the agent as before; a Way means the chat shows the cards and the agent waits for a pick. */
+     *  message goes to the agent as before; a Way means the chat shows the cards and the agent waits for a pick.
+     *  `desktop`: the message is for one of the person's desktop sessions, so it goes straight to @kell, which hands it over. */
     route: (id: string, text: string) =>
-      call<{ goal: { id: string; name: string } | null; ways: WayChoice[]; goals?: GoalChoice[] }>("POST", `/${e(id)}/route`, { text }),
+      call<{ goal: { id: string; name: string } | null; ways: WayChoice[]; goals?: GoalChoice[]; desktop?: boolean }>("POST", `/${e(id)}/route`, { text }),
     /** Run the Way the person picked, headless, and post its result into the room. `onEvent` hears each step start and
      *  end (`step`), the run ending (`run`), the result being posted (`posted`) and a failure (`error`). */
     runWay: async (

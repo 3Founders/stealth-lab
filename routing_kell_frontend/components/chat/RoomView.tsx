@@ -374,15 +374,16 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (rid) {
         try {
           const routed = await roomsAgent.route(rid, text);
-          if (routed.ways.length) {
+          if (routed.desktop) {
+            // For a desktop session: @kell hands it over (no Way cards, no "nothing matched" card).
+          } else if (routed.ways.length) {
             const line: WayLine = { kind: "ways", id: crypto.randomUUID(), text, t: Date.now(), goal: routed.goal,
               ways: routed.ways, goals: routed.goals ?? [] };
             push(r, line);
             // Auto: the best fit is accepted without a click; the card stays in the chat to show the run's progress.
             if (procModeRef.current === "auto") void pickWayRef.current?.(r, line, routed.ways[0]);
             return;
-          }
-          if (procModeRef.current === "ask") {
+          } else if (procModeRef.current === "ask") {
             // Ask: the search's result comes first even when nothing matched, so the model is never the one to
             // discover a failed search. The card says so and offers "Let kell work on it".
             push(r, { kind: "ways", id: crypto.randomUUID(), text, t: Date.now(), goal: routed.goal,

@@ -198,6 +198,14 @@ async def _hand_to_desktop(request: Request, pool: Any, subject: str, room_id: s
         recent = [f"{(e.get('sender') or {}).get('handle') or 'person'}: {e.get('body') or ''}" for e in recent_rows if e.get("kind") == "msg"]
         match = await dr.route(pool, subject, str(room_id), text, recent, call, only_owner=their_sub)
         if match is None:
+            # A teammate's kell (@chaitanya/kell) whose desktop this person may not call: kell says so when the message is
+            # for that desktop, instead of answering as if there were none (owner, 2026-11-18).
+            if their_sub and their_sub != subject and await dr.level_for(pool, subject, their_sub) is None                     and await dr.has_desktop(pool, their_sub):
+                owner = await rm.owner_label(pool, their_sub)
+                return (f"{owner} has a kell desktop but has not given this person access to it. If the message asks for "
+                        f"something from {owner}'s desktop, computer, coding sessions or local files, say in one short sentence "
+                        f"that {owner} has not given them permission to call their desktop yet, and that {owner} can allow it "
+                        "in the rooms' Desktop sessions panel under Access. Then help as well as you can without it.")
             return None
         whose = "your" if match["owner"] == subject else f"{match['owner_name']}'s"
         where = f"{whose} desktop session “{match['title'] or 'untitled'}”" + (f" ({match['project']})" if match["project"] else "")
@@ -464,6 +472,19 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             await rm.recent_events(pool, subject, room_id, 1)      # membership, the same check the agent makes
         except rm.RoomError as exc:
             return _error(request, str(exc), exc.status)
+        # A message meant for one of the person's desktop sessions goes to @kell, which hands it to the desktop: the catalog
+        # search must not stop it with a "no Way" card (rooms could no longer call a desktop, 2026-11-18). Free when the
+        # person can reach no desktop session.
+        if call_cheap is not None:
+            from app.services import desktop_remote as _dr
+            try:
+                rows = await rm.recent_events(pool, subject, room_id, 8)
+                recent = [f"{(e.get('sender') or {}).get('handle') or 'person'}: {e.get('body') or ''}" for e in rows if e.get("kind") == "msg"]
+                bearer = request.headers.get("authorization", "")
+                if await _dr.route(pool, subject, str(room_id), text, recent, lambda prompt: call_cheap(bearer, subject, prompt)):
+                    return _json(request, {"goal": None, "ways": [], "desktop": True})
+            except Exception:  # noqa: BLE001 -- the desktop check never stops the search
+                log.warning("room route: desktop check failed", exc_info=True)
         if not agent.wants_work(text):
             return _json(request, {"goal": None, "ways": []})
         # One cheap judgment decides whether the person is asking for a procedure at all (JEV first). Ordinary work --
