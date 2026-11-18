@@ -46,6 +46,10 @@ function fakeApi(): SubmissionsApi & { calls: Record<string, unknown[][]> } {
     get: rec("get", () => submitted()),
     fix: rec("fix", () => submitted({ status: "ai_approved", steps: submitted().steps.map((s) => ({ ...s, status: "ai_approved" as const, reason: "" })) })),
     removeStep: rec("removeStep", () => submitted({ status: "reviewing" })),
+    rewrite: rec("rewrite", () => ({ changed: [2], note: "step 2 now reads the links from step 1",
+      steps: [{ order: 1, kind: "human", title: "Copy the links", description: "Search arxiv and copy 5 links" },
+              { order: 2, kind: "automated", title: "Summarise", prompt: "summarise each link from step 1" }] })),
+    fixSteps: rec("fixSteps", () => submitted({ status: "ai_approved", steps: submitted().steps.map((s) => ({ ...s, status: "ai_approved" as const, reason: "" })) })),
     suggestions: rec("suggestions", () => ({ 2: [{ name: "Summarise papers", goal: "ML research", why: "does this step" }] })),
     run: rec("run", () => ({ id: "run1", status: "waiting_human", next_step: 1, error: null, outputs: [],
       waiting_on: { kind: "step", order: 1, title: "Copy the links", description: "Search arxiv and copy 5 links" } })),
@@ -56,6 +60,32 @@ function fakeApi(): SubmissionsApi & { calls: Record<string, unknown[][]> } {
 }
 
 describe("Submit a Way", () => {
+  it("a rejected submission: kell rewrites it from a sentence, the person edits the proposal, and the fixes go back for review", async () => {
+    const api = fakeApi();
+    root = createRoot(host);
+    act(() => root!.render(<SubmitWay api={api} />));
+    type(host.querySelector('input[placeholder^="e.g. Summarise"]') as HTMLInputElement, "ML research");
+    type(host.querySelector('textarea[aria-label="What the person does in step 1"]') as HTMLTextAreaElement, "Search arxiv and copy 5 links");
+    type(host.querySelector('textarea[aria-label="Prompt for step 2"]') as HTMLTextAreaElement, "summarise");
+    await act(async () => { (host.querySelector("form") as HTMLFormElement).requestSubmit(); });
+    await flush();
+    expect(host.textContent).toContain("Ask kell to fix it");
+    await act(async () => { byText("Rewrite").click(); });                               // empty: the reviewer's reasons are the instruction
+    await flush();
+    expect(api.calls.rewrite[0]).toEqual(["sub1", "Fix what the reviewer rejected."]);
+    expect(host.textContent).toContain("step 2 now reads the links from step 1");
+    const prompt = host.querySelector('.sw-proposal textarea[aria-label="Prompt for step 2"]') as HTMLTextAreaElement;
+    expect(prompt.value).toBe("summarise each link from step 1");
+    type(prompt, "summarise each link from step 1 in two lines");                         // the proposal is editable
+    expect(api.calls.fixSteps).toBeUndefined();                                            // nothing sent before the person says so
+    await act(async () => { byText("Send this fix").click(); });
+    await flush();
+    const [id, steps] = api.calls.fixSteps[0] as [string, { order: number; prompt?: string }[]];
+    expect(id).toBe("sub1");
+    expect(steps.map((s) => [s.order, s.prompt])).toEqual([[2, "summarise each link from step 1 in two lines"]]);
+    expect(host.textContent).not.toContain("kell’s rewrite");
+  });
+
   it("shows the mode from the steps, submits only filled steps, then a rejected step is fixed on its own and the Way runs", async () => {
     const api = fakeApi();
     root = createRoot(host);

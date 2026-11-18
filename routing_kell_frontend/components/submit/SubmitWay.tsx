@@ -293,6 +293,31 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
     finally { setBusy(false); }
   };
 
+  // "Ask kell to fix it": one sentence (or none: the reviewer's reasons are the instruction) -> kell's rewrite of the steps,
+  // shown as editable proposals. Nothing is stored until "Send these fixes"; the changed steps are then reviewed together.
+  const [ask, setAsk] = useState("");
+  const [proposal, setProposal] = useState<{ steps: Record<number, StepIn>; note: string } | null>(null);
+  const [asking, setAsking] = useState(false);
+  const askKell = async () => {
+    setAsking(true); setError("");
+    try {
+      const r = await api.rewrite(id, ask.trim() || "Fix what the reviewer rejected.");
+      const changed = Object.fromEntries(r.steps.filter((s) => r.changed.includes(s.order)).map(({ order, ...s }) => [order, s as StepIn]));
+      if (!Object.keys(changed).length) setError(r.note || "kell had nothing to change. Say what to change, or fix a step by hand.");
+      else { setProposal({ steps: changed, note: r.note }); setFixing(null); }
+    } catch (e) { setError((e as Error).message); }
+    finally { setAsking(false); }
+  };
+  const sendProposal = async () => {
+    if (!proposal) return;
+    setBusy(true); setError("");
+    try {
+      const steps = Object.entries(proposal.steps).map(([order, s]) => ({ ...s, order: Number(order) }));
+      setSub(await api.fixSteps(id, steps)); setProposal(null); setAsk(""); setSearched(false); setBetter({});
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
   const remove = async (order: number) => {
     setBusy(true); setError("");
     try { setSub(await api.removeStep(id, order)); setSearched(false); setBetter({}); }
@@ -343,7 +368,14 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
                   </ul>
                 </div>
               )}
-              {s.status !== "reviewing" && (fixing?.order === s.order ? (
+              {proposal?.steps[s.order] && (
+                <div className="sw-fix sw-proposal" aria-label={`kell's rewrite of step ${s.order}`}>
+                  <p className="sw-dim"><b>kell&rsquo;s rewrite</b> (edit it if you like; nothing is sent yet)</p>
+                  <StepEditor step={proposal.steps[s.order]} n={s.order}
+                    onChange={(x) => setProposal((p) => p && { ...p, steps: { ...p.steps, [s.order]: x } })} />
+                </div>
+              )}
+              {s.status !== "reviewing" && !proposal?.steps[s.order] && (fixing?.order === s.order ? (
                 <div className="sw-fix">
                   <StepEditor step={fixing.step} n={s.order} onChange={(x) => setFixing({ order: s.order, step: x })} />
                   {s.status !== "rejected" && <p className="sw-dim">kell reviews the change; once it passes, the Way gets its next version and runs use it.</p>}
@@ -370,6 +402,29 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
           </li>
         ))}
       </ol>
+      {sub.status !== "reviewing" && (proposal ? (
+        <div className="sw-askfix" role="status">
+          {proposal.note && <p className="sw-dim">{proposal.note}</p>}
+          <div className="sw-row">
+            <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={() => void sendProposal()}>
+              <span>{busy ? "Reviewing…" : `Send ${Object.keys(proposal.steps).length === 1 ? "this fix" : "these fixes"}`}</span></button>
+            <button type="button" className="btn-line sw-btn" disabled={busy} onClick={() => setProposal(null)}>Discard</button>
+          </div>
+        </div>
+      ) : (
+        <div className="sw-askfix">
+          <label className="sw-field">
+            <span>Ask kell to {anyRejected ? "fix it" : "change it"}</span>
+            <div className="sw-row">
+              <input value={ask} onChange={(e) => setAsk(e.target.value)} maxLength={2000} disabled={asking || busy}
+                onKeyDown={(e) => { if (e.key === "Enter" && !asking) { e.preventDefault(); void askKell(); } }}
+                placeholder={anyRejected ? "What to change, or leave empty to fix what was rejected" : "What to change, e.g. make step 2 use the arXiv API"} />
+              <button type="button" className="btn-line sw-btn" disabled={asking || busy || (!anyRejected && !ask.trim())}
+                data-busy={asking || undefined} onClick={() => void askKell()}><span>{asking ? "Rewriting…" : "Rewrite"}</span></button>
+            </div>
+          </label>
+        </div>
+      ))}
       {error && <p className="sw-error" role="alert" key={error}>{error}</p>}
       {runnable(sub) && <RunBox api={api} id={sub.id} />}
     </div>

@@ -75,6 +75,44 @@ async def fix_step(pool: Any, owner_id: str, submission_id: str, order: int, ste
     return await _reviewed(pool, submission_id, owner_id, wait)
 
 
+async def fix_steps(pool: Any, owner_id: str, submission_id: str, steps: Any, *, wait: float = REVIEW_WAIT) -> dict:
+    """Replace several steps at once ([{order, kind, title, description | prompt, locator}]) and review them together: what
+    an AI rewrite (rewrite below) sends back once the person has read it. One limit check and one review for the lot."""
+    if not isinstance(steps, list) or not steps:
+        raise intake.SubmissionError("send the steps to change: [{order, kind, title, description | prompt, locator}]")
+    parsed = []
+    for raw in steps[: intake.MAX_STEPS]:
+        if not isinstance(raw, dict):
+            raise intake.SubmissionError("each step is an object with its order")
+        try:
+            order = int(raw.get("order"))
+        except (TypeError, ValueError) as exc:
+            raise intake.SubmissionError("each step needs its order (1, 2, ...)") from exc
+        step = {k: v for k, v in raw.items() if k != "order"}
+        try:
+            parsed.append((order, intake.parse({"goal": "-", "steps": [step]}).steps[0]))
+        except intake.SubmissionError as exc:
+            raise intake.SubmissionError(f"step {order}: {exc}") from exc
+    if await store.get(pool, submission_id, owner_id=owner_id) is None:
+        raise LookupError("no submission of yours with that id")
+    await _limit(pool, owner_id)
+    for order, step in parsed:
+        await store.replace_step(pool, submission_id, owner_id, order, step)
+    return await _reviewed(pool, submission_id, owner_id, wait)
+
+
+async def rewrite(pool: Any, owner_id: str, submission_id: str, instruction: str = "") -> dict:
+    """kell rewrites the submission's steps from one sentence and the reviewer's reasons (submissions/rewrite.py). Nothing
+    is stored: the answer is a proposal for the form, sent with fix_steps once the person agrees."""
+    from app.submissions import rewrite as _rewrite
+
+    sub = await store.get(pool, submission_id, owner_id=owner_id)
+    if sub is None:
+        raise LookupError("no submission of yours with that id")
+    await _limit(pool, owner_id)
+    return await _rewrite.propose(sub, instruction)
+
+
 async def remove_step(pool: Any, owner_id: str, submission_id: str, order: int, *, wait: float = REVIEW_WAIT) -> dict:
     """Take a step out of a submission the person owns. Not rate-limited: removing a step costs no reviewer call of its
     own (the steps that remain are re-reviewed because the Way changed, which is the same review they would get anyway)."""

@@ -166,3 +166,6 @@
 .sw-loc-field input[data-problem] { border-color: #b3261e; }
 .sw-loc-field .sw-loc-problem { color: #b3261e; }
 .sw-loc-field .sw-dim { margin: 0; font-size: 12px; }
+/* "Ask kell to fix it" (2026-11-18): the sentence box under a submission, and kell's rewrite of a step shown in its place. */
+.sw-askfix { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.sw-proposal { padding: 10px; border-radius: 8px; border: 1px dashed var(--rule-strong); }

@@ -24,6 +24,29 @@ export async function POST(req: Request) {
     const id = body.submissionId.trim()
     if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: "no submission id" }, { status: 400 })
     try {
+      // "Ask kell to fix it": kell's rewrite of the steps from a sentence and the reviewer's reasons, a proposal only.
+      if (typeof body.rewrite === "string") {
+        const ask = body.rewrite.trim().slice(0, 2000) || "Fix what the reviewer rejected."
+        return NextResponse.json({ rewrite: await callMcpTool("submit_goal", { submission_id: id, rewrite: ask }, 60_000) })
+      }
+      // The changed steps, sent together and reviewed again (a rewrite the person agreed to, or their own edits).
+      if (Array.isArray(body.fixSteps)) {
+        const steps = body.fixSteps.slice(0, 40).map((s: any) => {
+          const order = Number(s?.order) || 0
+          const kind = s?.kind === "human" ? "human" : "automated"
+          const out: Record<string, unknown> = { order, kind, title: String(s?.title || "").trim().slice(0, 200) }
+          if (kind === "human") out.description = String(s?.description || "").trim().slice(0, 4000)
+          else {
+            const prompt = String(s?.prompt || "").trim().slice(0, 4000)
+            const locator = String(s?.locator || "").trim().slice(0, 2000)
+            if (prompt) out.prompt = prompt
+            if (locator) out.locator = locator
+          }
+          return out
+        }).filter((s: any) => s.order > 0)
+        if (!steps.length) return NextResponse.json({ error: "Nothing changed to send." }, { status: 400 })
+        return NextResponse.json({ submission: await callMcpTool("submit_goal", { submission_id: id, fix_steps: steps }, 120_000) })
+      }
       const sub = await callMcpTool("submit_goal", { submission_id: id }, 20_000)
       return NextResponse.json({ submission: sub })
     } catch (err: any) {

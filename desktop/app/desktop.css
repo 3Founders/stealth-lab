@@ -1149,6 +1149,13 @@
 .dk-sw-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 2px; }
 .dk-sw-foot .dk-note { margin: 0; }
 .dk-sw-actions { display: flex; gap: 8px; flex: none; }
+/* "Ask kell to fix it" (2026-11-18): a sentence under a stored submission; kell's rewrite lands in the steps above, unsent. */
+.dk-sw-askfix { display: grid; gap: 6px; }
+.dk-sw-askrow { display: flex; gap: 6px; align-items: center; }
+.dk-sw-askrow input { flex: 1 1 auto; min-width: 0; box-sizing: border-box; font: inherit; font-size: 13px; padding: 7px 9px;
+  border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.dk-sw-askrow input:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-sw-askfix .dk-note { margin: 0; }
 @media (prefers-reduced-motion: reduce) { .dk-sw-backdrop, .dk-sw { animation: none !important; } }
 
 /* Stop, while a turn runs. The composer's own `button` recipe (44 px, ink, white text) is written for Send; the

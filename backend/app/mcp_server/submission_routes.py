@@ -5,6 +5,8 @@
     GET  /v1/goals/submissions                  -> the caller's submissions
     GET  /v1/goals/submissions/{id}             -> one, with each step's state and the reason for a rejection
     POST /v1/goals/submissions/{id}/steps/{n}   {kind, description | prompt, locator}  -> fix step n, reviewed again
+    POST /v1/goals/submissions/{id}/steps       {steps: [{order, ...}]}  -> fix several steps, reviewed together
+    POST /v1/goals/submissions/{id}/rewrite     {instruction}  -> kell's rewrite of the steps, a proposal (nothing stored)
     POST /v1/goals/submissions/{id}/runs        {input}  -> run the approved Way; it pauses at a human step
     GET  /v1/goals/runs                         ?all=1  -> the caller's runs, newest first (open ones unless all=1)
     GET  /v1/goals/runs/{run_id}
@@ -91,6 +93,23 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
             return await _answer(request, api.remove_step(pool, subject, request.path_params["submission_id"], order))
         return await _answer(request, api.fix_step(pool, subject, request.path_params["submission_id"],
                                                    order, await _body(request)))
+
+    @server.custom_route("/v1/goals/submissions/{submission_id}/steps", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def submission_fix_steps(request: Request) -> Response:
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        body = await _body(request)
+        return await _answer(request, api.fix_steps(pool, subject, request.path_params["submission_id"], body.get("steps")))
+
+    @server.custom_route("/v1/goals/submissions/{submission_id}/rewrite", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def submission_rewrite(request: Request) -> Response:
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        body = await _body(request)
+        return await _answer(request, api.rewrite(pool, subject, request.path_params["submission_id"],
+                                                  str(body.get("instruction") or "")))
 
     @server.custom_route("/v1/goals/submissions/{submission_id}/suggestions", methods=["GET", "OPTIONS"],
                          include_in_schema=False)

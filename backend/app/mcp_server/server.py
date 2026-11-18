@@ -5627,7 +5627,7 @@ async def route_goal(ctx: Context, query: str, limit: int = 5) -> str:
 @_activity.traced
 async def submit_goal(ctx: Context, goal: str = "", steps: list[dict] | None = None, description: str = "",
                       preview: bool = False, submission_id: str = "", fix_step: int = 0,
-                      step: dict | None = None) -> str:
+                      step: dict | None = None, rewrite: str = "", fix_steps: list[dict] | None = None) -> str:
     """
     Submit a goal and the Way to achieve it, step by step (docs/goal_submission.md). Each step is one of:
       {"kind": "human", "description": "Search 'xyz' on abc.com and copy the top 5 links"}   -- a person does it
@@ -5640,8 +5640,16 @@ async def submit_goal(ctx: Context, goal: str = "", steps: list[dict] | None = N
     submission_id alone: that submission's state, step by step. submission_id + fix_step=<n> + step={...}: replace a
     step, rejected or approved, and review it again (the other steps stay); once it passes, the whole Way gets its next
     version. No arguments: your submissions.
+    submission_id + rewrite=<what to change, e.g. "fix what was rejected">: kell's rewrite of the steps from that sentence and the reviewer's
+    reasons, as a proposal ({steps, changed, note}); nothing is stored. submission_id + fix_steps=[{order, ...}]: send
+    several changed steps at once, reviewed together (what a rewrite proposes, once the person agrees).
     """
     from app.submissions import api as _sub_api
+
+    if submission_id and fix_steps:
+        return await _submission_call(ctx, lambda p, o: _sub_api.fix_steps(p, o, submission_id, fix_steps))
+    if submission_id and rewrite.strip():
+        return await _submission_call(ctx, lambda p, o: _sub_api.rewrite(p, o, submission_id, rewrite))
 
     if submission_id and fix_step:
         return await _submission_call(ctx, lambda p, o: _sub_api.fix_step(p, o, submission_id, fix_step, step or {}))
