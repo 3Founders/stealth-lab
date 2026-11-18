@@ -42,14 +42,14 @@ async function fileServerLink(id: number): Promise<string> {
 
 /** Which installer: Windows' .exe by default; ?os=linux gives the AppImage, ?os=linux&format=deb the Debian/Ubuntu package
  *  (2026-11-17, Linux builds). */
-function assetPattern(req?: Request): RegExp {
-  const q = new URL(req?.url || "https://www.kell.org.in/download").searchParams;
+function assetPattern(req: Request): RegExp {
+  const q = new URL(req.url).searchParams;
   const os = (q.get("os") || "").toLowerCase();
   if (os === "linux") return (q.get("format") || "").toLowerCase() === "deb" ? /^kell-.*-amd64\.deb$/i : /^kell-.*-x86_64\.AppImage$/i;
   return /^kell-Setup-.*\.exe$/i;
 }
 
-export async function GET(req?: Request) {
+export async function GET(req: Request) {
   const want = assetPattern(req);
   try {
     const r = await fetch(`${API}/releases/latest`, {

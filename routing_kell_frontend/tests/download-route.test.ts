@@ -13,7 +13,7 @@ describe("/download", () => {
       { name: "latest.yml", browser_download_url: "https://github.com/AnujB05/kell-desktop/releases/download/v0.2.0/latest.yml" },
       { name: "kell-Setup-0.2.0.exe", browser_download_url: url },
     ])));
-    const r = await GET();
+    const r = await GET(new Request("https://www.kell.org.in/download"));
     expect(r.status).toBe(302);
     expect(r.headers.get("location")).toBe(url);
   });
@@ -27,7 +27,7 @@ describe("/download", () => {
       return new Response(JSON.stringify({ assets: [{ id: 7, name: "kell-Setup-0.2.0.exe", browser_download_url: url }] }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
-    const r = await GET();
+    const r = await GET(new Request("https://www.kell.org.in/download"));
     expect(r.headers.get("location")).toBe(direct);
     expect(r.headers.get("cache-control")).toBe("no-store");
     // A file server link from anywhere else is not followed: the usual link is kept.
@@ -36,14 +36,14 @@ describe("/download", () => {
       if (u.endsWith("/releases/assets/7")) return new Response(null, { status: 302, headers: { location: "https://evil.example/x.exe" } });
       return new Response(JSON.stringify({ assets: [{ id: 7, name: "kell-Setup-0.2.0.exe", browser_download_url: url }] }), { status: 200 });
     });
-    expect((await GET()).headers.get("location")).toBe(url);
+    expect((await GET(new Request("https://www.kell.org.in/download"))).headers.get("location")).toBe(url);
   });
 
   it("falls back to the releases page when GitHub cannot be asked or the file is elsewhere", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
-    expect((await GET()).headers.get("location")).toBe("https://github.com/AnujB05/kell-desktop/releases/latest");
+    expect((await GET(new Request("https://www.kell.org.in/download"))).headers.get("location")).toBe("https://github.com/AnujB05/kell-desktop/releases/latest");
     vi.stubGlobal("fetch", vi.fn(async () => release([{ name: "kell-Setup-1.exe", browser_download_url: "https://evil.example/x.exe" }])));
-    expect((await GET()).headers.get("location")).toBe("https://github.com/AnujB05/kell-desktop/releases/latest");
+    expect((await GET(new Request("https://www.kell.org.in/download"))).headers.get("location")).toBe("https://github.com/AnujB05/kell-desktop/releases/latest");
   });
 
   it("gives Linux the AppImage, or the .deb when asked, and Windows stays the default", async () => {
