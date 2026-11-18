@@ -59,4 +59,22 @@ describe("/download", () => {
     expect(await at("?os=linux&format=deb")).toBe(base + "kell-0.2.0-amd64.deb");
     expect(await at("")).toBe(base + "kell-Setup-0.2.0.exe");
   });
+  it("serves Linux from the newest release that has its file while the latest is still Windows-only", async () => {
+    const gh = "https://github.com/AnujB05/kell-desktop/releases/download/"
+    const newest = { tag_name: "v0.3.0", assets: [{ name: "kell-Setup-0.3.0.exe", browser_download_url: gh + "v0.3.0/kell-Setup-0.3.0.exe" }] }
+    const older = { tag_name: "v0.2.0", assets: [
+      { name: "kell-Setup-0.2.0.exe", browser_download_url: gh + "v0.2.0/kell-Setup-0.2.0.exe" },
+      { name: "kell-0.2.0-x86_64.AppImage", browser_download_url: gh + "v0.2.0/kell-0.2.0-x86_64.AppImage" },
+      { name: "kell-0.2.0-amd64.deb", browser_download_url: gh + "v0.2.0/kell-0.2.0-amd64.deb" },
+    ] }
+    vi.stubGlobal("fetch", vi.fn(async (u: string) => {
+      if (String(u).endsWith("/releases/latest")) return new Response(JSON.stringify(newest), { status: 200 })
+      if (String(u).includes("/releases?per_page=")) return new Response(JSON.stringify([newest, older]), { status: 200 })
+      return new Response("", { status: 200 })
+    }))
+    const at = (q: string) => GET(new Request(`https://www.kell.org.in/download${q}`)).then((r) => r.headers.get("location"))
+    expect(await at("?os=linux")).toBe(gh + "v0.2.0/kell-0.2.0-x86_64.AppImage")
+    expect(await at("?os=linux&format=deb")).toBe(gh + "v0.2.0/kell-0.2.0-amd64.deb")
+    expect(await at("")).toBe(gh + "v0.3.0/kell-Setup-0.3.0.exe")      // Windows stays on the newest
+  });
 });

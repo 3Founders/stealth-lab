@@ -59,7 +59,22 @@ export async function GET(req: Request) {
     });
     if (r.ok) {
       const j = await r.json();
-      const asset: Asset | undefined = (j?.assets ?? []).find((a: Asset) => want.test(a?.name ?? ""));
+      let asset: Asset | undefined = (j?.assets ?? []).find((a: Asset) => want.test(a?.name ?? ""));
+      // The newest release may not carry this file yet: the Linux files are attached by CI some minutes after the Windows
+      // release, and a release can go out with Windows only. Then the newest release that has it serves the download, so
+      // the one-line Linux installer never receives the releases page instead of a file (2026-11-18).
+      if (!asset) {
+        const all = await fetch(`${API}/releases?per_page=15`, {
+          headers: { accept: "application/vnd.github+json", "user-agent": "kell-site" },
+          next: { revalidate: 300 },
+          signal: AbortSignal.timeout(6000),
+        }).then((x) => (x.ok ? x.json() : [])).catch(() => []);
+        for (const rel of Array.isArray(all) ? all : []) {
+          if (rel?.draft || rel?.prerelease) continue;
+          asset = (rel?.assets ?? []).find((a: Asset) => want.test(a?.name ?? ""));
+          if (asset) break;
+        }
+      }
       const url = asset?.browser_download_url;
       if (typeof url === "string" && url.startsWith(`https://github.com/${DESKTOP_RELEASES_REPO}/`)) {
         if (await answers(url) || typeof asset?.id !== "number") {
