@@ -19,7 +19,8 @@ import os from "node:os"
 import path from "node:path"
 import type { DatabaseSync as Db } from "node:sqlite"
 import { clientFor, engineStatus } from "@/lib/engine"
-import { importSession } from "@/lib/localdb"
+import { importSession, sessionExists } from "@/lib/localdb"
+import { theirOpenCodeDb } from "@/lib/enginehome"
 import { summarize } from "@/lib/summarize"
 
 export const dynamic = "force-dynamic"
@@ -131,7 +132,8 @@ function ccMessages(file: string): Msg[] {
 }
 
 // ---- The opencode v2 store ----------------------------------------------------------------------------------------
-const ocDbPath = () => path.join(os.homedir(), ".local", "share", "opencode", "opencode.db")
+// The person's OWN OpenCode history, read-only (kell's engine keeps its history elsewhere, lib/enginehome.ts).
+const ocDbPath = () => theirOpenCodeDb()
 
 function ocOpen(): Db | null {
   if (!fs.existsSync(ocDbPath())) return null
@@ -150,7 +152,9 @@ function ocChats(dir: string): Chat[] {
               (select json_extract(m.data, '$.text') from session_message m where m.session_id = s.id and m.type = 'user' order by m.seq limit 1) first
          from session s where s.parent_id is null order by s.time_updated desc limit 1000`).all() as any[]
     const want = norm(dir)
-    return rows.filter((r) => r.d && norm(String(r.d)) === want).map((r) => ({
+    // kell's own earlier sessions lived in this database before kell had its own folders: they are kell's already, not
+    // OpenCode chats to import.
+    return rows.filter((r) => r.d && norm(String(r.d)) === want && !sessionExists(String(r.id))).map((r) => ({
       id: String(r.id), title: String(r.title || "") || String(r.first || "").slice(0, 80),
       updated: Number(r.t) || 0, messages: Number(r.n) || 0, preview: String(r.first || "").slice(0, 140),
     }))

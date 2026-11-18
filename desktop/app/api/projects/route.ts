@@ -9,6 +9,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
+import { engineDb } from "@/lib/enginehome"
 import { anyProjects, forgetProject, importProjects, listProjects, mergeProjects, rememberProject } from "@/lib/localdb"
 
 export const dynamic = "force-dynamic"
@@ -26,7 +27,7 @@ function keepPath(raw: string): string | null {
 
 /** First run after the old localStorage list was lost: take the engine's own recent projects, without temp folders. */
 function seedFromEngine(): void {
-  const file = path.join(os.homedir(), ".local", "share", "opencode", "opencode.db")
+  const file = engineDb()                                  // kell's engine history (lib/enginehome.ts), not OpenCode's
   if (!fs.existsSync(file)) return
   let db: DatabaseSync | undefined
   try {

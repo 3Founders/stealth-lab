@@ -10,6 +10,7 @@ import type { OC, Client } from "./oc-types"
 import { pooledEngineConfig, personalEngineConfig, ownKeyLane } from "./pooled"
 import { freshSignIn } from "./signin"
 import { withDocsPath } from "./docs"
+import { engineEnv, kellEntriesFromOpenCode, moveHistoryOnce } from "./enginehome"
 
 export type { Client }
 
@@ -43,9 +44,9 @@ const exes = () => [
   path.join(unpackedRoot(), "node_modules", "@opencode", "cli", "bin", platformBin()),
   path.join(appRoot(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
   path.join(appRoot(), "node_modules", "@opencode", "cli", "bin", platformBin()),
-  // `kell setup --client opencode` (isolated profile) and the global install, both Windows and unix layouts
+  // `kell setup --client opencode`'s own isolated copy. Never a global OpenCode install: kell does not run the person's
+  // OpenCode, whatever version it is (owner, 2026-11-18: completely independent of it).
   path.join(process.env.KELL_OC_PROFILE || path.join(process.env.HOME || process.env.USERPROFILE || "", ".stealthlab", "opencode"), "cli", "node_modules", "@opencode", "cli", "bin", platformBin()),
-  path.join(process.env.APPDATA || "", "npm", "node_modules", "@opencode", "cli", "bin", platformBin()),
 ].filter(Boolean)
 
 export const findEngineExe = () => exes().find((e) => { try { return fs.statSync(e).isFile() } catch { return false } }) || ""
@@ -80,7 +81,7 @@ export async function engineStart(directory: string): Promise<Engine> {
 
 async function startEngine(directory: string): Promise<Engine> {
   const exe = findEngineExe()
-  if (!exe) throw new Error("opencode.exe not found; set KELL_OC_ENGINE or run `kell setup --client opencode`")
+  if (!exe) throw new Error("kell's coding engine is missing from this install; reinstall kell")
   engineStop()
   // Which lane pays: a joined organization first; else a developer's own key when `kell setup --client opencode` set one up;
   // else the signed-in person's own plan through kell's gateway (the models come from the gateway, so this waits on it).
@@ -91,6 +92,9 @@ async function startEngine(directory: string): Promise<Engine> {
     if (!personal.ok) throw new Error(personal.message)
     pooled = personal.engine
   }
+  // kell's own folders, never OpenCode's (lib/enginehome.ts); the first start there brings the old history across once
+  // (a worker thread: the app keeps answering meanwhile).
+  await moveHistoryOnce()
   let engine: Engine | undefined
   engine = await new Promise<Engine>((ok, no) => {
     const read = (chunk: any, fail: boolean) => {
@@ -105,13 +109,15 @@ async function startEngine(directory: string): Promise<Engine> {
     }
     // The organization lane: when this machine ran `kell join`, the child gets an inline provider on the company's
     // gateway, authenticated with the person's kell sign-in. Nothing provider-shaped is on the machine.
+    const ownKey = !pooled ? kellEntriesFromOpenCode() : null
     state.child = spawn(exe, ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: directory, stdio: [null, "pipe", "pipe"],
       windowsHide: true,        // a console program started from a GUI app opens a visible black window on Windows without this
       // withDocsPath: the bundled `kell-docs` command first on PATH (lib/docs.ts), so the engine can make real Office files.
       env: withDocsPath({
-        ...process.env,
-        ...(pooled ? { ...pooled.env, OPENCODE_CONFIG_CONTENT: pooled.content, OPEN_MODEL_API_KEY: pooled.key } : {}),
+        ...engineEnv(process.env),
+        ...(pooled ? { ...pooled.env, OPENCODE_CONFIG_CONTENT: pooled.content, OPEN_MODEL_API_KEY: pooled.key }
+          : ownKey ? { OPENCODE_CONFIG_CONTENT: ownKey } : {}),
         // RAM: a desktop coding session does not need a file watcher, a language server, update checks or sharing. The
         // watcher alone can keep one watch per indexed directory; LSPs and per-session MCPs multiply across sessions.
         OPENCODE_DISABLE_FILEWATCHER: "1",

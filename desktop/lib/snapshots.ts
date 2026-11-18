@@ -11,13 +11,15 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { engineDataDir } from "./enginehome"
 import { spawnSync } from "node:child_process"
 import { DatabaseSync } from "node:sqlite"
 
 export type SnapshotPair = { before: string; after: string; gitdir: string; files: string[] }
 export type SnapshotFile = { file: string; patch: string; additions: number; deletions: number; status: "added" | "deleted" | "modified" }
 
-const dataDir = () => path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "opencode")
+// The engine's own data folder (lib/enginehome.ts), not OpenCode's.
+const dataDir = () => engineDataDir()
 
 const gib = (gitdir: string, args: string[], max = 64 * 1024 * 1024) => {
   const r = spawnSync("git", [`--git-dir=${gitdir}`, ...args], { encoding: "utf8", timeout: 60_000, windowsHide: true, maxBuffer: max })
