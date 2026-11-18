@@ -3,6 +3,7 @@
 // (2026-11-17): the same editor the card's sheet uses, with Add step and Use this Way, so the record lives in the panel
 // and a card click only opens the sheet for the same editor.
 import ProcedureEditor from "./ProcedureEditor"
+import InfoTip from "./InfoTip"
 import type { DelegationStep, WayOption } from "@/lib/plan"
 
 export default function ProcedurePanel({ option, steps, catalog = [], onEdit, onAdd, onRemove, onUse, onAsk, glass, onToggleGlass, previewLabel }: {
@@ -21,9 +22,12 @@ export default function ProcedurePanel({ option, steps, catalog = [], onEdit, on
   return (
     <section className="dk-proc" data-glass={glass ? "on" : "off"} aria-label="Procedure">
       <div className="dk-proc-head">
-        <h2>Procedure</h2>
+        <span className="dk-proc-title">
+          <h2>Procedure</h2>
+          {!option && <InfoTip align="start" text="Send a task: kell resolves a Goal and a Way, and its steps appear here, editable before they run." />}
+        </span>
         {previewLabel && <span className="dk-proc-preview">{previewLabel}</span>}
-        <button type="button" className="dk-icon dk-proc-toggle" aria-pressed={glass}
+        <button type="button" className="dk-icon dk-icon-sm dk-proc-toggle" aria-pressed={glass}
           aria-label={glass ? "Turn the glass effect off" : "Turn the glass effect on"}
           title={glass ? "Glass effect on" : "Glass effect off"} onClick={onToggleGlass}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -34,9 +38,7 @@ export default function ProcedurePanel({ option, steps, catalog = [], onEdit, on
         </button>
       </div>
 
-      {!option ? (
-        <p className="dk-note">Send a task: kell resolves a Goal and a Way, and its steps appear here, editable before they run.</p>
-      ) : (
+      {!option ? null : (
         <div className="dk-proc-graph" key={option.id}>
           <span className="dk-proc-aurora" aria-hidden="true" />
           <ProcedureEditor option={option} steps={steps} catalog={catalog} onEdit={onEdit} onAdd={onAdd} onRemove={onRemove} onUse={onUse} onAsk={onAsk} />

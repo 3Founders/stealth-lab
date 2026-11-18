@@ -4,6 +4,8 @@
 // tokens and cost, and whether that model is the configured cheap one); tool suggestion cards (kell's tool router, the same
 // call the session's plugin makes); and settings (sign-in, models, engine, "Open console").
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
+import InfoTip from "@/components/InfoTip"
 import Markdown from "@/components/chat/Markdown"
 import SmoothText, { Thinking } from "@/components/chat/SmoothText"
 import { DocCards, DocPreview, type Doc } from "@/components/DocPanel"
@@ -465,6 +467,16 @@ export default function Home() {
     el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up)
   }
   const [accountOpen, setAccountOpen] = useState(false)
+  // The account card floats over the window at its own width, above the Account button: never squeezed by a narrow sidebar.
+  const accountBtnRef = useRef<HTMLButtonElement>(null)
+  const [accountAt, setAccountAt] = useState<{ left: number; bottom: number } | null>(null)
+  useEffect(() => {
+    if (!accountOpen) { setAccountAt(null); return }
+    const place = () => { const b = accountBtnRef.current?.getBoundingClientRect(); if (b) setAccountAt({ left: Math.max(8, b.left), bottom: window.innerHeight - b.top + 8 }) }
+    place()
+    window.addEventListener("resize", place)
+    return () => window.removeEventListener("resize", place)
+  }, [accountOpen])
   const [helpOpen, setHelpOpen] = useState(false)
   // The window is maximized: the page's maximize button then shows Windows' restore glyph, as the real caption does.
   const [maximized, setMaximized] = useState(false)
@@ -2706,7 +2718,7 @@ export default function Home() {
                     placeholder="a folder path to work in" className="dk-field mono" aria-label="Project folder" />
                 </div>
               )}
-              <div className="dk-row">
+              <div className="dk-row dk-pair">
                 <button type="button" className="btn-ink" disabled={opening}
                   onClick={() => void openFolder()}>{opening ? "Opening…" : "Open folder"}</button>
                 <button type="button" className="btn-line" disabled={opening} title="Chat without a project"
@@ -2753,8 +2765,8 @@ export default function Home() {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
                 </button>
                 <b title={directory}>{projName(directory)}</b>
-                <button type="button" className="dk-recent-more" aria-haspopup="menu" aria-expanded={projMenu?.path === directory}
-                  aria-label="Project actions" title="More actions" style={{ opacity: 1 }} onClick={(e) => openProjectMenu(e, directory)}>
+                <button type="button" className="dk-icon dk-icon-sm" aria-haspopup="menu" aria-expanded={projMenu?.path === directory}
+                  aria-label="Project actions" title="More actions" onClick={(e) => openProjectMenu(e, directory)}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" />
                   </svg>
@@ -2860,8 +2872,8 @@ export default function Home() {
             {projNote && <p className="dk-note" role="status">{projNote}</p>}
             {signinNote && <p className="dk-note" role="status">{signinNote}</p>}
             {consoleNote && <p className="dk-note">{consoleNote}</p>}
-            {accountOpen && settings && (
-              <div className="dk-account" role="dialog" aria-label="Account">
+            {accountOpen && settings && accountAt && createPortal(
+              <div className="dk-page-float dk-account" role="dialog" aria-label="Account" style={{ left: accountAt.left, bottom: accountAt.bottom }}>
                 <p><b>{settings.signedIn ? settings.account || "your kell account" : "Not signed in"}</b></p>
                 <p className="dk-note">
                   {settings.lane === "organization" ? <>Paid through your organization ({settings.gateway || "kell"}).</>
@@ -2875,13 +2887,12 @@ export default function Home() {
                 <label className="dk-note" title="Your sessions show in the rooms (title and folder name only). You, and teammates you allowed in the rooms, can ask them from there.">
                   <input type="checkbox" checked={remoteOn} onChange={(e) => void setRemote(e.target.checked)} /> Let my rooms call this desktop
                 </label>
-              </div>
-            )}
+              </div>, document.body)}
             <div className="dk-iconrow">
               {settings && !settings.signedIn ? (
                 <button type="button" className="btn-ink dk-signin" onClick={() => void signIn()}>Sign in</button>
               ) : (
-                <button type="button" className="dk-icon" aria-label="Account" title={settings?.account ? `Signed in as ${settings.account}` : "Account"}
+                <button type="button" ref={accountBtnRef} className="dk-icon" aria-label="Account" title={settings?.account ? `Signed in as ${settings.account}` : "Account"}
                   aria-expanded={accountOpen} onClick={() => setAccountOpen((o) => !o)}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
                 </button>
@@ -3588,7 +3599,8 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
               // "No delegated agent" row beside it only contradicted the panel.
               <div className="dk-agent dk-agent-empty">
                 <span className="dk-agent-dot" aria-hidden="true" />
-                <span><b>No delegated agent</b><small>send a task</small></span>
+                <span><b>No delegated agent</b></span>
+                <InfoTip align="end" text="Send a task: the router picks the model each step needs, and the delegated agent shows here." />
               </div>
             ) : null}
             {subagents.map((s) => (

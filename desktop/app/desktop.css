@@ -1414,3 +1414,53 @@ button.dk-sess-group { cursor: pointer; }
 .dk-conn:hover { border-color: var(--ink, #222); }
 .dk-conn:active { transform: scale(.98); }
 .dk-conn span { font-size: 12px; opacity: .7; }
+
+/* Alignment pass (owner, 2026-11-18): one left edge and one right edge for the left sidebar's rows; every row's controls
+   centred on one line; equal pairs of buttons. The sidebar itself never scrolls (overflow hidden), so it reserves no
+   scrollbar gap; its scrolling list keeps one and gives back its own right padding, so its right edge meets the hide
+   button's. */
+.dk-page .dg-side { scrollbar-gutter: auto; }
+.dk-page .dg-side-scroll { padding-right: 2px; }
+.dk-page .dk-side-close { top: 12px; right: 22px; }   /* 12px padding + the list's 10px scrollbar gap: the right edge of every row below */
+.dk-page .dg-side-scroll .dk-sec-head { margin: 12px 0 6px; min-height: 30px; }
+.dk-page .dg-side-scroll .dk-sec-head h2 { line-height: 1; }
+.dk-page .dk-proj-head { margin: 4px 0 0; gap: 8px; }
+.dk-page .dk-proj-head b { line-height: 30px; }
+.dk-page .dk-proj-head + .dk-note { margin: 6px 0 0; }
+.dk-page button.dk-fold { padding: 4px 8px; line-height: 1; }
+.dk-page button.dk-fold h2, .dk-page button.dk-fold .dk-count { line-height: 1; display: block; }
+/* Open folder and Chats: the same size, side by side, text centred. */
+.dk-page .dk-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 2px 0 8px; }
+.dk-page .dk-pair > button { box-sizing: border-box; height: 34px; min-height: 0; padding: 0 10px; margin: 0; display: flex; align-items: center;
+  justify-content: center; text-align: center; font-size: 13.5px; line-height: 1; border-width: 1px; border-style: solid; white-space: nowrap; }
+.dk-page .dk-pair > .btn-ink { border-color: transparent; }
+
+/* The account card: floats above the Account button at its own width (it is rendered into the page body, so a narrow
+   sidebar cannot squeeze it). */
+.dk-page-float.dk-account { position: fixed; z-index: 70; width: 288px; max-width: calc(100vw - 16px); margin: 0; font-size: 13px; }
+.dk-page-float.dk-account p:first-child b { display: block; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-page-float.dk-account label { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; }
+
+/* The right panel's section heads: the heading and its buttons on one line, the same edges as the Agents head above. */
+.dk-panel .dk-panel-head h2, .dk-panel .dk-proc-head h2 { margin: 0; line-height: 1; }
+.dk-panel .dk-proc { margin: 14px 4px 6px 0; }   /* the same left and right edges as the Agents head */
+.dk-panel .dk-proc-head { align-items: center; padding: 0; gap: 8px; min-height: 30px; }
+.dk-panel .dk-proc-head .dk-proc-toggle { width: 30px; height: 30px; }
+.dk-proc-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.dk-agent-empty { align-items: center; }
+.dk-agent-empty > span:nth-child(2) { flex: 1; min-width: 0; }
+
+/* The "i": a 16px circle, the letter drawn at its centre; the explanation shows on hover or focus. */
+.dk-info { all: unset; box-sizing: border-box; position: relative; display: inline-grid; place-items: center; width: 22px; height: 22px;
+  flex: none; border-radius: 50%; color: var(--grey); cursor: help; }
+.dk-info svg { display: block; }
+.dk-info:hover, .dk-info:focus-visible { color: var(--ink); }
+.dk-info:focus-visible { outline: 2px solid var(--cobalt, currentColor); outline-offset: 1px; }
+.dk-info-tip { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); width: max-content; max-width: 230px; z-index: 30;
+  padding: 7px 10px; border-radius: 8px; background: var(--ink); color: var(--paper); font-size: 12px; line-height: 1.4; font-weight: 400;
+  text-transform: none; letter-spacing: 0; white-space: normal; text-align: left; pointer-events: none; opacity: 0; visibility: hidden;
+  transition: opacity 120ms ease, visibility 0s linear 120ms; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+.dk-info[data-side="above"] .dk-info-tip { top: auto; bottom: calc(100% + 6px); }
+.dk-info:hover .dk-info-tip, .dk-info:focus-visible .dk-info-tip { opacity: 1; visibility: visible; transition: opacity 120ms ease; }
+.dk-info[data-align="start"] .dk-info-tip { left: -6px; right: auto; transform: none; }
+.dk-info[data-align="end"] .dk-info-tip { left: auto; right: -6px; transform: none; }
