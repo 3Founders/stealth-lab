@@ -5,9 +5,10 @@ Two kinds, in billing_referral_codes:
 
   - issued: made by the founders in the admin dashboard (backend/app/api/admin_billing.py) and handed to partners and
     communities. Reusable, no reward, no expiry in the code itself (delete or deactivate ends it).
-  - personal: made automatically for a buying account when the payment webhook activates a plan, so that a later reward
-    decision has the attribution recorded. Rewards are NOT built (open questions in the briefing); all the buyer's own
-    site can do is show them their code and say what it unlocks for the person who uses it.
+  - personal: made automatically for a buying account when the payment webhook activates a plan. Someone who uses it
+    unlocks the one-person Pilot and, once they have PAID, the code's owner earns credit in their own wallet
+    (db/212, services/referral_rewards.py: one level, paid on a completed sale, credit only). This module only issues
+    and checks codes; the reward itself lives there.
 
 The gate is server-side, like every amount: an order for the one-seat Pilot carries the code, the route asks this
 service whether it is active, and the order row records it (billing_orders.referral_code). Nothing else moves.

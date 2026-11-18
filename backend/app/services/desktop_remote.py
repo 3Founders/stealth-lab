@@ -31,6 +31,38 @@ ROUTE_MIN = 0.6              # route() hands a message over at this confidence o
 LEVELS = ("answer", "approve", "full")
 ACTIVE = ("needs_approval", "queued", "running", "waiting_permission")
 
+# A message that clearly names a desktop/laptop/machine. When the routing model is down, out of budget, or unsure,
+# this lets an explicit "continue in my session" still reach the person's desktop instead of being answered by @kell.
+DESKTOP_INTENT = re.compile(
+    r"\b(?:my|the|this|that)\s+(?:desktop|laptop|machine|computer|pc|workstation)\b"
+    r"|\b(?:on|from|in)\s+(?:my|the|this|that)\s+(?:desktop|laptop|machine|computer|pc|workstation)\b"
+    r"|\b(?:continue|resume|pick\s+up|carry\s+on)\b[^.!?\n]{0,40}\b(?:session|chat|work|task|where)\b"
+    r"|\b(?:run|execute)\b[^.!?\n]{0,30}\b(?:tests?|build|command|script)\b[^.!?\n]{0,30}\b(?:desktop|laptop|machine|computer|pc|repo|project)\b",
+    re.I,
+)
+
+
+def _explicit_desktop(text: str) -> bool:
+    return bool(DESKTOP_INTENT.search(text or ""))
+
+
+def _fallback_session(sessions: list[dict[str, Any]], sub: str, only_owner: Optional[str]) -> Optional[dict[str, Any]]:
+    """The session an explicit desktop message should go to when the router cannot decide: the person's own most
+    recent online session, else the most recent online session they may reach (or the named owner's)."""
+    online = [s for s in sessions if s.get("online")]
+    if only_owner:
+        online = [s for s in online if s["owner"] == only_owner]
+    mine = [s for s in online if s["owner"] == sub]
+    pick = mine or online
+    return max(pick, key=lambda s: s.get("updated_at") or "") if pick else None
+
+
+async def _fallback_answer(pool: Any, session: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if session is None:
+        return None
+    return {**session, "owner_name": await rm.owner_label(pool, session["owner"]),
+            "confidence": 1.0, "why": "explicit desktop mention"}
+
 
 class DesktopError(Exception):
     def __init__(self, message: str, status: int = 400) -> None:
@@ -369,18 +401,23 @@ async def route(pool: Any, sub: str, room_id: Optional[str], text: str, recent: 
     can reach no desktop session at all, so a room without desktops costs nothing extra. `only_owner`: the message
     named one person's kell (@chaitanya/kell), so only their desktop's sessions are weighed."""
     sessions = [s for s in await reachable(pool, sub, room_id) if only_owner is None or s["owner"] == only_owner]
-    if not sessions or call_cheap is None:
+    if not sessions:
         return None
+    # An explicit "my desktop / my laptop / continue in my session" must still reach the desktop when the routing
+    # model is down, out of budget, or unsure. The fallback only fires for those phrases, never for a general question.
+    fallback = _fallback_session(sessions, sub, only_owner) if _explicit_desktop(text) else None
+    if call_cheap is None:
+        return await _fallback_answer(pool, fallback)
     sessions = sessions[:30]
     names = {s["owner"]: await rm.owner_label(pool, s["owner"]) for s in sessions}
     try:
         raw = await call_cheap(_route_prompt(text, recent, sessions, sub, names))
         m = re.search(r"\{.*\}", raw or "", re.S)
         verdict = json.loads(m.group(0) if m else raw)
-    except Exception:  # noqa: BLE001 -- no verdict: @kell answers itself
-        return None
+    except Exception:  # noqa: BLE001 -- no verdict: an explicit desktop message still goes to the desktop
+        return await _fallback_answer(pool, fallback)
     n, conf = verdict.get("session"), verdict.get("confidence")
     if not isinstance(n, int) or not 1 <= n <= len(sessions) or not isinstance(conf, (int, float)) or conf < ROUTE_MIN:
-        return None
+        return await _fallback_answer(pool, fallback)
     s = sessions[n - 1]
     return {**s, "owner_name": names.get(s["owner"], ""), "confidence": float(conf), "why": str(verdict.get("why") or "")[:120]}

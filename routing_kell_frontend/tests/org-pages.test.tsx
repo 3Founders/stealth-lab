@@ -107,13 +107,13 @@ describe("Org home", () => {
 describe("Members and invites", () => {
   it("shows a new invite code once, and revokes", async () => {
     api.members.mockResolvedValue(members);
-    api.invites.mockResolvedValue([{ id: "i1", label: "Team", created_by: "u1", created_at: "2026-10-01T00:00:00Z", expires_at: "2026-10-08T00:00:00Z", max_uses: 5, uses: 1, revoked_at: null, active: true }]);
-    api.createInvite.mockResolvedValue({ id: "i2", code: "SECRET-CODE-123", expires_at: "2026-11-01T00:00:00Z", max_uses: 50, label: null });
+    api.invites.mockResolvedValue([{ id: "i1", label: "Team", role: "member", email: null, created_by: "u1", created_at: "2026-10-01T00:00:00Z", expires_at: "2026-10-08T00:00:00Z", max_uses: 5, uses: 1, revoked_at: null, active: true }]);
+    api.createInvite.mockResolvedValue({ id: "i2", code: "SECRET-CODE-123", expires_at: "2026-11-01T00:00:00Z", max_uses: 50, label: null, role: "member", email: null });
     api.revokeInvite.mockResolvedValue(undefined);
     await mount(<MembersPage />);
     expect(host!.textContent).toContain("Ada");
     await submit(host!.querySelectorAll("form")[0]);
-    expect(api.createInvite).toHaveBeenCalledWith("o1", { label: undefined, days: 7, max_uses: 50 });
+    expect(api.createInvite).toHaveBeenCalledWith("o1", { label: undefined, days: 7, max_uses: 50, role: "member" });
     expect(host!.textContent).toContain("SECRET-CODE-123");
     expect(host!.textContent).toContain("shown once");
     await click(btn("Revoke"));

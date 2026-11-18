@@ -167,7 +167,7 @@ export default function SettingsDialog(p: SettingsProps) {
                         : <button type="button" className="btn-line dg-mini-btn" onClick={p.data.folder.onChoose}>Choose folder</button>)}
                     </div>
                   )}
-                  <div><b>Delete history</b><small>Removes the saved chats from this browser. Rooms on your account stay.</small><button type="button" className="btn-line dg-mini-btn" onClick={p.data.onDelete}>Delete history</button></div>
+                  <div><b>Delete history</b><small>Clears this browser's copy of the chat history. Messages stay on your account and your other devices, and this browser will not download them again. Rooms stay.</small><button type="button" className="btn-line dg-mini-btn" onClick={p.data.onDelete}>Delete history</button></div>
                 </div>
               </section>
             )}

@@ -8,6 +8,8 @@
   --rule: rgba(23, 23, 23, 0.13);
   --rule-strong: rgba(23, 23, 23, 0.85);
   --pad: clamp(16px, 4vw, 48px);
+  /* The frame is centred by margin-inline:auto at every width. From 1600px up it widens again (the rule below the
+     type scale) so a big monitor gets horizontal air and a readable measure instead of one narrow central column. */
   --max: 1320px;
   --gap: clamp(12px, 1.8vw, 24px);
   --font: "Bahnschrift", "Barlow", "DIN Alternate", "Segoe UI", system-ui, sans-serif;
@@ -59,7 +61,7 @@ html.lenis, html.lenis body { height: auto; }
 .lenis:not(.lenis-autoToggle).lenis-stopped { overflow: clip; }
 body {
   margin: 0; background: var(--paper); color: var(--ink);
-  font-family: var(--font); font-weight: 300; font-size: 18px; line-height: 1.5;
+  font-family: var(--font); font-weight: 300; font-size: 16px; line-height: 1.55;
   -webkit-font-smoothing: antialiased; overflow-x: clip;
 }
 h1, h2, h3, h4 { font-weight: 400; margin: 0; letter-spacing: -0.02em; line-height: 1.02; }
@@ -84,14 +86,15 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 @media (max-width: 720px) { .gridlines i:nth-child(2), .gridlines i:nth-child(4) { display: none; } }
 main, footer { position: relative; z-index: 1; }
 
-/* type */
-.display { font-size: clamp(44px, 8.2vw, 112px); line-height: .98; letter-spacing: -0.035em; }
-.h1 { font-size: clamp(40px, 6vw, 80px); line-height: 1; }
-.h2 { font-size: clamp(32px, 4.4vw, 56px); }
-.h3 { font-size: clamp(22px, 2.3vw, 32px); line-height: 1.1; letter-spacing: -0.01em; }
-.lead { font-size: clamp(18px, 1.5vw, 21px); line-height: 1.45; max-width: 34em; }
-.small { font-size: 15px; }
-.caption { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+/* type — a tighter scale than before (the display heading was 112px at its largest). Headings keep the 0.98–1.1 line
+   heights for a locked-up look, but every step is smaller so a headline reads as a headline, not as a wall. */
+.display { font-size: clamp(36px, 6.2vw, 84px); line-height: 1; letter-spacing: -0.035em; }
+.h1 { font-size: clamp(30px, 4.4vw, 60px); line-height: 1.04; }
+.h2 { font-size: clamp(26px, 3.4vw, 44px); }
+.h3 { font-size: clamp(19px, 1.9vw, 26px); line-height: 1.15; letter-spacing: -0.01em; }
+.lead { font-size: clamp(16px, 1.3vw, 18.5px); line-height: 1.5; max-width: 34em; }
+.small { font-size: 14px; }
+.caption { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; }
 .dim { color: var(--grey); }
 .hl { background: linear-gradient(var(--yellow), var(--yellow)) 0 90% / 100% .3em no-repeat; }
 
@@ -187,8 +190,8 @@ main, footer { position: relative; z-index: 1; }
 .hero h1 { grid-column: 1 / span 12; }
 .hero h1 .l2 { color: #5d5d5a; }
 .hero-sub { grid-column: 1 / span 6; margin-top: clamp(28px, 3.5vw, 48px); }
-.hero-sub .lead { font-size: clamp(20px, 1.7vw, 24px); }
-.hero-sub .small { font-size: 17px; }
+.hero-sub .lead { font-size: clamp(17px, 1.4vw, 20px); }
+.hero-sub .small { font-size: 15px; }
 .hero-install { grid-column: 1 / span 7; margin-top: clamp(28px, 3vw, 44px); }
 @media (max-width: 900px) { .hero-sub, .hero-install { grid-column: 1 / -1; } }
 
@@ -974,3 +977,24 @@ main section > .install + p { margin-top: 14px; }
   :root:not([data-theme="light"]) .btn-line:hover { color: var(--ink); background-color: rgba(255, 255, 255, .17); }
   :root:not([data-theme="light"]) .btn-line:hover { box-shadow: var(--sh-lift-hover); }
 }
+
+/* ===== big screens: a wider, centred frame =====
+   Last in the file on purpose: it must win over the .hero-sub / .page-hero rules earlier in this sheet, which set the
+   same properties at equal specificity. Below 1600px nothing here applies, so laptops and tablets keep the left-aligned,
+   grid-led layout the rest of the page is built on.
+
+   The frame is already centred by .frame's margin-inline:auto at every width; this only widens it (1320 -> 1560px) so a
+   large monitor gets horizontal air instead of one narrow column. The headline and its supporting text are then centred:
+   a 12-column grid is asymmetric (a heading spans columns 1 to 10), so on a wide screen the left-aligned heading leaves a
+   dead strip on the right. The editorial side-by-side pairs and the hero artwork are deliberately left alone -- they are
+   laid out against each other, and centring only the text would unpick that. */
+@media (min-width: 1600px) {
+  :root { --max: 1560px; }
+  .page-hero h1, .page-hero .lead, .hero h1, .hero-sub, .hero-install, .hero .stack {
+    grid-column: 1 / -1; text-align: center; justify-self: center;
+  }
+  .page-hero .lead, .hero-sub .lead { margin-inline: auto; }
+  /* a block, not a paragraph: capped so the centred install widget stays a readable width */
+  .hero-install { max-width: 52em; width: 100%; }
+}
+

@@ -44,6 +44,7 @@ import PersonAvatar from "@/components/chat/PersonAvatar";
 import ProfileWidget from "@/components/chat/ProfileWidget";
 import { PanelCloseIcon, RemoveIcon, CanvasIcon, DesktopIcon } from "@/components/chat/icons";
 import { desktopApi } from "@/lib/chat/desktop-api";
+import { looksLikeDesktopCommand } from "@/lib/chat/desktop-intent";
 import { submissionsApi } from "@/lib/submissions-api";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import type { SectionId } from "@/components/chat/SettingsDialog";
@@ -162,6 +163,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   roomRef.current = room;
   const roomListRef = useRef(roomList);
   roomListRef.current = roomList;
+  /** Labels removed on purpose in this tab: sync may still list them for one pass, and that is not a surprise. */
+  const deletedRooms = useRef(new Set<string>());
 
   const [agents, setAgents] = useState<string[]>([]); // agents that run in this tab
   const agentsRef = useRef<string[]>([]);
@@ -369,7 +372,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     // The choice, before the agent starts: the same catalog answer the desktop's picker reads. A message with no Goal
     // (small talk, or a canvas edit) goes to the agent as before; when the search itself fails, the person is told and
     // the model does not answer as if it had searched (2026-11-16).
-    if (!opts?.skipRoute && who === "@kell" && !temp && !canvasOpenRef.current && procModeRef.current !== "direct") {
+    // A desktop command is never held behind the Way picker in Ask mode: the hand-off to the person's own session
+    // lives in the room agent, and a "no stored procedure" card would stop it before it ran (2026-11-17).
+    // Auto mode still lets the Goal picker intercept: a fitting Way runs on its own there.
+    const desktopBypass = procModeRef.current === "ask" && looksLikeDesktopCommand(text);
+    if (!opts?.skipRoute && who === "@kell" && !temp && !canvasOpenRef.current && procModeRef.current !== "direct"
+        && !desktopBypass) {
       const rid = known();
       if (rid) {
         try {
@@ -663,6 +671,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           // erase what is on this device. The room and its history stay, and sync re-links it and uploads it again. Removing a room is
           // only ever something you do yourself (the Remove button).
           for (const r of c.removed) {
+            if (deletedRooms.current.delete(r)) continue;   // this tab just deleted it: no "kept a copy" notice
             push(roomRef.current, { kind: "notice", id: crypto.randomUUID(), text: `${r} was not found on your account. Your copy here is kept and will sync again.`, t: Date.now() });
           }
           setInfo((p) => ({ ...p, ...c.info }));
@@ -1238,27 +1247,69 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     setRoomList({ rooms: [...roomList.rooms, r.name], current: r.name });
     return { id: r.name };
   };
-  const deleteRoom = async (r: string) => {
-    const next = withoutRoom(roomList, r);
-    if (next === roomList) return;
+  /**
+   * Delete a room (owner) or leave it (member), on the server first, then on this device. A failure comes back to the
+   * dialog that asked, and the room stays: removing it here first would let the next sync add it back, which is exactly
+   * what made deletions look like they did nothing.
+   */
+  const deleteRoom = async (r: string): Promise<{ ok: boolean; error?: string }> => {
+    if (roomListRef.current.rooms.length <= 1 || !roomListRef.current.rooms.includes(r)) {
+      return { ok: false, error: "You need at least one other room before you can remove this one." };
+    }
     const has = (lineStore.current[r] ?? []).some((l) => l.kind === "msg") || (tasksRef.current[r] ?? []).length > 0;
-    const sid = engineRef.current?.roomId(r);
-    const owner = (info[r]?.role ?? "owner") === "owner";
+    // The sync map and `info` load after the first pass. Ask both, then the account, so a room that exists on the server
+    // is deleted there before it is removed here.
+    let sid: string | undefined = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
+    let role: "owner" | "admin" | "member" | undefined = infoRef.current[r]?.role;
+    if (!sid) sid = await engineRef.current?.resolveRoomId(r);
+    if (sid && !role) {
+      try { role = (await rapi.rooms()).find((x) => x.id === sid)?.role; } catch { /* the delete below says why */ }
+    }
+    if (!sid) {
+      try {
+        const found = (await rapi.rooms()).find((x) => x.title === r);
+        if (found) { sid = found.id; role = found.role; }
+      } catch {
+        // Offline: a room the account knows about (or one with messages that may be on it) must not be removed here, or
+        // it will come back on the next sync.
+        if (infoRef.current[r] || has) return { ok: false, error: "Couldn't reach the server, so the room was not deleted. Try again when you're online." };
+      }
+    }
+    const owner = (role ?? "owner") === "owner";
     const ask = sid
       ? owner ? `Delete ${r} for everyone? Its history is removed from your account and from everyone you invited. This can't be undone.` : `Leave ${r}? It is removed from your account.`
       : `Remove ${r}? Its saved history on this device is deleted too.`;
-    if ((has || sid) && !window.confirm(ask)) return;
+    if ((has || sid) && !window.confirm(ask)) return { ok: false };
     if (sid) {
       try { if (owner) await rapi.deleteRoom(sid); else await rapi.removeMember(sid, subject); }
-      catch (err) { note(err instanceof Error ? err.message : "That didn't work."); return; }
-      await engineRef.current?.forget(r);
+      catch (err) {
+        // Already gone from the account (deleted on another device, or a stale id): remove this copy instead of
+        // leaving a room that can never be deleted.
+        if (!(err instanceof RoomsApiError && err.status === 404)) {
+          const error = err instanceof Error ? err.message : "That didn't work.";
+          note(error, r);
+          return { ok: false, error };
+        }
+      }
+      await engineRef.current?.forget(r, sid);
     }
+    deletedRooms.current.add(r);
+    window.setTimeout(() => deletedRooms.current.delete(r), 60_000);
     tempRef.current.delete(r);
-    void history.clearRoom(r).catch(() => {});
+    await history.clearRoom(r).catch(() => {});   // awaited: a reload must not bring the messages back
+    // Local canvases belong to the room; the server's documents go with the room.
+    const gone = canvasesRef.current.filter((c) => c.room === r);
+    if (gone.length) {
+      for (const c of gone) await history.deleteDoc("canvas", c.id).catch(() => {});
+      const keep = canvasesRef.current.filter((c) => c.room !== r);
+      canvasesRef.current = keep; setCanvases(keep);
+    }
     const { [r]: _l, ...rest } = lineStore.current; // eslint-disable-line @typescript-eslint/no-unused-vars
     lineStore.current = rest;
     setTasksByRoom((p) => { const { [r]: _t, ...others } = p; return others; }); // eslint-disable-line @typescript-eslint/no-unused-vars
-    setRoomList(next);
+    setInfo((p) => { const { [r]: _i, ...others } = p; return others; }); // eslint-disable-line @typescript-eslint/no-unused-vars
+    setRoomList((l) => withoutRoom(l, r));       // functional: a room added during the server call is kept
+    return { ok: true };
   };
 
   // ---- your data
@@ -1337,9 +1388,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     } catch (err) { note(err instanceof Error ? err.message : "Couldn't import that file."); }
   };
   const wipe = async () => {
-    if (!window.confirm("Clear this device's copy of your rooms? Your rooms stay on your account, so they download again. To remove a room for good, remove the room.")) return;
-    await history.clearAll().catch(() => {});
-    await engineRef.current?.resetLocal().catch(() => {}); // forget where sync had read up to, so everything downloads again
+    if (!window.confirm("Clear this browser's copy of the chat history? The messages stay on your account and your other devices, and this browser will not download them again. Rooms stay.")) return;
+    // Keep the sync cursors: the point of "Delete history" is that the cleared chats stay cleared here. Clearing them
+    // made the next pass download the same history again, so the button looked like it did nothing.
+    await history.clearAll({ keepCursors: true }).catch(() => {});
     lineStore.current = {};
     setTasksByRoom({});
     savedTasks.current.clear();
@@ -1692,7 +1744,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ManageRooms
           open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
           roles={Object.fromEntries(Object.entries(info).map(([k, v]) => [k, v.role]))} rapi={rapi}
-          roomId={(label) => engineRef.current?.roomId(label)} onDissolve={async (label) => { await deleteRoom(label); }} onCreate={createRoomNamed}
+          roomId={(label) => engineRef.current?.roomId(label) ?? info[label]?.id} onDissolve={(label) => deleteRoom(label)} onCreate={createRoomNamed}
         />
       )}
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>

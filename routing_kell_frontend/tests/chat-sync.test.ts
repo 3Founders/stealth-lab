@@ -242,3 +242,25 @@ describe("people and rooms", () => {
     expect([...s.rooms.values()][0].reads.get("alice")).toBe(1);
   });
 });
+
+describe("deleting a room", () => {
+  it("resolves the server id before the first pass, and a stale pass cannot add a deleted room back", async () => {
+    const s = new FakeServer();
+    const a = device(s, "alice", ["#general"]);
+    await a.engine.syncNow();
+    const id = a.engine.roomId("#general");
+    expect(id).toBeTruthy();
+    // A fresh engine (a reload) has not run a pass yet: the delete still needs the saved id.
+    const b = new SyncEngine({
+      api: s.as("alice"), history: a.history, labels: () => ["#general"],
+      hooks: { onMessages: () => {}, onRooms: () => {}, onNotice: () => {}, onState: () => {} },
+    });
+    expect(await b.resolveRoomId("#general")).toBe(id);
+    // Deleting it stops a pass that still lists it from adding it back.
+    await a.engine.forget("#general");
+    a.labels.splice(0, 1);
+    await a.engine.syncNow();
+    expect(a.engine.roomId("#general")).toBeUndefined();
+    expect(a.labels).toEqual([]);
+  });
+});

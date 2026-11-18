@@ -9,7 +9,7 @@ const link = { textDecoration: "underline" } as const;
 
 /** The plan the signed-in account has: which one, until when, and where to buy or renew. Buying happens on /pricing.
  * A buying account also has a personal referral code (made when its plan was activated): it unlocks the one-person Pilot for
- * whoever uses it. No reward is paid for sharing it (docs/referral_legality_2026-11.md). */
+ * whoever uses it, and once that person has paid it earns the account credit in its own wallet (db/212). */
 export default function PlanSummary({ api, session, returnTo = "/account/billing", now }: {
   api: Pick<ReturnType<typeof billingApi>, "plan" | "myReferral" | "mySubscription" | "cancelSubscription">;
   session: Session | null | undefined; returnTo?: string; now?: () => Date;
@@ -60,7 +60,7 @@ export default function PlanSummary({ api, session, returnTo = "/account/billing
       {session && referral && (
         <p className="small" role="status" style={{ marginTop: 10 }}>
           Your code to share: <code>{referral}</code>. Someone who uses it unlocks the one-person {planById("pilot").name} plan on
-          the pricing page. No reward is paid for sharing it.
+          the pricing page. <Link href="/referrals" style={link}>Your referrals</Link>: what you earn when they pay.
         </p>
       )}
       {session && subscription && (

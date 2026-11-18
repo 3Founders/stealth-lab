@@ -275,7 +275,7 @@ def test_redeeming_adds_a_member_once_and_a_second_redeem_by_the_same_person_use
     pool = FakePool({"FROM org_invites": {"id": "i1"}, "FROM organizations": {"name": "Acme"}, "FROM org_memberships": None,
                      "INSERT INTO audit_events": {"id": 1}})
     out = run(org_onboarding.redeem_invite(pool, _ctx(), _code()))
-    assert out == {"organization_id": ORG, "name": "Acme", "already_member": False}
+    assert out == {"organization_id": ORG, "name": "Acme", "already_member": False, "role": "member"}
     assert len(pool.statements("UPDATE org_invites SET uses")) == 1
     assert pool.statements("INSERT INTO org_memberships")[0][1][2] == org_onboarding.MEMBER_ROLE_ID
     again = FakePool({"FROM org_invites": {"id": "i1"}, "FROM organizations": {"name": "Acme"}, "FROM org_memberships": 1})

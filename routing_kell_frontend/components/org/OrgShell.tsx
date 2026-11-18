@@ -23,6 +23,8 @@ const writeCurrent = (id: string) => { try { window.localStorage.setItem(CURRENT
 const NAV: Array<{ href: string; label: string; admin: boolean }> = [
   { href: "/org", label: "Overview", admin: false },
   { href: "/org/members", label: "Members", admin: true },
+  { href: "/org/agents", label: "Agents", admin: true },
+  { href: "/org/approvals", label: "Approvals", admin: true },
   { href: "/org/policy", label: "Policy", admin: true },
   { href: "/org/activity", label: "Activity", admin: true },
   { href: "/org/keys", label: "Provider keys", admin: true },

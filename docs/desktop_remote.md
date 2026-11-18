@@ -53,3 +53,20 @@ asks that haven't started yet.
   model turn.
 - Every @kell message from someone with reachable desktop sessions costs one extra cheap model call (the routing
   decision).
+
+## 2026-11-17: why a desktop command could be missed, and the fix
+
+In the rooms' default **Ask** mode, `@kell` was routed through the Goal/Way picker first. A desktop command
+("continue in my session", "run the tests on my laptop") has no stored Way, so it stopped at a "no procedure"
+card and never reached the room agent — which is where the desktop hand-off lives. The same happened when a Way
+matched: the Way ran instead of the desktop.
+
+- **Ask mode**: a message that clearly names the person's desktop/laptop/machine (or says "continue/resume in my
+  session") now skips the picker and goes straight to the room agent (`lib/chat/desktop-intent.ts`,
+  `RoomView.askKell`).
+- **Auto mode**: still routes through the Goal picker. A fitting Way runs on its own, as before.
+- **Direct mode**: unchanged; no picker.
+- **Server fallback**: if the cheap routing model is down, out of budget, or unsure, an explicit desktop phrase
+  still reaches the person's most recent online session (`desktop_remote.route`), instead of @kell answering itself.
+- **Panel**: when no desktop has reported, the panel now says the app must be 0.1.21 or newer; when a device is
+  offline, it says to open Rooms and sign in.

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { LoadState, useLoad } from "@/components/org/useLoad";
 import { useOrg } from "@/components/org/OrgShell";
+import SetupChecklist from "@/components/org/SetupChecklist";
 import { monthRange, nameFor, totalsByUser, usd, usedShare, type OrgPolicy } from "@/lib/org-admin";
 
 const NEXT_STEP: Record<string, string> = {
@@ -57,6 +58,7 @@ function AdminHome() {
 
   return (
     <div className="org-stack">
+      <SetupChecklist />
       {stopped && <div className="org-banner" role="status"><b>This organization is stopped.</b> No model calls are allowed until an admin turns it back on.</div>}
 
       {onboarding.loaded.state === "ok" && onboarding.loaded.data.next_step !== "running" && (

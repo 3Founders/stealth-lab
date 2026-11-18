@@ -187,6 +187,27 @@ def test_route_weighs_only_reachable_sessions_and_needs_a_confident_verdict(pool
     assert run(pool, dr.route(pool, CHAIT, other["id"], "did the webhook fix land?", [], cheap('{"session": 1, "confidence": 0.9}'))) is None
 
 
+def test_an_explicit_desktop_message_still_reaches_the_desktop_when_the_router_fails(pool):
+    run(pool, dr.heartbeat(pool, ANUJ, DEV, "laptop", SESSIONS))
+
+    def cheap(answer):
+        async def call(prompt):
+            return answer
+        return call
+
+    # no routing model at all: an explicit "my session/laptop" is enough
+    hit = run(pool, dr.route(pool, ANUJ, None, "continue in my session", [], None))
+    assert hit["session_id"] == "ses_api" and hit["owner_name"] == "anuj" and hit["confidence"] == 1.0
+    # the model answered with junk or low confidence: the explicit phrase still wins
+    hit = run(pool, dr.route(pool, ANUJ, None, "run the tests on my laptop", [], cheap("not json")))
+    assert hit["session_id"] == "ses_api"
+    hit = run(pool, dr.route(pool, ANUJ, None, "my desktop: what changed?", [],
+                             cheap('{"session": 1, "confidence": 0.1}')))
+    assert hit["session_id"] == "ses_api"
+    # a general question is not hijacked by the fallback
+    assert run(pool, dr.route(pool, ANUJ, None, "what is 2+2", [], None)) is None
+
+
 def test_http_routes(pool):
     from app.mcp_server import desktop_routes, room_routes
 

@@ -52,6 +52,7 @@ export function setAppMenu(win: () => BrowserWindow | undefined) {
       { label: "How kell works", click: () => void shell.openExternal(`${SITE}/docs`) },
       { label: "Plans and credits", click: () => void shell.openExternal(`${SITE}/pricing`) },
       { label: "Account and billing", click: () => void shell.openExternal(`${SITE}/account/billing`) },
+      { label: "Your referrals", click: () => void shell.openExternal(`${SITE}/referrals`) },
       { type: "separator" },
       { label: "Contact us", click: () => void shell.openExternal(`${SITE}/contact`) },
       { type: "separator" },

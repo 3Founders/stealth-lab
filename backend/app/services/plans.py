@@ -453,5 +453,5 @@ async def activate(pool: Any, *, order: Mapping[str, Any], payment_id: str, amou
             # a person must refund or extend it. Loud on purpose.
             log.error("plan activation refused for payment %s (buyer %s, plan %s): needs manual review", payment_id, buyer, plan)
     if done:
-        await referrals.ensure_personal(pool, buyer)        # a paying customer gets their shareable code; rewards are not built
+        await referrals.ensure_personal(pool, buyer)        # a paying customer gets their shareable code; the reward is db/212
     return bool(done)

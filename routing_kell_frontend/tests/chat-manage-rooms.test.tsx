@@ -16,7 +16,7 @@ afterEach(() => { act(() => root?.unmount()); host?.remove(); host = null; root 
 async function mount(onCreate: (n: string) => { id: string } | { error: string }) {
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   const rapi = { members: vi.fn(() => Promise.resolve([])) } as never;
-  await act(async () => { root!.render(<ManageRooms open onClose={() => {}} rooms={["#general"]} initial="#general" roles={{}} rapi={rapi} roomId={() => undefined} onDissolve={() => {}} onCreate={onCreate} />); });
+  await act(async () => { root!.render(<ManageRooms open onClose={() => {}} rooms={["#general"]} initial="#general" roles={{}} rapi={rapi} roomId={() => undefined} onDissolve={async () => ({ ok: true })} onCreate={onCreate} />); });
 }
 const type = async (el: HTMLInputElement, v: string) => {
   const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -49,5 +49,31 @@ describe("Manage rooms: create a room", () => {
     expect("error" in newRoomName(Array.from({ length: 50 }, (_, i) => `#r${i}`), "x")).toBe(true);
     expect(newRoomName(Array.from({ length: 12 }, (_, i) => `#r${i}`), "x")).toEqual({ name: "#x" });
     expect("error" in newRoomName([], "a.b")).toBe(true);       // dots are not allowed in a name you type here
+  });
+});
+
+async function mountTwo(onDissolve: (label: string) => Promise<{ ok: boolean; error?: string }>) {
+  host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  const rapi = { members: vi.fn(() => Promise.resolve([])) } as never;
+  await act(async () => {
+    root!.render(<ManageRooms open onClose={() => {}} rooms={["#general", "#design"]} initial="#general" roles={{ "#general": "owner", "#design": "owner" }}
+      rapi={rapi} roomId={() => undefined} onDissolve={onDissolve} onCreate={() => ({ id: "#design" })} />);
+  });
+}
+
+describe("Manage rooms: dissolving", () => {
+  it("shows the server's reason in the dialog and keeps the room when it fails", async () => {
+    await mountTwo(async () => ({ ok: false, error: "only the owner can delete a room" }));
+    const btn = [...host!.querySelectorAll("button")].find((b) => b.textContent?.includes("Dissolve room")) as HTMLButtonElement;
+    await act(async () => { btn.click(); });
+    expect(host!.querySelector(".dg-set-panel [role=alert]")?.textContent).toBe("only the owner can delete a room");
+    expect(host!.querySelector(".dg-set-panel h3")?.textContent).toBe("#general");
+  });
+
+  it("selects the next room after a successful dissolve", async () => {
+    await mountTwo(async () => ({ ok: true }));
+    const btn = [...host!.querySelectorAll("button")].find((b) => b.textContent?.includes("Dissolve room")) as HTMLButtonElement;
+    await act(async () => { btn.click(); });
+    expect(host!.querySelector(".dg-set-panel h3")?.textContent).toBe("#design");
   });
 });

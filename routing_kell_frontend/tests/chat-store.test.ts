@@ -87,6 +87,20 @@ describe("history store", () => {
     expect(s.map.has("device-key")).toBe(true);
   });
 
+  it("Delete history keeps the sync cursors and drops the send queue; a reset clears the cursors", async () => {
+    const h = new HistoryStore(mapStore(), "u1");
+    await h.appendMessage(msg("m1", "#general", 1000, "old"));
+    await h.setMeta("cursors", { "room-1": 7 });
+    await h.putOutbox({ id: "a", room: "#general", event: { id: "a", kind: "msg", body: "x", sender_kind: "person" }, at: 1 });
+    await h.clearAll({ keepCursors: true });
+    expect(await h.rooms()).toEqual([]);
+    expect(await h.getMeta("cursors")).toEqual({ "room-1": 7 });
+    expect(await h.outbox()).toEqual([]);
+    await h.setMeta("cursors", { "room-1": 9 });
+    await h.clearAll();
+    expect(await h.getMeta("cursors")).toEqual({});
+  });
+
   it("export then import into a fresh device restores messages and tasks, and rejects other files", async () => {
     const a = new HistoryStore(mapStore(), "u1");
     await a.appendMessage(msg("m1", "#general", 1000, "hello")); await a.saveTask(task("t1", "#general", { status: "done", result: "ok" }));

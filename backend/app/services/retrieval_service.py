@@ -107,6 +107,14 @@ class RetrievalConfig:
     hierarchy_max_candidates: int = 32  # neighbour Goals kept in total
     hierarchy_judge_top_k: int = 8      # neighbours sent to the contextual Goal judge
     hierarchy_seed_max: int = 3         # judged candidates expanded when nothing matched
+    # The Goal tree walk (app/services/goal_search_tree.py): breadth first from the search's Goals, and JEV decides
+    # whether to go down one more level. A depth of 0 is exactly the old flat answer.
+    tree_judge_scanned: bool = True     # judge every fused Goal, not only the top rerank_top_k (a narrow Goal needs it)
+    tree_max_depth: int = 2             # SPECIALIZES levels below the search's Goals
+    tree_descend_per_level: int = 4     # Goals per level whose children are asked about
+    tree_goals_per_level: int = 8       # children asked about per level, in relevance order
+    tree_max_goals: int = 16            # every Goal the walk may return, the search's own included
+
 
 
 @dataclass

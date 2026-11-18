@@ -221,12 +221,19 @@ export class HistoryStore {
     this.keyReplaced = false;
   }
 
-  /** Everything this account has saved on this device. Not the device key. */
-  async clearAll(): Promise<void> {
+  /**
+   * Everything this account has saved on this device. Not the device key.
+   *
+   * `keepCursors` is for "Delete history": the messages are cleared here, but the sync positions stay, so the next pass
+   * does not download the same history again. Without it (a lost key, a reset) the cursors are cleared too, so the
+   * account's rooms download from the start.
+   */
+  async clearAll({ keepCursors = false }: { keepCursors?: boolean } = {}): Promise<void> {
     for (const k of await this.store.keys()) {
-      if (k.startsWith(`ev:${this.subject}:`) || k.startsWith(`task:${this.subject}:`) || k.startsWith(`idx:${this.subject}:`)) await this.store.delete(k);
+      if (k.startsWith(`ev:${this.subject}:`) || k.startsWith(`task:${this.subject}:`) || k.startsWith(`idx:${this.subject}:`)
+        || k.startsWith(`out:${this.subject}:`)) await this.store.delete(k);
     }
-    await this.setMeta("cursors", {}); // the next sync downloads everything again from your account
+    if (!keepCursors) await this.setMeta("cursors", {}); // the next sync downloads everything again from your account
   }
 
   // ---- your own documents (canvas, notes, ...): one encrypted record each, bound to this account and kind by the authenticated data

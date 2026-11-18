@@ -47,3 +47,23 @@
 .org-dialog { border: 1px solid var(--rule-strong); border-radius: 12px; padding: 22px; max-width: min(92vw, 460px); width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
 .org-dialog::backdrop { background: rgba(0,0,0,.4); }
 @media (max-width: 760px) { .org-big { font-size: 28px; } .org-table { font-size: 14px; } .org-dialog { padding: 18px; } }
+
+/* First-run setup: a view over the real pages, not a second product. */
+.org-setup { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--rule-strong); border-radius: 10px; background: var(--surface); }
+.org-setup-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.org-setup-head h2 { margin: 0 0 4px; }
+.org-setup-head p { margin: 0; }
+.org-setup-progress { display: flex; align-items: center; gap: 12px; }
+.org-setup-progress .org-bar-track { flex: 1; }
+.org-setup-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.org-setup-step { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; }
+.org-setup-step[data-next] { background: var(--soft); }
+.org-setup-mark { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--rule-strong); color: var(--grey); }
+.org-setup-step[data-done] .org-setup-mark { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.org-setup-body { display: grid; gap: 1px; min-width: 0; flex: 1; }
+.org-setup-body b { font-weight: 500; }
+.org-setup-step a { flex: none; text-decoration: none; }
+.org-setup-done { color: var(--grey); flex: none; }
+.org-setup-show { justify-self: start; }
+.org-setup-error { padding: 12px 14px; }
+@media (max-width: 640px) { .org-setup-step { align-items: flex-start; flex-wrap: wrap; } .org-setup-step a { margin-left: 36px; } }

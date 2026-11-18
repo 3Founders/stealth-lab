@@ -27,8 +27,20 @@ export interface OrgPolicy {
 export type PolicyChanges = Partial<Pick<OrgPolicy, "allowed_providers" | "allowed_models" | "allowed_tools" | "allowed_data_classes" | "monthly_budget_usd" | "per_user_daily_budget_usd">>;
 
 export interface Member { user_id: string; subject: string; display_name: string | null; email: string | null; is_active: boolean; roles: Role[]; member_since: string }
-export interface Invite { id: string; label: string | null; created_by: string | null; created_at: string; expires_at: string; max_uses: number; uses: number; revoked_at: string | null; active: boolean }
-export interface CreatedInvite { id: string; code: string; expires_at: string; max_uses: number; label: string | null }
+export interface Invite { id: string; label: string | null; role: Role; email: string | null; created_by: string | null; created_at: string; expires_at: string; max_uses: number; uses: number; revoked_at: string | null; active: boolean }
+export interface CreatedInvite { id: string; code: string; expires_at: string; max_uses: number; label: string | null; role: Role; email: string | null }
+export interface OrgAgent {
+  id: string; name: string; kind: string; owner_sub: string; owner_name: string | null; owner_email: string | null;
+  created_at: string; last_seen: string | null; revoked_at: string | null; online: boolean;
+  scopes: string[]; data_ceiling: string; budget_usd_month: string | null; expires_at: string | null;
+}
+export interface OrgApproval {
+  id: string; owner_id: string; task_id: string | null; goal_id: string | null; server: string; tool: string;
+  args_hash: string; risk: string; data_class: string; cert_id: string | null;
+  status: "pending" | "approved" | "denied" | "expired" | "used"; requested_at: string; decided_at: string | null;
+  expires_at: string; used_at: string | null; decided_by: string | null; note: string | null;
+  owner_name: string | null; owner_email: string | null;
+}
 
 export interface Budget {
   policy_version: number; kill_switch: boolean; month_start: string; day_start: string;
@@ -126,8 +138,11 @@ export function orgApi(deps: OrgDeps) {
     killSwitch: (org: string, on: boolean, reason: string) => call<OrgPolicy>("POST", `${o(org)}/kill-switch`, { on, reason }),
 
     members: async (org: string) => (await call<{ members: Member[] }>("GET", `${o(org)}/members`)).members,
+    setMemberRole: (org: string, userId: string, role: Role) =>
+      call<{ user_id: string; subject: string; role: Role }>("PATCH", `${o(org)}/members/${enc(userId)}`, { role }),
+    removeMember: (org: string, userId: string) => call<void>("DELETE", `${o(org)}/members/${enc(userId)}`),
     invites: (org: string) => call<Invite[]>("GET", `${o(org)}/invites`),
-    createInvite: (org: string, v: { label?: string; days?: number; max_uses?: number }) => call<CreatedInvite>("POST", `${o(org)}/invites`, v),
+    createInvite: (org: string, v: { label?: string; days?: number; max_uses?: number; role?: Role; email?: string }) => call<CreatedInvite>("POST", `${o(org)}/invites`, v),
     revokeInvite: (org: string, id: string) => call<void>("DELETE", `${o(org)}/invites/${enc(id)}`),
     join: (code: string) => call<Joined>("POST", "/v1/join", { code }),
 
@@ -139,6 +154,15 @@ export function orgApi(deps: OrgDeps) {
     providerKeys: (org: string) => call<ProviderKey[]>("GET", `${o(org)}/provider-keys`),
     putProviderKey: (org: string, connectionId: string, v: ProviderKeyInput) => call<ProviderKey>("PUT", `${o(org)}/provider-keys/${enc(connectionId)}`, v),
     removeProviderKey: (org: string, connectionId: string) => call<void>("DELETE", `${o(org)}/provider-keys/${enc(connectionId)}`),
+
+    agents: (org: string) => call<OrgAgent[]>("GET", `${o(org)}/agents`),
+    createAgent: (org: string, v: { name: string; kind?: string; scopes?: string[]; data_ceiling?: string; budget_usd_month?: string; expires_days?: number }) =>
+      call<OrgAgent>("POST", `${o(org)}/agents`, v),
+    revokeAgent: (org: string, id: string) => call<void>("DELETE", `${o(org)}/agents/${enc(id)}`),
+    approvals: async (org: string, status: "pending" | "all" | "approved" | "denied" | "expired" | "used" = "pending") =>
+      (await call<{ approvals: OrgApproval[] }>("GET", `${o(org)}/approvals${qs({ status })}`)).approvals,
+    approveApproval: (org: string, id: string) => call<{ id: string; status: string }>("POST", `${o(org)}/approvals/${enc(id)}/approve`),
+    denyApproval: (org: string, id: string) => call<{ id: string; status: string }>("POST", `${o(org)}/approvals/${enc(id)}/deny`),
 
     onboarding: (org: string) => call<Onboarding>("GET", `${o(org)}/onboarding`),
     clientConfig: (org: string) => call<ClientConfig>("GET", `${o(org)}/client-config`),

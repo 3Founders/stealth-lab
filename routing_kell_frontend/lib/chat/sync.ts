@@ -70,6 +70,8 @@ export class SyncEngine {
   private cursors: Record<string, number> = {};
   private lamport = 0;
   private loaded = false;
+  /** Server ids removed on purpose: a sync pass that started before the delete must not add them back. */
+  private forgotten = new Set<string>();
 
   constructor(private d: SyncDeps) {}
 
@@ -88,12 +90,22 @@ export class SyncEngine {
 
   roomId(label: string): string | undefined { return this.map[label]; }
 
-  /** Stop tracking a room that was removed on purpose, so a new room with the same name starts clean. */
-  async forget(label: string): Promise<void> {
+  /** The server id for a room label, after the saved map has loaded. A room removed before the first pass has no id yet. */
+  async resolveRoomId(label: string): Promise<string | undefined> {
     await this.load();
-    const id = this.map[label];
+    return this.map[label];
+  }
+
+  /** Stop tracking a room that was removed on purpose, so a new room with the same name starts clean. The id is passed
+   *  when the caller resolved it before the map loaded; it still has to be forgotten for the next pass. */
+  async forget(label: string, id?: string): Promise<void> {
+    await this.load();
+    const known = id ?? this.map[label];
     delete this.map[label];
-    if (id) delete this.cursors[id];
+    if (known) {
+      delete this.cursors[known];
+      this.forgotten.add(known);        // a pass already in flight may still list it; do not add it back
+    }
     await this.save();
   }
 
@@ -241,6 +253,8 @@ export class SyncEngine {
   /** Match this device's room labels with the server's rooms. */
   private async reconcile(rooms: ServerRoom[]): Promise<void> {
     const byId = new Map(rooms.map((r) => [r.id, r]));
+    // A room that is gone from the server is no longer forgotten: the next room with that id (never reused) is not ours.
+    for (const id of [...this.forgotten]) if (!byId.has(id)) this.forgotten.delete(id);
     const labels = this.d.labels();
     const change: RoomsChange = { added: [], removed: [], info: {} };
 
@@ -270,7 +284,7 @@ export class SyncEngine {
 
     const taken = new Set([...have]);
     for (const r of rooms) {                 // a room on the server this device doesn't have: a new device, or an invitation
-      if (used.has(r.id)) continue;
+      if (used.has(r.id) || this.forgotten.has(r.id)) continue;
       let label = r.title, n = 2;
       while (taken.has(label)) label = `${r.title}-${n++}`;
       taken.add(label);

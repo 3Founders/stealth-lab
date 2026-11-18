@@ -14,7 +14,9 @@ Buying credits, on the hosted MCP service (the site calls these; Razorpay calls 
   GET  /v1/billing/plan      the buyer's latest plan: plan, seats, team_name, active_until
   GET  /v1/billing/subscription  the buyer's running auto-renew (plan, status, next charge), if any   (website session)
   POST /v1/billing/subscription/cancel  stop future auto-renew charges                                (website session)
-  GET  /v1/billing/referral  the buyer's own personal referral code, if any - rewards are NOT built               (session)
+  GET  /v1/billing/referral  the buyer's own personal referral code, if any                         (website session)
+  GET  /v1/billing/referrals the buyer's own referral record: the code, how many of the 30 paid referrals it has earned
+                             on, what is pending and what has been paid into their wallet (db/212)   (website session)
   POST /v1/billing/codes/check  {"code": ...} -> {"valid": true} or a 400 saying why. No session, limited per IP.
   POST /v1/billing/webhook   Razorpay's payment.captured / order.paid                (signature, no session)
 
@@ -39,7 +41,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.mcp_server.chat_routes import BY_ADDRESS, Window, client_address, cors_headers as _chat_cors, resolve_identity
-from app.services import accounts, free_credits, packs, plans, referrals, subscriptions, wallet
+from app.services import accounts, free_credits, packs, plans, referral_rewards, referrals, subscriptions, wallet
 
 log = logging.getLogger(__name__)
 RAZORPAY_ORDERS = "https://api.razorpay.com/v1/orders"
@@ -230,8 +232,8 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
 
     @server.custom_route("/v1/billing/referral", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def referral_route(request: Request) -> Response:
-        """The signed-in buyer's own personal code. It unlocks the one-person pilot for whoever they give it to; no
-        reward of any kind is built (docs/referral_legality_2026-11.md)."""
+        """The signed-in buyer's own personal code. It unlocks the one-person pilot for whoever they give it to, and
+        once that person has PAID it pays the buyer credit in their own wallet (db/212)."""
         if request.method == "OPTIONS":
             return Response(status_code=204, headers=cors_headers(request))
         who, account, bad = await person(request)
@@ -239,6 +241,22 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             return bad
         mine = await referrals.mine(pool_getter(), account)
         return _json(request, mine or {"code": None, "kind": None})
+
+    @server.custom_route("/v1/billing/referrals", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def referrals_route(request: Request) -> Response:
+        """The buyer's own referral record: their code, the 30-per-account allowance, what is pending and what has
+        been paid into their own wallet. Never anything about the people who used the code -- an opaque row id and a
+        date only (docs/referral_legality_2026-11.md, data protection)."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        who, account, bad = await person(request)
+        if bad is not None:
+            return bad
+        pool = pool_getter()
+        mine = await referrals.mine(pool, account)
+        out = await referral_rewards.summary(pool, referrer_user_id=account)
+        out["code"] = mine["code"] if mine else None
+        return _json(request, out)
 
     @server.custom_route("/v1/billing/subscription", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def subscription_route(request: Request) -> Response:
@@ -356,6 +374,11 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             if order.get("plan"):
                 await plans.activate(pool, order={**order, "order_id": pay["order_id"]}, payment_id=pay["payment_id"],
                                      amount_paise=pay["amount"])
+                # A code on a paid order pays the person who shared it (db/212). The plan is activated first, so the
+                # reward follows a real sale; a team order never pays into an organization wallet (the service refuses
+                # anything that is not a personal code, see services/referral_rewards.py).
+                await referral_rewards.record_paid_order(pool, order={**order, "order_id": pay["order_id"]},
+                                                         payment_id=pay["payment_id"])
                 await wallet.mark_event(pool, event_id)
                 return Response(status_code=200)
             await wallet.credit_payment(pool, org_id=order["organization_id"], payment_ref=pay["payment_id"],

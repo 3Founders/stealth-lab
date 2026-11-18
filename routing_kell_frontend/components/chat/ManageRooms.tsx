@@ -12,8 +12,8 @@ export interface ManageRoomsProps {
   rapi: RoomsApi;
   /** The server id for a room label, or undefined while the room only exists on this device. */
   roomId: (label: string) => string | undefined;
-  /** Dissolve (owner) or leave (anyone else) a room; the parent asks the person to confirm. */
-  onDissolve: (label: string) => Promise<void> | void;
+  /** Dissolve (owner) or leave (anyone else) a room; the parent asks the person to confirm and does the deletion. */
+  onDissolve: (label: string) => Promise<{ ok: boolean; error?: string }>;
   /** Makes a room and switches to it, or says why it cannot. */
   onCreate: (name: string) => { id: string } | { error: string };
 }
@@ -99,7 +99,17 @@ export default function ManageRooms(p: ManageRoomsProps) {
     setNewName(""); setNewError(""); setRoom(r.id);
     close(); // you land in the new room, not behind a dialog that looks as if nothing happened
   }
-  async function dissolve() { setBusy("room"); try { await p.onDissolve(room); } finally { setBusy(""); } }
+  async function dissolve() {
+    setBusy("room"); setError("");
+    try {
+      const out = await p.onDissolve(room);
+      if (!out.ok) { if (out.error) setError(out.error); return; }
+      // The room is gone: show the next one, or close the dialog. Leaving the deleted room selected made a successful
+      // deletion look like nothing happened (the left list no longer had it, but the panel still did).
+      const left = p.rooms.filter((x) => x !== room);
+      if (left.length) setRoom(left[0]); else p.onClose();
+    } catch (e) { fail(e); } finally { setBusy(""); }
+  }
 
   // A person can be changed or removed by someone above them: the owner by anyone's rank but their own, an admin only for plain members.
   const canRemove = (m: RoomMember) => !m.me && m.role !== "owner" && (isOwner || (role === "admin" && m.role === "member"));

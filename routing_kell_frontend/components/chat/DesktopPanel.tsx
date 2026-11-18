@@ -108,8 +108,12 @@ function Overview({ ov, grants, api, onPick, reload }: {
           <div className="dg-dk-empty">
             <p><b>No desktop yet.</b></p>
             <p className="small dim">Open the kell desktop app and sign in to the rooms there: its sessions show up here.</p>
+            <p className="small dim">Use kell desktop 0.1.21 or newer. Older builds do not report sessions, so nothing can be called from a room.</p>
             <a className="btn-line dg-mini-btn" href="/download">Get the desktop app</a>
           </div>
+        )}
+        {ov.devices.length > 0 && !ov.devices.some((d) => d.online) && (
+          <p className="small dim" role="status">The desktop is offline. Open the app, open <b>Rooms</b>, and sign in there; it reports again within 30 seconds.</p>
         )}
         {ov.devices.map((d) => (
           <div key={d.id} className="dg-dk-device">

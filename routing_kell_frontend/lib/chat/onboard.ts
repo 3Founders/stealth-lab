@@ -21,9 +21,14 @@ export function onboardName(kind: OnboardKind): string {
 /** @deprecated kept for older callers: a random name that passes validAgentName. */
 export function newOnboardName(rand: () => number = Math.random): string {
   const alphabet = "abcdefghijkmnpqrstuvwxyz23456789";
-  let s = "";
-  for (let i = 0; i < 4; i++) s += alphabet[Math.floor(rand() * alphabet.length)];
-  return `agent-${s}`;
+  // `validAgentName` refuses a name containing "gpt"; a four-letter draw can contain it by chance,
+  // so draw again rather than making the caller handle a rejected random name.
+  for (let attempt = 0; attempt < 50; attempt++) {
+    let s = "";
+    for (let i = 0; i < 4; i++) s += alphabet[Math.floor(rand() * alphabet.length)];
+    if (!/gpt/.test(s)) return `agent-${s}`;
+  }
+  return "agent-0000";
 }
 
 export function onboardPrompt(a: { name: string; room: string; url?: string | null; kind?: OnboardKind }): string {

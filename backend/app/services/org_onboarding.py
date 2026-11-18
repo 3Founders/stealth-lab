@@ -34,6 +34,13 @@ from app.services.access import tenant_transaction
 from app.services.auth_context import AuthContext
 
 MEMBER_ROLE_ID = "10000000-0000-0000-0000-000000000003"      # db/28_identity.sql seeds the four builtin roles
+ROLE_IDS = {
+    "owner": "10000000-0000-0000-0000-000000000001",
+    "admin": "10000000-0000-0000-0000-000000000002",
+    "member": MEMBER_ROLE_ID,
+    "viewer": "10000000-0000-0000-0000-000000000004",
+}
+INVITE_ROLES = ("owner", "admin", "member", "viewer")
 CODE = re.compile(r"sl1_([0-9a-f]{32})_([0-9a-f]{24})")
 MAX_INVITE_DAYS = 30
 MAX_INVITE_USES = 5000
@@ -59,34 +66,45 @@ def parse_code(code: str) -> tuple[str, str]:
 # ------------------------------------------------------------------ invites (admin side)
 
 async def create_invite(pool: Any, *, actor_subject: str, actor_user_id: Optional[str], actor_roles: Collection[str],
-                        org_id: str, label: Optional[str], days: int, max_uses: int) -> dict[str, Any]:
+                        org_id: str, label: Optional[str], days: int, max_uses: int,
+                        role: str = "member", email: Optional[str] = None) -> dict[str, Any]:
     gov._require(actor_roles, gov.ADMIN_ROLES, "creating an invite")
+    role = (role or "member").strip().lower()
+    if role not in INVITE_ROLES:
+        raise gov.Invalid(f"role must be one of {', '.join(INVITE_ROLES)}")
+    if role == "owner" and "owner" not in actor_roles:
+        raise gov.NotAuthorized("only an owner can invite another owner")
     if not isinstance(days, int) or not 1 <= days <= MAX_INVITE_DAYS:
         raise gov.Invalid(f"days must be a whole number from 1 to {MAX_INVITE_DAYS}")
     if not isinstance(max_uses, int) or not 1 <= max_uses <= MAX_INVITE_USES:
         raise gov.Invalid(f"max_uses must be a whole number from 1 to {MAX_INVITE_USES}")
     if label is not None and (not isinstance(label, str) or len(label) > 80):
         raise gov.Invalid("label must be text of at most 80 characters")
+    if email is not None and (not isinstance(email, str) or len(email) > 320 or "@" not in email):
+        raise gov.Invalid("email must be an address")
     secret = secrets.token_hex(12)
     code = f"sl1_{uuid.UUID(str(org_id)).hex}_{secret}"
     expires = datetime.now(timezone.utc) + timedelta(days=days)
     async with tenant_transaction(pool, gov._scope(org_id)) as conn:
         row = await conn.fetchrow(
-            "INSERT INTO org_invites (organization_id, secret_hash, label, created_by, expires_at, max_uses) "
-            "VALUES ($1::uuid, $2, $3, $4, $5, $6) RETURNING id::text AS id, created_at",
-            str(org_id), _hash(secret), (label or "").strip() or None, actor_subject, expires, max_uses)
+            "INSERT INTO org_invites (organization_id, secret_hash, label, created_by, expires_at, max_uses, role, email) "
+            "VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8) RETURNING id::text AS id, created_at",
+            str(org_id), _hash(secret), (label or "").strip() or None, actor_subject, expires, max_uses, role,
+            (email or "").strip() or None)
         await gov._audit(conn, actor_subject=actor_subject, actor_user_id=actor_user_id, action="org_invite.create",
                          object_type="org_invite", object_id=row["id"], org_id=org_id,
-                         details={"label": label, "expires_at": expires.isoformat(), "max_uses": max_uses})
+                         details={"label": label, "expires_at": expires.isoformat(), "max_uses": max_uses,
+                                  "role": role, "email": (email or None)})
     # the only time the code exists in the clear
-    return {"id": row["id"], "code": code, "expires_at": expires.isoformat(), "max_uses": max_uses, "label": label}
+    return {"id": row["id"], "code": code, "expires_at": expires.isoformat(), "max_uses": max_uses, "label": label,
+            "role": role, "email": (email or "").strip() or None}
 
 
 async def list_invites(pool: Any, *, actor_roles: Collection[str], org_id: str) -> list[dict[str, Any]]:
     gov._require(actor_roles, gov.ADMIN_ROLES, "listing invites")
     async with tenant_transaction(pool, gov._scope(org_id)) as conn:
         rows = await conn.fetch(
-            "SELECT id::text AS id, label, created_by, created_at, expires_at, max_uses, uses, revoked_at, "
+            "SELECT id::text AS id, label, role, email, created_by, created_at, expires_at, max_uses, uses, revoked_at, "
             "(revoked_at IS NULL AND expires_at > now() AND uses < max_uses) AS active "
             "FROM org_invites WHERE organization_id = $1::uuid ORDER BY created_at DESC LIMIT 200", str(org_id))
     return [{**dict(r), "created_at": r["created_at"].isoformat(), "expires_at": r["expires_at"].isoformat(),
@@ -114,7 +132,7 @@ async def redeem_invite(pool: Any, ctx: AuthContext, code: str) -> dict[str, Any
     org_id, secret = parse_code(code)
     async with tenant_transaction(pool, gov._scope(org_id)) as conn:
         invite = await conn.fetchrow(
-            "SELECT id FROM org_invites WHERE organization_id = $1::uuid AND secret_hash = $2 AND revoked_at IS NULL "
+            "SELECT id, role FROM org_invites WHERE organization_id = $1::uuid AND secret_hash = $2 AND revoked_at IS NULL "
             "AND expires_at > now() AND uses < max_uses FOR UPDATE", org_id, _hash(secret))
         if invite is None:
             raise gov.NotFound("this invite is not valid")
@@ -126,12 +144,100 @@ async def redeem_invite(pool: Any, ctx: AuthContext, code: str) -> dict[str, Any
             "LIMIT 1", org_id, ctx.user_id)
         if not already:
             await conn.execute("UPDATE org_invites SET uses = uses + 1 WHERE id = $1", invite["id"])
+            role_name = str(invite.get("role") or "member")
+            role_id = ROLE_IDS.get(role_name, MEMBER_ROLE_ID)
             await conn.execute(
                 "INSERT INTO org_memberships (organization_id, user_id, role_id) VALUES ($1::uuid, $2::uuid, $3::uuid) "
-                "ON CONFLICT DO NOTHING", org_id, ctx.user_id, MEMBER_ROLE_ID)
+                "ON CONFLICT (organization_id, user_id, role_id) DO UPDATE SET t_expired = NULL",
+                org_id, ctx.user_id, role_id)
             await gov._audit(conn, actor_subject=ctx.subject, actor_user_id=ctx.user_id, action="org_invite.redeem",
-                             object_type="org_invite", object_id=str(invite["id"]), org_id=org_id, details={})
-    return {"organization_id": org_id, "name": org["name"], "already_member": bool(already)}
+                             object_type="org_invite", object_id=str(invite["id"]), org_id=org_id,
+                             details={"role": role_name})
+    return {"organization_id": org_id, "name": org["name"], "already_member": bool(already),
+            "role": str(invite.get("role") or "member")}
+
+
+# ------------------------------------------------------------------ member lifecycle (admin side)
+
+async def _member_subject(conn: Any, org_id: str, user_id: str) -> str:
+    sub = await conn.fetchval(
+        "SELECT u.external_subject FROM users u JOIN org_memberships m ON m.user_id = u.id "
+        "WHERE m.organization_id = $1::uuid AND m.user_id = $2::uuid AND m.t_expired IS NULL LIMIT 1",
+        str(org_id), str(user_id))
+    if not sub:
+        raise gov.NotFound("no such member")
+    return str(sub)
+
+
+async def _owner_count(conn: Any, org_id: str) -> int:
+    return int(await conn.fetchval(
+        "SELECT count(DISTINCT m.user_id) FROM org_memberships m JOIN roles r ON r.id = m.role_id "
+        "WHERE m.organization_id = $1::uuid AND m.t_expired IS NULL AND r.name = 'owner'", str(org_id)) or 0)
+
+
+async def _is_owner(conn: Any, org_id: str, user_id: str) -> bool:
+    return bool(await conn.fetchval(
+        "SELECT 1 FROM org_memberships m JOIN roles r ON r.id = m.role_id "
+        "WHERE m.organization_id = $1::uuid AND m.user_id = $2::uuid AND m.t_expired IS NULL AND r.name = 'owner' LIMIT 1",
+        str(org_id), str(user_id)))
+
+
+async def set_member_role(pool: Any, *, actor_subject: str, actor_user_id: Optional[str], actor_roles: Collection[str],
+                          org_id: str, user_id: str, role: str) -> dict[str, Any]:
+    """Give one member a different role. Expires the old membership and writes the new one; the last owner cannot be
+    demoted, and only an owner can create another owner."""
+    gov._require(actor_roles, gov.ADMIN_ROLES, "changing a member's role")
+    role = (role or "").strip().lower()
+    if role not in ROLE_IDS:
+        raise gov.Invalid(f"role must be one of {', '.join(ROLE_IDS)}")
+    if role == "owner" and "owner" not in actor_roles:
+        raise gov.NotAuthorized("only an owner can make another owner")
+    async with tenant_transaction(pool, gov._scope(org_id)) as conn:
+        sub = await _member_subject(conn, org_id, user_id)
+        was_owner = await _is_owner(conn, org_id, user_id)
+        if was_owner and role != "owner" and await _owner_count(conn, org_id) <= 1:
+            raise gov.Conflict("an organization needs at least one owner")
+        await conn.execute(
+            "UPDATE org_memberships SET t_expired = now() WHERE organization_id = $1::uuid AND user_id = $2::uuid "
+            "AND t_expired IS NULL", str(org_id), str(user_id))
+        await conn.execute(
+            "INSERT INTO org_memberships (organization_id, user_id, role_id, granted_by) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid) "
+            "ON CONFLICT (organization_id, user_id, role_id) DO UPDATE SET t_expired = NULL, granted_by = EXCLUDED.granted_by",
+            str(org_id), str(user_id), ROLE_IDS[role], actor_user_id)
+        await gov._audit(conn, actor_subject=actor_subject, actor_user_id=actor_user_id, action="org_member.role",
+                         object_type="org_member", object_id=str(user_id), org_id=org_id,
+                         details={"role": role, "was_owner": was_owner})
+    return {"user_id": str(user_id), "subject": sub, "role": role}
+
+
+async def remove_member(pool: Any, *, actor_subject: str, actor_user_id: Optional[str], actor_roles: Collection[str],
+                        org_id: str, user_id: str) -> dict[str, Any]:
+    """Take one person out of the organization: their memberships expire, and the relay agents they owned are revoked.
+    The last owner cannot be removed. Their account and personal work are untouched."""
+    gov._require(actor_roles, gov.ADMIN_ROLES, "removing a member")
+    async with tenant_transaction(pool, gov._scope(org_id)) as conn:
+        sub = await _member_subject(conn, org_id, user_id)
+        was_owner = await _is_owner(conn, org_id, user_id)
+        if was_owner:
+            if "owner" not in actor_roles:
+                raise gov.NotAuthorized("only an owner can remove an owner")
+            if await _owner_count(conn, org_id) <= 1:
+                raise gov.Conflict("an organization needs at least one owner")
+        status = await conn.execute(
+            "UPDATE org_memberships SET t_expired = now() WHERE organization_id = $1::uuid AND user_id = $2::uuid "
+            "AND t_expired IS NULL", str(org_id), str(user_id))
+        revoked = 0
+        try:
+            if await conn.fetchval("SELECT to_regclass('public.delegate_agents') IS NOT NULL"):
+                done = await conn.execute(
+                    "UPDATE delegate_agents SET revoked_at = now() WHERE owner_sub = $1 AND revoked_at IS NULL", sub)
+                revoked = int(str(done).rsplit(" ", 1)[-1])
+        except Exception:  # noqa: BLE001 -- removal must not fail because an optional table is missing
+            revoked = 0
+        await gov._audit(conn, actor_subject=actor_subject, actor_user_id=actor_user_id, action="org_member.remove",
+                         object_type="org_member", object_id=str(user_id), org_id=org_id,
+                         details={"was_owner": was_owner, "agents_revoked": revoked})
+    return {"user_id": str(user_id), "subject": sub, "removed": status.endswith("1"), "agents_revoked": revoked}
 
 
 # ------------------------------------------------------------------ what a joined machine is told

@@ -54,19 +54,34 @@ async def choose_goal(
     meta = rs.RetrievalMeta()
     judge = rs.default_judge()
     local_claims = [{"id": f["claim_id"], "statement": f["statement"]} for f in facts]
+    walk = None
     try:
         ctx = await rs.build_query_context(query, local_claims, embedder=None, cfg=cfg)
         with _stages.stage("goal_search"):
             found = await rs.search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta,
                                           **({"library": library} if library is not None else {}))
+        # Breadth first down the Goal tree: the search's Goals are Level 0; JEV decides, level by level, whether a
+        # narrower Goal is one of this request's parts (app/services/goal_search_tree.py). A walked-in Goal is then
+        # handed to the procedure tier exactly like a flat match.
+        with _stages.stage("goal_tree"):
+            from app.services import goal_tree_search as _tree_search
+
+            walk, descended = await _tree_search.descend_from(
+                pool, found.candidates, ctx=ctx, judge=judge, scope=scope, cfg=cfg, meta=meta,
+            )
+        if descended:
+            found = rs.GoalSearchResult(
+                resolved=list(found.resolved), candidates=list(found.candidates) + list(descended),
+                resolution=found.resolution,
+            )
         with _stages.stage("hierarchy"):
             routed = await rs._route_goal_candidates(
                 pool, found, scope=scope, cfg=cfg, meta=meta, ctx=ctx, judge=judge,
             )
         if collect is not None:
             collect.extend(h for h in [*found.candidates, *routed] if getattr(h, "judged", False))
-        # Flat and hierarchy candidates compete on the same judged verdicts: a
-        # neighbour the judge calls a firm match can be the chosen Goal.
+        # Flat, tree and hierarchy candidates compete on the same judged verdicts: a Goal the judge calls a firm
+        # match can be the chosen Goal, and adjacency alone never can be.
         found = rs.combine_goal_resolution(found, routed, cfg)
     except Exception:  # noqa: BLE001 -- the caller's fallback still answers; the reply records it
         log.warning("canonical goal choice failed; caller must fall back", exc_info=True)
@@ -80,13 +95,27 @@ async def choose_goal(
         "degraded_reasons": list(meta.degraded_reasons),
         "local_claim_ids": ctx.claim_ids,
         "hierarchy": meta.goal_routing,
+        "goal_tree": walk.as_dict() if walk is not None else None,
         "related_goals": [
             judged_goal_candidate(hit) for hit in routed if getattr(hit, "hierarchy", None) is not None
         ],
     }
+
     resolved = list(found.resolved)
+    # A tied Goal that the tree walk reached is narrower than the search's own Goal for this request; a narrower Goal
+    # that serves the request as well is the better reading of it (that is why the walk went down). Chosen only inside
+    # the same ambiguity margin that would otherwise call the answer ambiguous.
+    reached = {n.goal_id for n in (walk.descended if walk is not None else [])}
     if found.resolution == "matches" and resolved:
         top = resolved[0]
+        if top.id not in reached:
+            narrower = [h for h in resolved[1:] if h.id in reached
+                        and (top.confidence or 0) - (h.confidence or 0) < CONFIDENCE_MARGIN]
+            if narrower:
+                deep = narrower[0]
+                judgment["tiebreak"] = {"by": "goal_tree", "goal_id": deep.id,
+                                        "reason": "a narrower Goal reached by the walk serves the request as well"}
+                return "resolved", {"id": deep.id, "canonical_name": deep.name}, {"goal_judgment": judgment}
         runner_up = resolved[1] if len(resolved) > 1 else None
         if runner_up is None or (top.confidence or 0) - (runner_up.confidence or 0) >= CONFIDENCE_MARGIN:
             return "resolved", {"id": top.id, "canonical_name": top.name}, {"goal_judgment": judgment}

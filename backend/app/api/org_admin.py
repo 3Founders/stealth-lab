@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_auth_context
 from app.services import org_governance as gov
-from app.services import org_keys, org_onboarding
+from app.services import org_agents, org_keys, org_onboarding
 from app.services.auth_context import AuthContext
 
 router = APIRouter(prefix="/v1/orgs/{org_id}", tags=["org-admin"])
@@ -151,6 +151,31 @@ async def members(org_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_cont
     except gov.GovernanceError as exc:
         raise _http(exc) from exc
     return {"organization_id": org_id, "members": json.loads(json.dumps(rows, default=str))}
+
+
+@router.patch("/members/{user_id}")
+async def set_member_role(org_id: str, user_id: str, body: MemberRoleBody, pool=Depends(get_pool),
+                          ctx=Depends(get_auth_context)) -> dict:
+    """Give one member a different role. The last owner cannot be demoted; only an owner can create another owner."""
+    caller, roles = _caller(ctx, org_id)
+    try:
+        return await org_onboarding.set_member_role(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                                    actor_roles=roles, org_id=org_id, user_id=user_id, role=body.role)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.delete("/members/{user_id}", status_code=204)
+async def remove_member(org_id: str, user_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> Response:
+    """Take one person out of the organization. Their memberships expire and the relay agents they owned are revoked.
+    The last owner cannot be removed."""
+    caller, roles = _caller(ctx, org_id)
+    try:
+        await org_onboarding.remove_member(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                           actor_roles=roles, org_id=org_id, user_id=user_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+    return Response(status_code=204)
 
 
 @router.get("/usage/users")
@@ -391,6 +416,80 @@ async def delete_provider_key(org_id: str, connection_id: str, pool=Depends(get_
     return Response(status_code=204)
 
 
+# ------------------------------------------------------------------ agents and tool approvals
+
+class AgentBody(BaseModel):
+    name: str = Field(..., max_length=40)
+    kind: str = "agent"
+    scopes: list[str] = Field(default_factory=list)
+    data_ceiling: str = "PUBLIC_SOURCE"
+    budget_usd_month: Optional[Any] = None
+    expires_days: Optional[int] = None
+
+
+@router.get("/agents")
+async def list_agents(org_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> list[dict]:
+    """The relay agents owned by this organisation's members, with owner, status and recorded containment."""
+    _, roles = _caller(ctx, org_id)
+    try:
+        return await org_agents.list_agents(pool, actor_roles=roles, org_id=org_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/agents", status_code=201)
+async def create_agent(org_id: str, body: AgentBody, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> dict:
+    caller, roles = _caller(ctx, org_id)
+    try:
+        return await org_agents.create_agent(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                             actor_roles=roles, org_id=org_id, name=body.name, kind=body.kind,
+                                             scopes=body.scopes, data_ceiling=body.data_ceiling,
+                                             budget_usd_month=body.budget_usd_month, expires_days=body.expires_days)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.delete("/agents/{agent_id}", status_code=204)
+async def revoke_agent(org_id: str, agent_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> Response:
+    caller, roles = _caller(ctx, org_id)
+    try:
+        await org_agents.revoke_agent(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                      actor_roles=roles, org_id=org_id, agent_id=agent_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+    return Response(status_code=204)
+
+
+@router.get("/approvals")
+async def approvals_list(org_id: str, status: str = "pending", pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> dict:
+    """Tool calls a member's agent is waiting on. `status=pending` (default), a single status, or `all`."""
+    _, roles = _caller(ctx, org_id)
+    try:
+        return {"approvals": await org_agents.list_approvals(pool, actor_roles=roles, org_id=org_id, status=status)}
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/approvals/{approval_id}/approve")
+async def approval_approve(org_id: str, approval_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> dict:
+    caller, roles = _caller(ctx, org_id)
+    try:
+        return await org_agents.decide_approval(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                                actor_roles=roles, org_id=org_id, approval_id=approval_id, yes=True)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/approvals/{approval_id}/deny")
+async def approval_deny(org_id: str, approval_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> dict:
+    caller, roles = _caller(ctx, org_id)
+    try:
+        return await org_agents.decide_approval(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                                actor_roles=roles, org_id=org_id, approval_id=approval_id, yes=False)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
 # ------------------------------------------------------------------ onboarding: policy, invites, checklist
 
 class RecommendedPolicyBody(BaseModel):
@@ -402,6 +501,12 @@ class InviteBody(BaseModel):
     label: Optional[str] = None
     days: int = 7
     max_uses: int = 50
+    role: str = "member"
+    email: Optional[str] = None
+
+
+class MemberRoleBody(BaseModel):
+    role: str
 
 
 @router.post("/policy/recommended")
@@ -434,7 +539,7 @@ async def create_invite(org_id: str, body: InviteBody, pool=Depends(get_pool), c
     try:
         return await org_onboarding.create_invite(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
                                                   actor_roles=roles, org_id=org_id, label=body.label, days=body.days,
-                                                  max_uses=body.max_uses)
+                                                  max_uses=body.max_uses, role=body.role, email=body.email)
     except gov.GovernanceError as exc:
         raise _http(exc) from exc
 
