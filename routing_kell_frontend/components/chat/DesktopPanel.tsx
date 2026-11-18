@@ -283,7 +283,9 @@ function SessionView({ api, session, mine }: { api: DesktopApi; session: Desktop
         <textarea aria-label="Ask this session" placeholder={session.online ? "Ask this session…" : "This desktop is offline"} value={text}
           disabled={!session.online} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); (e.currentTarget.form as HTMLFormElement).requestSubmit(); } }} />
-        <button type="submit" className="btn-ink dg-mini-btn" disabled={!session.online || !text.trim() || sending}><span>Send</span></button>
+        <button type="submit" className="btn-ink dg-mini-btn dg-send-mini" aria-label="Send" title="Send" disabled={!session.online || !text.trim() || sending}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+        </button>
       </form>
     </div>
   );

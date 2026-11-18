@@ -221,7 +221,10 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
       </div>
       <input ref={fileRef} type="file" multiple hidden onChange={(e) => { const f = imageFiles(e.target.files); e.target.value = ""; if (f.length) void addFiles(f); }} />
       <button type="button" className="dg-attach" onClick={() => fileRef.current?.click()} disabled={disabled || busy} aria-label="Attach a file" title="Attach a picture or a file (or paste or drop one)"><ImageIcon /></button>
-      <button type="submit" disabled={disabled || busy || (!text.trim() && !pics.length && !docs.length)}>Send</button>
+      {/* The same send button as the desktop app's coding tab: an arrow, not a word (owner, 2026-11-18). */}
+      <button type="submit" className="dg-send" aria-label="Send" title="Send" disabled={disabled || busy || (!text.trim() && !pics.length && !docs.length)}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+      </button>
     </form>
   );
 }

@@ -1758,3 +1758,14 @@ span.dg-replyq { cursor: default; }
 .dg-file-pic img { display: block; max-width: 100%; max-height: 360px; object-fit: contain; background: var(--surface); }
 .dg-file-pic:disabled { cursor: default; padding: 14px 16px; background: var(--dg-glass-strong, var(--surface)); }
 .dg-file-pic:focus-visible { outline: 2px solid transparent; box-shadow: var(--dg-lift, none), 0 0 0 3px rgba(25, 58, 112, .28); }
+
+/* Sizing pass (owner, 2026-11-18): the side panel's actions are one size, their text centred; the composer sends with
+   the desktop app's arrow button. */
+.dg-roomacts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 6px 0; }
+.dg-page .dg-roomacts .dg-add { margin: 0; width: 100%; min-height: 0; height: 38px; padding: 0 8px; display: flex; align-items: center;
+  justify-content: center; text-align: center; line-height: 1; white-space: nowrap; font-size: 13.5px; }
+.dg-onboard-side { padding: 10px 6px 10px; }
+.dg-page .dg-onboard-side .dg-onboard { min-height: 0; height: 38px; }
+.dg-page .dg-signout { min-height: 0; height: 38px; display: flex; align-items: center; justify-content: center; line-height: 1; font-size: 13.5px; }
+.dg-composer button.dg-send { width: 44px; min-width: 44px; padding: 0; display: grid; place-items: center; border-radius: 12px; }
+.dg-page .dg-send-mini { width: 34px; min-width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
