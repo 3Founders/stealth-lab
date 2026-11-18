@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import {
   runnable, STATUS_LABEL, type Run, type RunRow, type StepIn, type Submission, type SubmissionRow, type SubmissionsApi, type Suggestion,
 } from "@/lib/submissions-api";
+import LocatorField from "./LocatorField";
 import "./submit.css";
 
 // The step-swap animation only exists in a browser; useLayoutEffect warns during the server render, so the server takes useEffect.
@@ -206,8 +207,7 @@ function StepEditor({ step, n, onChange }: { step: StepIn; n: number; onChange: 
         <>
           <textarea rows={2} aria-label={`Prompt for step ${n}`} value={step.prompt || ""} onChange={(e) => set("prompt", e.target.value)}
             placeholder="A prompt for kell, e.g. For each link from step 1, write its method and main result in two lines" />
-          <input aria-label={`Link or tool for step ${n}`} value={locator} onChange={(e) => onChange({ ...step, locator: e.target.value })}
-            placeholder="Optional: a website, a file or script link (GitHub works), or a tool name" />
+          <LocatorField n={n} value={locator} onChange={(v) => onChange({ ...step, locator: v })} />
         </>
       )}
       {/* The step's heading, always editable: it names the step in the list, in review and in the run's output, so it is not

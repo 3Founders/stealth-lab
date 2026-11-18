@@ -155,3 +155,11 @@
 .sw-better li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 14px; }
 .sw-better li .sw-btn { margin-left: auto; }
 @media (prefers-reduced-motion: reduce) { .sw-better { transition: none; } }
+/* A step's locator: Link / Script / Tool, each with the rule the server will apply, said where the person is typing
+   (2026-11-18). The three tabs read from the value, so a step reopened from a submission lands on the right one. */
+.sw-loc-field { display: flex; flex-direction: column; gap: 6px; }
+.sw-loc-kind { align-self: flex-start; }
+.sw-loc-kind button { font-size: 12px; padding: 3px 10px; }
+.sw-loc-field input[data-problem] { border-color: #b3261e; }
+.sw-loc-field .sw-loc-problem { color: #b3261e; }
+.sw-loc-field .sw-dim { margin: 0; font-size: 12px; }
