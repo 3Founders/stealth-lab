@@ -168,7 +168,7 @@ export function planFromRoute(task: string, models: Models, routed: Routed): Del
  * convenient HTTP endpoint will scan 15 lockfiles itself while the panel says the OSV Way ran (2026-11-13). The turn
  * gets the contract in the user message, so "do not run both" is part of the request it answers.
  */
-export function contractOf(plan: Pick<Delegation, "goal" | "way" | "tool"> | null | undefined): string {
+export function contractOf(plan: Pick<Delegation, "goal" | "way" | "tool" | "steps"> | null | undefined): string {
   if (!plan?.way) return ""
   const head = `kell delegation for this turn: Goal "${plan.goal?.name || "none"}" -> Way "${plan.way.name}" [${plan.way.approval}]`
   // The Way runs on kell's executor (backend app/execution/way_runs.py): it walks the steps in order, feeds each output to
@@ -181,14 +181,19 @@ export function contractOf(plan: Pick<Delegation, "goal" | "way" | "tool"> | nul
     "Status waiting_human -> show the person waiting_on and wait for them; when they say it is done, kell_run_way(run_id=<run_id>, done=true, note=<what they did or found>). Status done -> give the person result. Status failed -> say why in one line and ask before doing anything else.",
     "Do the Way's steps only through the run: never do a step outside it, skip one, or run both.",
   ] : []
+  // A step the person gave a model to runs on that model, through call_model, instead of on the session's own model.
+  // Empty when every step keeps the default (the main agent does it).
+  const models = (plan.steps || []).filter((s) => s.model).map((s) =>
+    `Step ${s.order} ("${s.title}") is set to run on ${s.model}: when its your_turn arrives, do that step with kell_call_model(model="${s.model}", prompt=<the step's do>), and report its answer as the step's output rather than your own.`)
   const fallback = run.length ? "If kell_run_way refuses this Way, do this instead: " : ""
-  if (!plan.tool) return [...run, `${fallback}${run.length ? "" : `${head}. `}No tool is bound to this Way: do the work yourself in this folder.`].join("\n")
+  if (!plan.tool) return [...run, ...models, `${fallback}${run.length ? "" : `${head}. `}No tool is bound to this Way: do the work yourself in this folder.`].join("\n")
   // `use_tool` names an outside server by its registry name (the Way's name for a tool_goals Way), not by URL.
   const server = plan.tool.server && !/^https?:/i.test(plan.tool.server)
     ? plan.tool.server
     : (plan.way.name || plan.tool.server)
   return [
     ...run,
+    ...models,
     `${fallback}${head} -> tool "${plan.tool.name}"${plan.tool.server ? ` (${plan.tool.server})` : ""}.`,
     `That tool does this task's work: call kell_discover_tools(server="${server}") for its arguments if you do not have them, then kell_use_tool(server="${server}", name="${plan.tool.name}", arguments={...}).`,
     "Do not re-implement or pre-empt the tool's work with shell commands, scripts, direct HTTP calls or your own scan: never run both.",

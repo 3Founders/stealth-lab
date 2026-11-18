@@ -1345,7 +1345,7 @@ export default function Home() {
           }} />
       </form>
     ) : (
-      <div className="dk-sess-row" key={x.id} data-here={x.id === sessionID || undefined} onDoubleClick={() => startRename(x)}>
+      <div className="dk-sess-row" key={x.id} data-here={x.id === sessionID || undefined} data-live={runningIds.has(x.id) || undefined} onDoubleClick={() => startRename(x)}>
         <button type="button" className="dk-sess-open" title={`${x.title || "Untitled session"} (double-click to rename)`}
           onClick={() => void openSession(x.id)}>
           <span className="nm">{x.title || "Untitled session"}</span>
@@ -3675,6 +3675,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
             onRemove={(i) => panelWay && removeProcStep(panelWay, i)}
             onAsk={panelWay ? (t) => askProcedure(panelWay, t) : undefined}
             onUse={pendingTurn && panelWay ? () => useProcWay(panelWay) : undefined}
+            onSubmitWay={() => { setPane("rooms"); desktop()?.rooms.panel?.("submit") }}
             previewLabel={inspectWay ? "Open in the chat" : delegateOptions.length ? "Preview · pick in the chat" : undefined}
             glass={glassGraph} onToggleGlass={toggleGlassGraph} />
         </aside>

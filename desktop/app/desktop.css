@@ -343,6 +343,8 @@
 /* The record in the panel: the Way's id, why it fits, its submission, and each step's note (2026-11-17). */
 .dk-proc-id { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; }
 .dk-proc-sub { margin: 2px 0 0; font-size: 10.5px; color: var(--grey); }
+.dk-proc-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.dk-proc-submit { white-space: nowrap; }
 .dk-proc-why { margin: 2px 0 0; font-size: 11px; line-height: 1.4; color: var(--grey); }
 .dk-proc-graph .dk-proc-why { margin: 2px 0 0; font-size: 11px; line-height: 1.4; }
 .dk-proc-step .dk-proc-note { grid-column: 2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -890,7 +892,7 @@
 /* More actions: a "..." over the row's right edge, shown on hover or focus; the time fades under it, so the row never
    keeps an empty column when the button is away. */
 .dk-sess-row:hover .when, .dk-sess-row:focus-within .when { opacity: 0; }
-.dk-sess-more-btn { all: unset; position: absolute; right: 2px; top: 50%; transform: translateY(-50%) translateX(3px);
+.dk-sess-more-btn { all: unset; position: absolute; right: 2px; top: 50%; transform: translateY(-50%) translateX(-4px);
   display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; color: var(--grey); cursor: pointer; opacity: 0;
   transition: opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease), transform var(--dg-micro-d, 160ms) var(--dg-micro, ease),
               background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
@@ -933,9 +935,22 @@
 .dk-sess-renaming .dk-sess-name { all: unset; box-sizing: border-box; width: 100%; font: inherit; font-size: 13px; padding: 3px 7px;
   border: 1px solid var(--cobalt); border-radius: 5px; background: var(--surface, #fff); color: var(--ink); }
 /* A chat that is answering: a pulsing dot where its time normally sits, so every running chat is visible at a glance. */
-.dk-sess-live { flex: none; display: inline-grid; place-items: center; width: 14px; height: 14px; }
+.dk-sess-live { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: inline-grid; place-items: center;
+  width: 14px; height: 14px; pointer-events: none;
+  transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, cubic-bezier(.32,.72,0,1)),
+              opacity var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
 .dk-sess-live .dg-pulse { width: 6px; height: 6px; background: var(--cobalt); }
-@media (prefers-reduced-motion: reduce) { .dk-sess-live .dg-pulse { animation: none; } }
+/* A working chat's live light steps aside when the row's actions arrive: the "..." slides in from the left to the
+   right edge, and the light moves to the opposite side. Transform and opacity only (docs/ios_animation.md §4.7). */
+.dk-sess-row[data-live] > .dk-sess-open { padding-right: 30px; }
+.dk-sess-row[data-live]:hover > .dk-sess-open,
+.dk-sess-row[data-live]:focus-within > .dk-sess-open { padding-right: 48px; }
+.dk-sess-row[data-live]:hover .dk-sess-live,
+.dk-sess-row[data-live]:focus-within .dk-sess-live { transform: translateY(-50%) translateX(-20px); }
+@media (prefers-reduced-motion: reduce) {
+  .dk-sess-live { transition: none; }
+  .dk-sess-live .dg-pulse { animation: none; }
+}
 
 /* A chat finished while another was open: a small notice at the bottom right, and the same news on the device. */
 .dk-done-toast { position: fixed; right: 18px; bottom: 18px; z-index: 70; display: flex; align-items: center; gap: 10px;
