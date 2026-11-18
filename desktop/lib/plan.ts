@@ -182,8 +182,9 @@ export function contractOf(plan: Pick<Delegation, "goal" | "way" | "tool" | "ste
     "Do the Way's steps only through the run: never do a step outside it, skip one, or run both.",
   ] : []
   // A step the person gave a model to runs on that model, through call_model, instead of on the session's own model.
-  // Empty when every step keeps the default (the main agent does it).
-  const models = (plan.steps || []).filter((s) => s.model).map((s) =>
+  // Empty when every step keeps the default (the main agent does it). A person's step and a tool step are left out:
+  // those are not the agent's work to hand to a model, and a model line there would contradict the step's own instruction.
+  const models = (plan.steps || []).filter((s) => s.model && s.kind !== "human" && s.kind !== "tool").map((s) =>
     `Step ${s.order} ("${s.title}") is set to run on ${s.model}: when its your_turn arrives, do that step with kell_call_model(model="${s.model}", prompt=<the step's do>), and report its answer as the step's output rather than your own.`)
   const fallback = run.length ? "If kell_run_way refuses this Way, do this instead: " : ""
   if (!plan.tool) return [...run, ...models, `${fallback}${run.length ? "" : `${head}. `}No tool is bound to this Way: do the work yourself in this folder.`].join("\n")
