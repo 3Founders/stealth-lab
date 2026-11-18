@@ -32,7 +32,7 @@ export default function ChatPage() {
         {session === undefined && <p className="small dim" role="status">Checking your session…</p>}
         {session === null && (
           <div className="empty" role="status">
-            <b>Sign in to use Chat.</b>
+            <b>Sign in to use Rooms.</b>
             <p>It is available to signed-in accounts. <Link href="/sign-in?redirect=/chat" style={{ textDecoration: "underline" }}>Sign in</Link>.</p>
           </div>
         )}

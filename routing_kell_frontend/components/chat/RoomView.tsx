@@ -1600,11 +1600,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 </li>
               ))}
             </ul>
-            <button type="button" className="btn-line dg-add" onClick={() => setManageOpen(true)}>Manage people</button>
           </>
         )}
 
-        <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
+        {/* Manage people and + Add agent: one pair, the same size and placement as New room and Manage rooms (2026-11-18). */}
+        <div className="dg-roomacts">
+          {synced && <button type="button" className="btn-line dg-add" onClick={() => setManageOpen(true)}>Manage people</button>}
+          <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
+        </div>
         </div>
         {adding && (
           <AddAgentDialog

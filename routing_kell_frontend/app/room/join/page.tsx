@@ -62,8 +62,8 @@ function Join() {
     return (
       <div className="profile-card" role="status">
         <h2 className="h3">{joined.already ? `You're already in ${joined.title}.` : `You've joined ${joined.title}.`}</h2>
-        <p className="small dim">It shows up in your Chat, on every device you sign in on. Rooms are open: keळ can read them, and connectors like Claude and ChatGPT can join. They aren&rsquo;t end-to-end encrypted.</p>
-        <div className="cluster"><Link className="btn-ink" href="/chat"><span>Open Chat</span></Link></div>
+        <p className="small dim">It shows up in your Rooms, on every device you sign in on. Rooms are open: keळ can read them, and connectors like Claude and ChatGPT can join. They aren&rsquo;t end-to-end encrypted.</p>
+        <div className="cluster"><Link className="btn-ink" href="/chat"><span>Open Rooms</span></Link></div>
       </div>
     );
   }

@@ -34,7 +34,7 @@ describe("Chat sign-in gate", () => {
   it("signed out: shows a sign-in notice that returns here, and no room", async () => {
     current = null;
     await mount();
-    expect(host!.textContent).toContain("Sign in to use Chat");
+    expect(host!.textContent).toContain("Sign in to use Rooms");
     expect(host!.querySelector('[data-testid="room"]')).toBeNull();
     expect(host!.querySelector('a[href="/sign-in?redirect=/chat"]')).not.toBeNull();
   });
@@ -42,14 +42,14 @@ describe("Chat sign-in gate", () => {
     current = "pending";
     await mount();
     expect(host!.textContent).toContain("Checking your session");
-    expect(host!.textContent).not.toContain("Sign in to use Chat");
+    expect(host!.textContent).not.toContain("Sign in to use Rooms");
     expect(host!.querySelector('[data-testid="room"]')).toBeNull();
   });
   it("signed in: shows the room", async () => {
     current = { token: "t", subject: "u" };
     await mount();
     expect(host!.querySelector('[data-testid="room"]')).not.toBeNull();
-    expect(host!.textContent).not.toContain("Sign in to use Chat");
+    expect(host!.textContent).not.toContain("Sign in to use Rooms");
   });
   it("signing out while the page is open removes the room", async () => {
     current = { token: "t", subject: "u" };
@@ -57,6 +57,6 @@ describe("Chat sign-in gate", () => {
     expect(host!.querySelector('[data-testid="room"]')).not.toBeNull();
     await act(async () => { notify!(null); });
     expect(host!.querySelector('[data-testid="room"]')).toBeNull();
-    expect(host!.textContent).toContain("Sign in to use Chat");
+    expect(host!.textContent).toContain("Sign in to use Rooms");
   });
 });

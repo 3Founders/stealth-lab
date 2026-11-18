@@ -1774,3 +1774,15 @@ span.dg-replyq { cursor: default; }
 .dg-page .dg-signout { min-height: 0; height: 38px; display: flex; align-items: center; justify-content: center; line-height: 1; font-size: 13.5px; }
 .dg-composer button.dg-send { width: 44px; min-width: 44px; padding: 0; display: grid; place-items: center; border-radius: 12px; }
 .dg-page .dg-send-mini { width: 34px; min-width: 34px; height: 34px; padding: 0; display: grid; place-items: center; }
+
+/* Pairs of side-panel actions: one alone takes the whole row (2026-11-18). */
+.dg-roomacts > :only-child { grid-column: 1 / -1; }
+
+/* Search (Ctrl K) in dark mode: the selected row was a dark tint while its text took the yellow rows' dark colour, so
+   "General" read black on black (2026-11-18). Selected and hovered rows are yellow in both themes. */
+:root[data-theme="dark"] .dg-page .dg-search-list li[data-active="true"],
+:root[data-theme="dark"] .dg-page .dg-search-list li:hover { background: var(--yellow); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dg-page .dg-search-list li[data-active="true"],
+  :root:not([data-theme="light"]) .dg-page .dg-search-list li:hover { background: var(--yellow); }
+}

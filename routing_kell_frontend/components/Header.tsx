@@ -113,7 +113,7 @@ export default function Header() {
   };
 
   // Chat (group chat for people and agents) is for signed-in accounts, so its link appears only then.
-  const navLinks = signedIn ? [...links, { href: "/chat", label: "Chat" }] : links;
+  const navLinks = signedIn ? [...links, { href: "/chat", label: "Rooms" }] : links;
 
   const item = (l: (typeof links)[number]) => {
     const isHome = l.href === "/";
