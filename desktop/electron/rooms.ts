@@ -52,7 +52,7 @@ let idleTimer: ReturnType<typeof setTimeout> | undefined
 let webTokenCache: { token: string; exp: number } | null = null
 
 // RAM: a hidden WebContentsView is a full Chromium renderer (the website's chat). Keeping it alive while the person
-// works in the coding lane costs ~100–200 MB. Five minutes after the Rooms tab is hidden, drop it; the next visit
+// works in the coding lane costs ~100â€“200 MB. Five minutes after the Rooms tab is hidden, drop it; the next visit
 // recreates it. The website session token is cached in the main process so a model call does not need the view.
 const ROOMS_IDLE_DISPOSE_MS = 5 * 60_000
 function disposeView() {
@@ -88,6 +88,9 @@ function ensureView(win: BrowserWindow): WebContentsView {
   // Tells the site it runs inside the app, so a sign-in window it could not open itself is not reported as a blocked pop-up.
   wc.on("dom-ready", () => {
     void wc.executeJavaScript("window.__kellDesktop = true").catch(() => undefined)
+    // The panel hook, for a panel asked for while this chat is already on screen (no reload, so the room survives).
+    void wc.executeJavaScript(PANEL_PRELOAD_JS).catch(() => undefined)
+    if (wantedPanel && askSent) { wantedPanel = null; askSent = false }   // a chat loaded with the ask is ready: it took it
     void wc.insertCSS(HIDE_SITE_LINKS).catch(() => undefined)
   })
   // The site is a single-page app: its own links change the address without a navigation event, so will-navigate never sees them.
@@ -95,16 +98,16 @@ function ensureView(win: BrowserWindow): WebContentsView {
   wc.on("did-navigate-in-page", (_e, url) => {
     if (staysInView(url)) return
     if (/^https?:/.test(url)) void shell.openExternal(url)
-    void wc.loadURL(`${SITE}/chat`)
+    void wc.loadURL(chatUrl())
   })
-  wc.on("did-navigate", (_e, url) => { if (url.startsWith("http") && !staysInView(url)) void wc.loadURL(`${SITE}/chat`) })
+  wc.on("did-navigate", (_e, url) => { if (url.startsWith("http") && !staysInView(url)) void wc.loadURL(chatUrl()) })
   wc.on("devtools-opened", () => wc.closeDevTools())
   // A load that fails (no network after the computer slept, a dropped connection) leaves the view on Chromium's error page
-  // for good: the Rooms tab then said "Checking your sign-in…" forever and the coding lane's model calls lost the website
+  // for good: the Rooms tab then said "Checking your sign-inâ€¦" forever and the coding lane's model calls lost the website
   // session (2026-11-15). Retry the chat a few seconds later, for as long as it keeps failing.
   wc.on("did-fail-load", (_e, code, _desc, _url, isMainFrame) => {
     if (!isMainFrame || code === -3) return               // -3: aborted by a newer navigation, not a failure
-    setTimeout(() => { if (!wc.isDestroyed() && !wc.isLoading()) void wc.loadURL(`${SITE}/chat`).catch(() => undefined) }, 5_000)
+    setTimeout(() => { if (!wc.isDestroyed() && !wc.isLoading()) void wc.loadURL(chatUrl()).catch(() => undefined) }, 5_000)
   })
   wc.setWindowOpenHandler(({ url }) => {
     if (route(url) === "stay") void wc.loadURL(url)
@@ -113,7 +116,7 @@ function ensureView(win: BrowserWindow): WebContentsView {
   wc.on("will-navigate", (e, url) => { if (route(url) === "away") e.preventDefault() })
   view.setVisible(false)
   win.contentView.addChildView(view)
-  void wc.loadURL(`${SITE}/chat`)
+  void wc.loadURL(chatUrl())
   return view
 }
 
@@ -138,18 +141,45 @@ function reviveView() {
   if (!view || view.webContents.isDestroyed() || view.webContents.isLoading()) return
   if (Date.now() - lastRevive < 10_000) return
   lastRevive = Date.now()
-  void view.webContents.loadURL(`${SITE}/chat`).catch(() => undefined)
+  void view.webContents.loadURL(chatUrl()).catch(() => undefined)
 }
 
 export function reloadRooms() {
-  if (view && !view.webContents.isDestroyed()) void view.webContents.loadURL(`${SITE}/chat`)
+  if (view && !view.webContents.isDestroyed()) void view.webContents.loadURL(chatUrl())
 }
+
+// The side panel the rooms must show ("submit", "desktop"), kept until the chat is there to read it. The chat reads
+// ?panel= only when it mounts, and it is a single-page app: asking for the panel used to be one loadURL, issued before
+// the view even existed in the app (roomsOn is false until the account check lands) and lost again by the next load that
+// went back to plain /chat (2026-11-18). Now the ask is carried on every load of the chat and dropped only once a chat
+// that was loaded with it is ready; a chat already on screen is told through its preload instead of being reloaded,
+// which would throw away the room the person is in.
+let wantedPanel: string | null = null
+let askSent = false                   // the ask reached a chat loaded with it: a loadURL on a missing view is not yet an ask
+const chatUrl = () => `${SITE}/chat${wantedPanel ? `?panel=${encodeURIComponent(wantedPanel)}` : ""}`
 
 /** The rooms with one of the site's side panels open: "desktop" (Desktop sessions) or "submit" (Submit a Way). Nothing else. */
 export function openRoomsPanel(panel: string) {
   if (panel !== "desktop" && panel !== "submit") return
-  if (view && !view.webContents.isDestroyed()) void view.webContents.loadURL(`${SITE}/chat?panel=${panel}`)
+  wantedPanel = panel
+  askSent = false
+  const wc = view && !view.webContents.isDestroyed() ? view.webContents : null
+  // No view yet (the app is still checking the sign-in): ensureView's own load carries the ask. A view on the chat,
+  // already loaded: the hook (PANEL_PRELOAD_JS) opens the panel in place. Anything else: load the chat with the ask.
+  if (!wc) return
+  if (!wc.isLoading() && wc.getURL().startsWith(`${SITE}/chat`)) {
+    void wc.executeJavaScript(`window.__kellPanel && window.__kellPanel(${JSON.stringify(panel)})`).then((took) => {
+      if (took === true) askSent = true               // a chat that was on screen already took it
+      else if (!wc.isDestroyed()) void wc.loadURL(chatUrl())
+    }).catch(() => { if (!wc.isDestroyed()) void wc.loadURL(chatUrl()) })
+    return
+  }
+  if (!wc.isLoading()) askSent = true                 // this load carries the ask; dom-ready releases it once the chat is up
+  void wc.loadURL(chatUrl())
 }
+
+/** The preload of the chat hands the panel ask to the site's page: the site's own listener opens the panel. */
+const PANEL_PRELOAD_JS = `window.__kellPanel = (panel) => { try { window.dispatchEvent(new CustomEvent("kell:rooms-panel", { detail: panel })); return true } catch (e) { return false } }`
 
 /** Email and password: the site's own sign-in page (with its CAPTCHA) inside the rooms view. Only Google refuses an embedded
  *  window; email works there, and it lands back on the rooms. No token is copied and no Supabase setting is needed. */
@@ -340,7 +370,7 @@ export function signInRooms(win: BrowserWindow, provider: RoomsProvider): Promis
         const wc = ensureView(win).webContents
         if (wc.isLoading() || !wc.getURL().startsWith(SITE)) await new Promise<void>((ok) => { wc.once("did-finish-load", () => ok()); setTimeout(ok, 15_000) })
         await wc.executeJavaScript(`localStorage.setItem(${JSON.stringify(`sb-${ref}-auth-token`)}, ${JSON.stringify(JSON.stringify(s))})`)
-        void wc.loadURL(`${SITE}/chat`)
+        void wc.loadURL(chatUrl())
         page(res, 200, "Signed in. You can close this tab and go back to kell.")
         finish(true)
       } catch {

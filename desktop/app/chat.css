@@ -111,9 +111,17 @@
 .dg-composer button:not(:disabled):hover { background: var(--cobalt); }
 .dg-composer button:not(:disabled):active { transform: scale(.96); }
 .dg-composer button:disabled { opacity: .35; cursor: not-allowed; }
-.dg-mentions { animation: dg-pop var(--dg-micro-d) var(--dg-micro) both; transform-origin: bottom left; position: absolute; bottom: calc(100% - 8px); left: 18px; list-style: none; margin: 0; padding: 4px; min-width: 240px; background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,.16); z-index: 5; }
-.dg-mentions li { transition: background-color var(--dg-micro-d) var(--dg-micro); padding: 6px 10px; border-radius: 5px; cursor: pointer; }
-.dg-mentions li[data-active="true"] { background: var(--yellow); }
+/* The glass a menu wears (desktop.css `.dk-menu-glass`, and /btw's own recipe): translucent, blurred, one soft lift. The
+   slash menu is an <ul> the page positions, so it gets the same recipe here rather than a solid surface. */
+.dg-mentions { animation: dg-pop var(--dg-micro-d) var(--dg-micro) both; transform-origin: bottom left; position: absolute; bottom: calc(100% - 8px); left: 18px; list-style: none; margin: 0; padding: 5px; min-width: 240px; z-index: 5;
+  background: var(--dg-glass-strong, var(--surface)); border: 1px solid var(--rule-strong); border-radius: 12px;
+  -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, .24), 0 2px 8px rgba(0, 0, 0, .1); }
+.dg-mentions li { transition: background-color var(--dg-micro-d) var(--dg-micro); padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+/* The active row is lit, not painted: a solid yellow bar inside translucent glass read as a different menu entirely. */
+.dg-mentions li[data-active="true"] { background: var(--soft, rgba(0,0,0,.06)); }
+:root[data-theme="dark"] .dg-mentions li[data-active="true"], :root:not([data-theme="light"]) .dg-mentions li[data-active="true"] { background: rgba(255,255,255,.08); }
+@media (prefers-reduced-motion: reduce) { .dg-mentions { animation: none !important; } }
 
 .dg-menu, .dg-close, .dg-scrim { display: none; }
 .dg-shell { height: var(--dg-h, 100dvh); }
@@ -369,7 +377,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 
 /* Glass and shadow, as on the main site header: every button and popup in the chat is a frosted pane (translucent paper, blurred
    backdrop, a faint light edge) lifted by a soft drop shadow. No black outlines. Filled primary buttons keep their fill and gain the shadow. */
-.dg-page { --dg-glass: rgba(248, 246, 239, .72); --dg-glass-strong: rgba(248, 246, 239, .86); --dg-edge: rgba(255, 255, 255, .6);
+.dg-page { --dg-glass: rgba(248, 246, 239, .72); --dg-glass-strong: rgba(248, 246, 239, .86); --dg-glass-sheet: rgba(248, 246, 239, .94); --dg-edge: rgba(255, 255, 255, .6);
   --dg-lift: 0 8px 22px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09); --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1);
   --dg-float: 0 20px 52px rgba(0, 0, 0, .22), 0 3px 10px rgba(0, 0, 0, .12); }
 .dg-page .btn-line, .dg-page .dg-add, .dg-page .dg-mini, .dg-page .dg-breaker, .dg-page .dg-stop, .dg-page .dg-burger, .dg-page .dg-menu,
@@ -590,6 +598,8 @@ body:has(.dg-shell) { overscroll-behavior: none; }
    viewer, an outside file in the OS's default app. The drop overlay is a pointer-events-none hint over the transcript. */
 .dg-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .dg-composer .dg-atts { flex-basis: 100%; order: -1; margin: 0 0 4px; }
+/* A picture chip has a thumbnail for a face, so it is a touch taller than a document chip (components/AttachStrip.tsx). */
+.dg-atts .dg-att[data-pic] { border-radius: 999px; }
 .dg-att { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; border: 1px solid var(--rule); border-radius: 999px; background: var(--surface); overflow: hidden; }
 .dg-att-open { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 8px; font-size: 12px; color: var(--ink); cursor: pointer; }
 .dg-att-open:hover { background: var(--soft); }
@@ -813,13 +823,13 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 
 /* Dark mode for the chat: the glass becomes dark glass, shadows deepen, pale overlays become faint light ones, the logo is lightened. */
 :root[data-theme="dark"] .dg-page {
-  --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-edge: transparent;
+  --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-glass-sheet: rgba(34, 33, 27, .96); --dg-edge: transparent;
   --dg-lift: 0 8px 22px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4); --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .6), 0 2px 5px rgba(0, 0, 0, .45);
   --dg-float: 0 20px 52px rgba(0, 0, 0, .65), 0 3px 10px rgba(0, 0, 0, .45); --dg-dent: inset 0 1px 3px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .06);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .dg-page {
-    --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-edge: transparent;
+    --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-glass-sheet: rgba(34, 33, 27, .96); --dg-edge: transparent;
     --dg-lift: 0 8px 22px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4); --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .6), 0 2px 5px rgba(0, 0, 0, .45);
     --dg-float: 0 20px 52px rgba(0, 0, 0, .65), 0 3px 10px rgba(0, 0, 0, .45); --dg-dent: inset 0 1px 3px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .06);
   }
@@ -850,6 +860,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-page, .dg-portal { --dg-hairline: rgba(255, 255, 255, .55); }
 :root[data-theme="dark"] .dg-page, :root[data-theme="dark"] .dg-portal { --dg-hairline: rgba(255, 255, 255, .09); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .dg-page, :root:not([data-theme="light"]) .dg-portal { --dg-hairline: rgba(255, 255, 255, .09); } }
+/* A menu drawn in the portal (any menu, in either app) must still find the glass tokens: the portal sits outside .dg-page. */
+.dg-portal { --dg-glass: rgba(248, 246, 239, .72); --dg-glass-strong: rgba(248, 246, 239, .86); --dg-glass-sheet: rgba(248, 246, 239, .94); }
+:root[data-theme="dark"] .dg-portal { --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-glass-sheet: rgba(34, 33, 27, .96); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .dg-portal { --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-glass-sheet: rgba(34, 33, 27, .96); } }
 .dg-page .dg-menu-pop, .dg-page .dg-bell-pop, .dg-page .dg-mentions, .dg-page .dg-onboard-menu, .dg-page .dg-search, .dg-page .dg-form, .dg-page .dg-me {
   background: var(--dg-glass-strong); -webkit-backdrop-filter: blur(12px) saturate(1.4); backdrop-filter: blur(12px) saturate(1.4);
   border: 1px solid var(--dg-hairline); box-shadow: var(--dg-float);
@@ -874,7 +888,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 
 /* People who ask the system for less transparency get the same colour, opaque, with no blur. */
 @media (prefers-reduced-transparency: reduce) {
-  .dg-page, .dg-portal { --dg-glass: var(--paper); --dg-glass-strong: var(--surface); }
+  .dg-page, .dg-portal { --dg-glass: var(--paper); --dg-glass-strong: var(--surface); --dg-glass-sheet: var(--surface); }
   .dg-page .dg-menu-pop, .dg-page .dg-bell-pop, .dg-page .dg-mentions, .dg-page .dg-onboard-menu, .dg-page .dg-search, .dg-page .dg-form, .dg-page .dg-me,
   .dg-page .dg-head, .dg-page .dg-composer textarea, .dg-page .dg-set-frame, .dg-page .dg-manage-frame, .dg-page .btn-line, .dg-page .dg-room[aria-current="page"],
   .dg-page .back-btn--inline, .dg-page .dg-burger, .dg-page .dg-close {

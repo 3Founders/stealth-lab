@@ -818,7 +818,7 @@
 .dk-icon:disabled { opacity: .4; cursor: default; }
 .dk-help { position: relative; margin-left: 10px; display: inline-flex; }
 .dk-help-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; min-width: 220px; display: flex; flex-direction: column; padding: 6px;
-  border: 1px solid var(--rule); border-radius: 12px; background: var(--surface, var(--paper)); box-shadow: 0 10px 30px rgba(0,0,0,.12);
+  border: 1px solid var(--rule-strong); border-radius: 12px;
   animation: dg-drop var(--dg-micro-d, 160ms) var(--dg-micro, ease) both; transform-origin: top right; }
 .dk-help-menu a { padding: 8px 10px; border-radius: 8px; color: var(--ink); text-decoration: none; font-size: 14px;
   transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
@@ -908,8 +908,7 @@
 
 /* The row's actions: Rename or Delete, at the button's place so the sidebar's scroll cannot clip it. */
 .dk-sess-menu { position: fixed; z-index: 80; min-width: 184px; padding: 4px; border: 1px solid var(--rule-strong);
-  border-radius: 8px; background: var(--surface); color: var(--ink);
-  box-shadow: var(--dg-lift-hover, 0 10px 30px rgba(0,0,0,.18));
+  border-radius: 10px; color: var(--ink);
   animation: dg-drop var(--dg-micro-d, 160ms) var(--dg-micro, ease) both; }
 .dk-sess-menu > button { display: block; width: 100%; text-align: left; padding: 7px 10px; border: 0; border-radius: 6px;
   background: none; font: inherit; font-size: 12.5px; color: var(--ink); cursor: pointer;
@@ -1039,8 +1038,7 @@
   padding: min(14vh, 120px) 16px 16px; animation: dg-fade var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both;
   -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 .dk-palette { width: min(620px, 100%); max-height: min(70vh, 560px); display: flex; flex-direction: column; overflow: hidden;
-  border: 1px solid var(--rule-strong); border-radius: 16px; background: var(--surface);
-  box-shadow: 0 24px 70px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.12);
+  border: 1px solid var(--rule-strong); border-radius: 16px;
   animation: dg-glass-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; transform-origin: top center; }
 .dk-palette-input { font: inherit; font-size: 16px; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--rule); background: transparent; color: var(--ink); outline: none; }
 .dk-palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
@@ -1095,6 +1093,64 @@
 .dk-import-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
 @media (prefers-reduced-motion: reduce) { .dk-import-backdrop, .dk-import { animation: none !important; } .dk-sess-import, .dk-import-open, .dk-import-src button, .dk-import-list label { transition: none; } }
 
+/* ---- Submit a Way (components/SubmitWay): the app's own sheet over the chat, with the import dialog's manners. A Way is
+   a goal and its steps; a step is a person's (a description) or kell's (a prompt, a locator, or both). The mode chip is
+   read-only on purpose: the backend works it out from the steps. ---- */
+.dk-sw-backdrop { position: fixed; inset: 0; z-index: 86; background: rgba(23,23,23,.28); display: grid; place-items: center; padding: 16px;
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: dg-fade var(--dg-smooth-d) var(--dg-smooth) both; }
+.dk-sw { width: min(680px, 100%); max-height: min(84vh, 760px); display: flex; flex-direction: column; gap: 10px; padding: 16px;
+  border: 1px solid var(--rule-strong); border-radius: 16px;
+  animation: dg-glass-in var(--dg-smooth-d) var(--dg-smooth) both; }
+.dk-sw-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.dk-sw-head h2 { margin: 0; font-size: 18px; }
+.dk-sw-head p { margin: 2px 0 0; font-size: 12px; color: var(--grey); }
+.dk-sw-head .dk-icon { flex: none; }
+/* Only the body scrolls: the title and the Check it / Submit pair stay reachable however many steps there are. */
+.dk-sw-body { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-right: 2px; }
+.dk-sw-field { display: grid; gap: 4px; }
+.dk-sw-field > span { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--grey); }
+.dk-sw-field > span i { font-style: normal; text-transform: none; letter-spacing: 0; opacity: .75; }
+.dk-sw-field input, .dk-sw-field textarea, .dk-sw-step input {
+  box-sizing: border-box; width: 100%; font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid var(--rule-strong);
+  border-radius: 8px; background: var(--surface); color: var(--ink); resize: vertical;
+}
+.dk-sw-field input:focus-visible, .dk-sw-field textarea:focus-visible, .dk-sw-step input:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-sw-field input:disabled, .dk-sw-field textarea:disabled, .dk-sw-step input:disabled { opacity: .7; }
+.dk-sw-steps-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dk-sw-steps-head h3 { margin: 0; font-size: 13px; }
+.dk-sw-steps-head h3 span { color: var(--grey); font-weight: 400; }
+/* The mode, read-only: which of the three the submission will be filed under, as the backend works it out. */
+.dk-sw-mode { font-size: 10.5px; letter-spacing: .06em; padding: 2px 9px; border: 1px solid var(--rule-strong); border-radius: 999px; color: var(--ink); }
+.dk-sw-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dk-sw-step { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); }
+.dk-sw-step[data-state="rejected"] { border-color: #b3261e; }
+.dk-sw-step-top { display: flex; align-items: center; gap: 6px; }
+.dk-sw-step-top .n { flex: none; width: 18px; font-size: 11px; color: var(--grey); text-align: center; }
+.dk-sw-kind { flex: none; display: flex; gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: 999px; background: var(--surface); }
+.dk-sw-kind button { all: unset; box-sizing: border-box; font: inherit; font-size: 10.5px; padding: 2px 9px; border-radius: 999px; color: var(--grey); cursor: pointer; }
+.dk-sw-kind button[data-on] { background: var(--ink); color: var(--paper); }
+.dk-sw-kind button:disabled { cursor: default; }
+.dk-sw-step .dk-sw-title { flex: 1 1 auto; min-width: 0; }
+.dk-sw-step-acts { flex: none; display: flex; gap: 2px; }
+.dk-sw-step-acts button { all: unset; box-sizing: border-box; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 6px; color: var(--grey); font-size: 12px; cursor: pointer; }
+.dk-sw-step-acts button:hover:not(:disabled) { background: rgba(0,0,0,.06); color: var(--ink); }
+.dk-sw-step-acts button:disabled { opacity: .3; cursor: default; }
+.dk-sw-auto { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+@media (max-width: 620px) { .dk-sw-auto { grid-template-columns: 1fr; } }
+.dk-sw-step .dk-note { margin: 0; }
+/* The reviewer's line for one step: approved, reviewing, or not approved with its reason. */
+.dk-sw-verdict { margin: 0; font-size: 11px; }
+.dk-sw-verdict[data-status="rejected"] { color: #b3261e; }
+.dk-sw-verdict[data-status="reviewing"] { color: var(--grey); }
+.dk-sw-preview { margin: 0; font-size: 12px; padding: 6px 9px; border-radius: 8px; background: var(--soft, rgba(0,0,0,.05)); }
+.dk-sw-done { display: grid; gap: 6px; font-size: 12px; padding: 8px 10px; border: 1px solid var(--rule-strong); border-radius: 10px; }
+.dk-sw-done p { margin: 0; line-height: 1.5; }
+.dk-sw-done .btn-line { justify-self: start; }
+.dk-sw-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 2px; }
+.dk-sw-foot .dk-note { margin: 0; }
+.dk-sw-actions { display: flex; gap: 8px; flex: none; }
+@media (prefers-reduced-motion: reduce) { .dk-sw-backdrop, .dk-sw { animation: none !important; } }
+
 /* Stop, while a turn runs. The composer's own `button` recipe (44 px, ink, white text) is written for Send; the
    extra `.dg-composer` here lets Stop keep its glass look and, above all, its dark icon. Without it the icon
    inherited Send's `color: var(--paper)` and vanished on the near-white glass (found 2026-11-13). */
@@ -1124,6 +1180,68 @@
    arrival its small overshoot, the micro spring keeps the exit out of the way. */
 .dk-page .dg-atts .dg-att { animation: dk-att-in var(--dg-bouncy-d, 360ms) var(--dg-bouncy, ease) backwards; }
 .dk-page .dg-atts .dg-att[data-leaving] { animation: dk-att-out var(--dg-micro-d, 160ms) var(--dg-micro, ease) forwards; pointer-events: none; }
+
+/* A picture's chip: the thumbnail is the chip's face, so the person sees the exact frame the model will (both bars). */
+.dg-atts .dg-att[data-pic] .dg-att-open { padding: 2px 8px 2px 2px; gap: 7px; }
+.dg-atts .dg-att-pic { width: 30px; height: 30px; object-fit: cover; border-radius: 999px; background: var(--soft, rgba(0,0,0,.06)); flex: none; }
+.dg-composer .dg-atts .dg-att[data-pic] .dg-att-pic { width: 34px; height: 34px; }
+.dg-atts .dg-att[data-pic] .nm { max-width: 18ch; }
+
+/* ---- Model picker (components/ModelPicker): one chip and one searchable list, in the main composer and in the Way's
+   ask bar, so a model is chosen the same way wherever a prompt bar is. It is a popover, not a menu: it stays open while
+   the person types. ---- */
+.dk-mp { position: relative; flex: none; }
+.dg-composer .dk-mp { height: auto; }
+.dg-composer button.dk-mp-chip, .dk-proc-ask button.dk-mp-chip {
+  all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px;
+  border: 1px solid var(--rule-strong); border-radius: 999px; background: var(--dg-glass-strong, var(--surface)); color: var(--ink);
+  font: inherit; font-size: 11.5px; line-height: 1; cursor: pointer; white-space: nowrap; max-width: 22ch;
+}
+.dk-proc-ask button.dk-mp-chip { height: 24px; font-size: 11px; }
+.dg-composer button.dk-mp-chip > span, .dk-proc-ask button.dk-mp-chip > span { overflow: hidden; text-overflow: ellipsis; }
+.dg-composer button.dk-mp-chip:hover:not(:disabled), .dk-proc-ask button.dk-mp-chip:hover:not(:disabled) { background: var(--yellow); color: var(--on-yellow, #171717); }
+.dg-composer button.dk-mp-chip[data-on], .dk-proc-ask button.dk-mp-chip[data-on] { font-weight: 600; }
+.dg-composer button.dk-mp-chip:focus-visible, .dk-proc-ask button.dk-mp-chip:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dk-mp-chip svg { flex: none; }
+.dk-mp-pop {
+  position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 40; width: min(300px, 78vw); display: grid; gap: 6px; padding: 8px;
+  border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--dg-glass-strong, var(--surface));
+  box-shadow: var(--dg-lift-hover, 0 12px 32px rgba(0,0,0,.18)); -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2);
+  animation: dk-mp-in 180ms var(--dg-smooth, ease) both;
+}
+.dk-mp-pop[data-align="end"] { left: auto; right: 0; }
+.dk-mp-pop input { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; padding: 6px 8px; border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.dk-mp-pop input:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-mp-pop ul { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; display: grid; gap: 1px; overscroll-behavior: contain; }
+.dk-mp-pop li button {
+  all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 8px;
+  width: 100%; padding: 5px 7px; border-radius: 7px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.dk-mp-pop li button b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-mp-pop li button small { font-size: 10px; color: var(--grey); white-space: nowrap; }
+.dk-mp-pop li button:hover { background: rgba(0,0,0,.06); }
+.dk-mp-pop li button[data-on] { background: var(--soft, rgba(0,0,0,.06)); font-weight: 600; }
+.dk-mp-pop li button[data-on] b { font-weight: 600; }
+.dk-mp-pop .dk-mp-warn { color: #b3261e; }
+:root[data-theme="dark"] .dk-mp-pop li button:hover { background: rgba(255,255,255,.08); }
+:root[data-theme="dark"] .dk-mp-pop li button[data-on] { background: rgba(255,255,255,.1); }
+@keyframes dk-mp-in { from { opacity: 0; transform: translateY(4px) scale(.98); } }
+@media (prefers-reduced-motion: reduce) { .dk-mp-pop { animation: none; } }
+
+/* ---- The Way's ask bar (components/ProcedureEditor): the main composer's controls in a smaller box. A file dropped on
+   it is the Way's, not the chat's; the border says which bar will take it. ---- */
+.dk-proc-ask { display: grid; gap: 6px; margin-top: 8px; padding: 7px 7px 6px; border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface); transition: box-shadow var(--dg-micro-d) var(--dg-micro), border-color var(--dg-micro-d) var(--dg-micro); }
+.dk-proc-ask[data-over] { border-color: var(--cobalt); box-shadow: 0 0 0 3px rgba(255, 210, 31, .55); }
+.dk-proc-ask .dg-atts { margin: 0; }
+.dk-proc-ask-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dk-proc-ask .dk-proc-ask-row input.dk-proc-ask-text { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 12px; padding: 5px 8px; border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.dk-proc-ask .dk-proc-ask-row input.dk-proc-ask-text:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-proc-ask .dk-proc-ask-add { all: unset; box-sizing: border-box; flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: var(--ink); cursor: pointer; }
+.dk-proc-ask .dk-proc-ask-add:hover:not(:disabled) { background: var(--yellow); color: var(--on-yellow, #171717); }
+.dk-proc-ask .dk-proc-ask-add:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.dk-proc-ask .dk-proc-ask-add:disabled { opacity: .4; cursor: default; }
+.dk-proc-ask .btn-ink { flex: none; height: 26px; padding: 0 10px; }
+.dk-proc-ask .dg-att .nm { max-width: 16ch; }
 @keyframes dk-att-in { from { opacity: 0; transform: translateY(6px) scale(.86); } }
 @keyframes dk-att-out { to { opacity: 0; transform: scale(.86); } }
 /* The same pop for an image already in a sent message, so it appears with the reply instead of being there already. */
@@ -1479,3 +1597,31 @@ button.dk-sess-group { cursor: pointer; }
 .dk-info:hover .dk-info-tip, .dk-info:focus-visible .dk-info-tip { opacity: 1; visibility: visible; transition: opacity 120ms ease; }
 .dk-info[data-align="start"] .dk-info-tip { left: -6px; right: auto; transform: none; }
 .dk-info[data-align="end"] .dk-info-tip { left: auto; right: -6px; transform: none; }
+
+/* ---- The glass every menu wears (2026-11-18): one recipe, /btw's own. A translucent surface over whatever is behind it
+   (blur 18px, saturation 1.2), the strong hairline rule, one soft lift, the same arrival. Written last on purpose: every
+   menu above set a solid surface, and this is what they wear instead. The slash menu (chat.css .dg-mentions) is an <ul>
+   the page positions, so it takes the same recipe there. ---- */
+.dk-help-menu, .dk-sess-menu, .dk-mp-pop, .dk-model-pick, .dk-palette, .dk-sw, .dk-info-tip {
+  background: var(--dg-glass-strong, var(--surface));
+  border-color: var(--rule-strong);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, .24), 0 2px 8px rgba(0, 0, 0, .1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2);
+}
+/* A menu's items are lit, not painted, inside glass: a solid fill cuts a hole in a translucent menu. */
+.dk-help-menu a:hover, .dk-help-menu a:focus-visible,
+.dk-sess-menu > button:hover, .dk-sess-menu > button:focus-visible,
+.dk-mp-pop li button:hover, .dk-model-pick button:hover { background: var(--soft, rgba(0,0,0,.06)); }
+:root[data-theme="dark"] .dk-help-menu a:hover, :root[data-theme="dark"] .dk-sess-menu > button:hover,
+:root[data-theme="dark"] .dk-mp-pop li button:hover, :root[data-theme="dark"] .dk-model-pick button:hover { background: rgba(255,255,255,.08); }
+/* The overlay behind the palette and the sheet: the same dim as before, softened so the glass has something to sit on. */
+.dk-palette-backdrop, .dk-sw-backdrop { background: rgba(23, 23, 23, .22); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+/* Saturated blur is a filter: the browsers that refuse it (or a machine asked for less transparency) keep the solid
+   surface, which is legible on its own. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .dk-help-menu, .dk-sess-menu, .dk-mp-pop, .dk-model-pick, .dk-palette, .dk-sw, .dk-info-tip, .dg-mentions,
+  .dk-page-float.dk-account {
+    background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+  .dk-palette-backdrop, .dk-sw-backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}

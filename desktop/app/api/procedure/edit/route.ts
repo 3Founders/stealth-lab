@@ -1,17 +1,25 @@
-// POST { name, goal, steps, instruction }: ask kell to rewrite a Way's steps from a sentence, like the canvas's
-// "Change it". One model call (the engine's one-shot generate, no tools, no session): it returns the edited titles and
-// notes, and the app puts them in the editor so the graph follows. Kinds, tools and models stay as they were unless the
-// person changed them (2026-11-17).
+// POST { name, goal, steps, instruction, files?, model? }: ask kell to rewrite a Way's steps from a sentence and any
+// pictures, like the canvas's "Change it". One model call (the engine's one-shot generate, no tools, no session): it
+// returns the edited titles and notes, and the app puts them in the editor so the graph follows. Kinds, tools and models
+// stay as they were unless the person changed them (2026-11-17).
+//
+// Pictures are named in the prompt and sent as the call's files (a data: URL, source inline: the reference schema's own
+// shape). The route cannot know which models see pictures, so it does not pretend: when the request carried pictures and
+// the model answered as if it never saw them, it says that in one line and the editor shows the steps anyway.
 import { engineStatus, clientFor } from "@/lib/engine"
 
 export const dynamic = "force-dynamic"
+
+/** What /api/prompt inlines for a file too (12 MB); larger is refused here rather than sent and dropped by the engine. */
+const MAX_FILE_CHARS = 12_000_000
 
 const INSTRUCTIONS = `You edit the steps of a kell Way (a procedure) for the person who is about to run it.
 - Reply with ONLY a JSON object: {"steps":[{"title":"...","note":"..."}]}. No prose, no code fences.
 - Keep the same number of steps unless the person explicitly asks to add, remove, merge or split one.
 - Rewrite titles so each makes one action clear, and notes to say what to do or what to watch for.
 - Keep each step's meaning and order; do not invent tools, models, kinds or facts.
-- Write in the person's own language when the request is in another language.`
+- Write in the person's own language when the request is in another language.
+- Pictures attached with the request are part of it: read what they show (a screen, a form, a sketch, an error) and let it shape the steps.`
 
 export async function POST(req: Request) {
   const e = engineStatus()
@@ -29,14 +37,28 @@ export async function POST(req: Request) {
     ...(s?.tool ? { tool: String(s.tool).slice(0, 120) } : {}),
     ...(s?.model ? { model: String(s.model).slice(0, 120) } : {}),
   })) : []
-  if (!instruction || !steps.length) {
-    return Response.json({ error: "Say what to change, with at least one step." }, { status: 400 })
+  // Pictures and PDFs the bar carried: only inline data is taken, and only up to the size the prompt route inlines.
+  const files = (Array.isArray(body?.files) ? body.files : [])
+    .filter((f: any) => f && typeof f.dataUrl === "string" && /^data:[^,]+,/.test(f.dataUrl))
+    .slice(0, 4)
+    .map((f: any) => ({ uri: String(f.dataUrl), source: { type: "inline" }, name: String(f.name || "attachment").slice(0, 200) }))
+    .filter((f: any) => f.uri.length <= MAX_FILE_CHARS)
+  if (!instruction && !files.length) {
+    return Response.json({ error: "Say what to change, or add a picture to work from." }, { status: 400 })
   }
+  if (!steps.length) return Response.json({ error: "This Way has no steps to edit." }, { status: 400 })
+  // The bar's own model, when the person picked one; otherwise the engine's default for this one-shot call.
+  const model = body?.model && typeof body.model.id === "string" && typeof body.model.providerID === "string"
+    ? { id: body.model.id, providerID: body.model.providerID } : undefined
+  const listed = files.length
+    ? `\n\nAttached pictures (in order): ${files.map((f: any, i: number) => `${i + 1}. ${f.name}`).join(", ")}`
+    : ""
   const prompt = `${INSTRUCTIONS}\n\nWay: ${name || "(untitled)"}\nGoal: ${goal || "(none)"}\n`
-    + `Steps now (JSON):\n${JSON.stringify(steps, null, 2)}\n\nWhat the person wants changed: ${instruction}`
+    + `Steps now (JSON):\n${JSON.stringify(steps, null, 2)}`
+    + `\n\nWhat the person wants changed: ${instruction || "(nothing written: use the attached pictures)"}${listed}`
   try {
     const client = await clientFor(e)
-    const out = await client.experimental.generate.text({ prompt })
+    const out = await client.experimental.generate.text({ prompt, ...(model ? { model } : {}), ...(files.length ? { files } : {}) } as any)
     const text = String((out as any)?.text || "")
     const at = text.indexOf("{"), end = text.lastIndexOf("}")
     if (at < 0 || end <= at) return Response.json({ error: "The model did not return steps." }, { status: 502 })
@@ -53,7 +75,12 @@ export async function POST(req: Request) {
         note: String(s?.note ?? old.note ?? "").slice(0, 1000),
       }
     })
-    return Response.json({ steps: merged })
+    // Honest about the pictures: a text-only model answers from the words alone, and the person should know which line
+    // shaped the steps rather than find out when the same picture failed to change anything.
+    const saw = files.length
+      ? "The steps were rewritten. If kell seemed to ignore the pictures, the model this bar is set to may not read them; pick one that does."
+      : undefined
+    return Response.json({ steps: merged, ...(saw ? { note: saw } : {}) })
   } catch (err: any) {
     return Response.json({ error: String(err?.message || err).slice(0, 300) }, { status: 502 })
   }

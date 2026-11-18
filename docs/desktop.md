@@ -79,6 +79,38 @@ The composer has the website chat's slash menu (`SLASH_COMMANDS` in `app/page.ts
 typed in full closes the menu so Enter runs it instead of picking it again. Commands are dispatched in `send()`, before
 anything reaches the engine; the same two are in the Ctrl/Cmd-K palette.
 
+## Two prompt bars, one set of controls (0.1.32)
+
+The main composer and the Way's ask bar in the Procedure panel (and in the card's sheet) are the same bar now: each
+takes files by picker, drag-and-drop and paste, shows them as chips with a picture's own thumbnail, and names its model.
+`components/AttachStrip.tsx` is the shared chip strip, `components/ModelPicker.tsx` the shared model popover, and
+`lib/attach.ts` the shared rules (downscaling, size caps). What a bar holds goes to *its* destination and nowhere else:
+a picture in the main composer goes with the chat's turn; a picture in the Way's ask bar goes to the edit call
+(`app/api/procedure/edit`) and never to the chat. A drop from the OS carries a path, not bytes, so an image's bytes are
+read through `app/api/attach/read` — an image's path is not its picture. The inline card's bar starts with what the chat's
+composer was holding, read once at mount so a resend does not resurrect it.
+
+Model choices: "Chat" (the default) keeps kell's router choosing the rung for the task. A named model is the person's
+standing choice — persisted under `kell.chat.model` in `localStorage`, which `public/prefs-init.js` mirrors to
+`~/.stealthlab/desktop-prefs.json`, so it outlives a restart — and it replaces the router's rung for the next turn it
+sends, riding in the plan so the Way's contract describes the same run. The Way's ask bar has its own model, defaulting
+to the engine's choice for that one-shot call. Neither bar can know which models read pictures, so the edit route says
+that in one line when pictures were sent rather than claiming they were seen.
+## Submit a Way is the app's own sheet (0.1.32)
+
+"Submit a Way" in the Procedure panel (and in the Ctrl/Cmd-K palette) used to switch to Rooms and load `/chat?panel=submit`
+in the rooms view. The desktop fired that request synchronously, before the view existed (`roomsOn` is false until the
+account check lands), so `openRoomsPanel` found no view and returned; every path that later created or reloaded the view
+loaded bare `/chat`, dropping the parameter. In the app the button did nothing. Fixed twice over:
+
+- **In the app:** `components/SubmitWay.tsx` is a native sheet over the chat, speaking to the same backend tool the
+  website does — `submit_goal`, through `app/api/submit`. "Check it" is `preview: true` (stores nothing; the backend
+  derives the mode from the steps), "Submit" stores the submission and shows each step's verdict with its reason, and
+  "Check the verdicts" asks again by `submissionId`. A submitted Way's record can be read in the chat's sheet.
+- **In the rooms bridge:** `electron/rooms.ts` keeps a pending panel ask, puts `?panel=` on *every* load of the chat
+  (`chatUrl()`), and opens a panel on a chat that is already on screen through a page hook instead of a reload that would
+  drop the person's room.
+
 ## Where chats live (0.1.18)
 
 Two SQLite files, and the app owns only one of them.

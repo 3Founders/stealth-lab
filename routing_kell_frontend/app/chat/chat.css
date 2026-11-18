@@ -234,7 +234,8 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 /* Notifications: the bell in the room header, its list and its settings. */
 .dg-bell { position: relative; }
 .dg-bell > .dg-mini { display: inline-flex; align-items: center; gap: 6px; }
-.dg-bell-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(380px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto; background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 8px; padding: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .14); display: grid; gap: 10px; }
+/* A menu, not a card: the notifications popover takes the glass recipe (below), the same one /btw and the desktop's menus wear. */
+.dg-bell-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(380px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto; background: var(--dg-glass-strong, var(--surface)); border: 1px solid var(--rule-strong); border-radius: 12px; padding: 12px; box-shadow: var(--dg-float, 0 12px 32px rgba(0, 0, 0, .14)); display: grid; gap: 10px; -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); }
 .dg-bell-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .dg-bell-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .dg-bell-list button { width: 100%; text-align: left; display: grid; gap: 2px; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; font: inherit; cursor: pointer; }
@@ -283,7 +284,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-burger-dot { position: absolute; top: -5px; right: -5px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--yellow); color: #171717; font-size: 10.5px; line-height: 18px; text-align: center; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
 .dg-menu-pop > button:has(.dg-unread) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dg-bell-pop--menu { left: 0; right: auto; }
-.dg-menu-pop { position: absolute; left: 0; top: calc(100% + 8px); z-index: 35; min-width: 232px; max-height: min(70vh, 560px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 6px; background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 12px; box-shadow: 0 18px 44px rgba(0, 0, 0, .2), 0 2px 8px rgba(0, 0, 0, .1); display: grid; gap: 1px; animation: dg-pop .28s cubic-bezier(.32, .72, 0, 1) both; transform-origin: top left; }
+.dg-menu-pop { position: absolute; left: 0; top: calc(100% + 8px); z-index: 35; min-width: 232px; max-height: min(70vh, 560px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 6px; background: var(--dg-glass-strong, var(--surface)); border: 1px solid var(--rule-strong); border-radius: 12px; box-shadow: var(--dg-float, 0 18px 44px rgba(0, 0, 0, .2)); display: grid; gap: 1px; -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); animation: dg-pop .28s cubic-bezier(.32, .72, 0, 1) both; transform-origin: top left; }
 .dg-menu-pop > button, .dg-menu-pop > a { display: block; width: 100%; text-align: left; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 15px; color: var(--ink); text-decoration: none; cursor: pointer; }
 .dg-menu-pop > button:hover, .dg-menu-pop > a:hover, .dg-menu-pop > button:focus-visible, .dg-menu-pop > a:focus-visible { background: var(--soft); outline: none; }
 .dg-menu-pop hr { border: 0; border-top: 1px solid var(--rule); margin: 5px 4px; }
@@ -295,7 +296,8 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-settings[open]::backdrop { background: rgba(0, 0, 0, .4); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); animation: photo-fade .35s ease-out both; }
 .dg-settings[data-closing] { animation: photo-out .24s cubic-bezier(.4, 0, 1, 1) both; }
 .dg-settings[data-closing]::backdrop { animation: photo-fade-out .24s ease-in both; }
-.dg-set-frame { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 16px; box-shadow: 0 28px 70px rgba(0, 0, 0, .3), 0 2px 10px rgba(0, 0, 0, .12); overflow: hidden; }
+/* The Settings window is a sheet, not a menu: the near-opaque tint keeps its forms readable, with the page blurring behind. */
+.dg-set-frame { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--dg-glass-sheet, var(--surface)); border: 1px solid var(--rule-strong); border-radius: 16px; box-shadow: 0 28px 70px rgba(0, 0, 0, .3), 0 2px 10px rgba(0, 0, 0, .12); overflow: hidden; -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); }
 .dg-set-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 22px; border-bottom: 1px solid var(--rule); }
 .dg-set-head h2 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
 .dg-set-x { width: 36px; height: 36px; border-radius: 10px; border: 0; background: transparent; font-size: 24px; line-height: 1; cursor: pointer; color: var(--ink); }
@@ -370,7 +372,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 
 /* Glass and shadow, as on the main site header: every button and popup in the chat is a frosted pane (translucent paper, blurred
    backdrop, a faint light edge) lifted by a soft drop shadow. No black outlines. Filled primary buttons keep their fill and gain the shadow. */
-.dg-page { --dg-glass: rgba(248, 246, 239, .72); --dg-glass-strong: rgba(248, 246, 239, .86); --dg-edge: rgba(255, 255, 255, .6);
+.dg-page { --dg-glass: rgba(248, 246, 239, .72); --dg-glass-strong: rgba(248, 246, 239, .86); --dg-glass-sheet: rgba(248, 246, 239, .94); --dg-edge: rgba(255, 255, 255, .6);
   --dg-lift: 0 8px 22px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09); --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1);
   --dg-float: 0 20px 52px rgba(0, 0, 0, .22), 0 3px 10px rgba(0, 0, 0, .12); }
 .dg-page .btn-line, .dg-page .dg-add, .dg-page .dg-mini, .dg-page .dg-breaker, .dg-page .dg-stop, .dg-page .dg-burger, .dg-page .dg-menu,
@@ -812,13 +814,13 @@ span.dg-replyq { cursor: default; }
 
 /* Dark mode for the chat: the glass becomes dark glass, shadows deepen, pale overlays become faint light ones, the logo is lightened. */
 :root[data-theme="dark"] .dg-page {
-  --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-edge: transparent;
+  --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-glass-sheet: rgba(34, 33, 27, .96); --dg-edge: transparent;
   --dg-lift: 0 8px 22px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4); --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .6), 0 2px 5px rgba(0, 0, 0, .45);
   --dg-float: 0 20px 52px rgba(0, 0, 0, .65), 0 3px 10px rgba(0, 0, 0, .45); --dg-dent: inset 0 1px 3px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .06);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .dg-page {
-    --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-edge: transparent;
+    --dg-glass: rgba(34, 33, 27, .72); --dg-glass-strong: rgba(34, 33, 27, .88); --dg-glass-sheet: rgba(34, 33, 27, .96); --dg-edge: transparent;
     --dg-lift: 0 8px 22px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4); --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .6), 0 2px 5px rgba(0, 0, 0, .45);
     --dg-float: 0 20px 52px rgba(0, 0, 0, .65), 0 3px 10px rgba(0, 0, 0, .45); --dg-dent: inset 0 1px 3px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .06);
   }
@@ -873,7 +875,7 @@ span.dg-replyq { cursor: default; }
 
 /* People who ask the system for less transparency get the same colour, opaque, with no blur. */
 @media (prefers-reduced-transparency: reduce) {
-  .dg-page, .dg-portal { --dg-glass: var(--paper); --dg-glass-strong: var(--surface); }
+  .dg-page, .dg-portal { --dg-glass: var(--paper); --dg-glass-strong: var(--surface); --dg-glass-sheet: var(--surface); }
   .dg-page .dg-menu-pop, .dg-page .dg-bell-pop, .dg-page .dg-mentions, .dg-page .dg-onboard-menu, .dg-page .dg-search, .dg-page .dg-form, .dg-page .dg-me,
   .dg-page .dg-head, .dg-page .dg-composer textarea, .dg-page .dg-set-frame, .dg-page .dg-manage-frame, .dg-page .btn-line, .dg-page .dg-room[aria-current="page"],
   .dg-page .back-btn--inline, .dg-page .dg-burger, .dg-page .dg-close {
@@ -1562,8 +1564,11 @@ span.dg-replyq { cursor: default; }
 .dg-proc-layer { position: fixed; inset: 0; z-index: 80; }
 .dg-proc-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.3); animation: dg-proc-scrim-in 220ms var(--dg-micro, ease) both; }
 @keyframes dg-proc-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+/* The Way's record, sliding in: glass on its own backdrop would smear the chat under a column of small text, so its body
+   stays near-opaque (the sheet tint) and only its edge is soft. Same recipe as /btw's, one step denser. */
 .dg-proc-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 94vw); display: flex; flex-direction: column;
-  background: var(--surface); color: var(--ink); border-left: 1px solid var(--rule-strong);
+  background: var(--dg-glass-sheet, var(--surface)); color: var(--ink); border-left: 1px solid var(--rule-strong);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2);
   box-shadow: -18px 0 48px rgba(0,0,0,.18); animation: dg-proc-in 420ms var(--dg-smooth, cubic-bezier(.32,.72,0,1)) both; }
 @keyframes dg-proc-in { from { transform: translateX(100%); } to { transform: none; } }
 .dg-proc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px 10px;

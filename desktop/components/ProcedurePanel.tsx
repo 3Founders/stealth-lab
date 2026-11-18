@@ -5,6 +5,7 @@
 import ProcedureEditor from "./ProcedureEditor"
 import InfoTip from "./InfoTip"
 import type { DelegationStep, WayOption } from "@/lib/plan"
+import type { BarAttachment } from "@/lib/attach"
 
 export default function ProcedurePanel({ option, steps, catalog = [], onEdit, onAdd, onRemove, onUse, onAsk, onSubmitWay, glass, onToggleGlass, previewLabel }: {
   option: WayOption | null
@@ -14,7 +15,8 @@ export default function ProcedurePanel({ option, steps, catalog = [], onEdit, on
   onAdd: () => void
   onRemove: (i: number) => void
   onUse?: () => void
-  onAsk?: (text: string) => Promise<void>
+  /** The record's own prompt bar: a sentence and pictures go to the edit call, with that bar's model. */
+  onAsk?: (text: string, files?: BarAttachment[], model?: string) => Promise<void>
   /** Open the rooms' "Submit a Way" flow: a person writes a new procedure there, step by step, for review. */
   onSubmitWay?: () => void
   glass: boolean

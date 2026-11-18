@@ -20,6 +20,10 @@ import type { Delegation, DelegationStep, GoalOption, WayOption } from "@/lib/pl
 import { planFromOption } from "@/lib/plan"
 import ProcedurePanel from "@/components/ProcedurePanel"
 import ProcedurePicker from "@/components/ProcedurePicker"
+import AttachStrip from "@/components/AttachStrip"
+import ModelPicker, { toModelRef } from "@/components/ModelPicker"
+import SubmitWay from "@/components/SubmitWay"
+import { MAX_ATTACHMENTS, fileToDataUrl as readDataUrl, imageDataUrl, isImage, MAX_ATTACH_BYTES, type BarAttachment } from "@/lib/attach"
 import BottomPanel, { GlobeIcon, TerminalIcon, type PanelTab } from "@/components/BottomPanel"
 
 // The Electron preload's bridge (electron/preload.ts). Absent in a plain browser (`next dev`): sign-in links then open a tab
@@ -210,6 +214,7 @@ type BtwThread = { id: string; sessionID: string | null; at: number; updated: nu
  *  send() is the dispatcher: /goal and /btw are both handled there, before anything reaches the engine. */
 const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
   { name: "/btw", hint: "ask a side question about this chat; answered from it, not added to it" },
+  { name: "/model", hint: "choose the model for this chat, e.g. /model deepseek-v4-pro (/model alone lists them)" },
   { name: "/compact", hint: "summarise the older turns so a long chat costs less (automatic at 95% full)" },
   { name: "/clear", hint: "start a fresh chat in this folder; this one stays in the list" },
   { name: "/goal", hint: "set a completion condition; kell keeps working until it holds" },
@@ -217,6 +222,8 @@ const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
   { name: "/auto", hint: "search for a procedure and use the best fit automatically" },
   { name: "/ask", hint: "search for a procedure and show the ways to choose from" },
 ]
+/** A model's short name: "deepseek-v4-pro" from "kell/deepseek-v4-pro". */
+const shortModel = (m: string) => m.split("/").pop() || m
 /** How a prompt is handled before the model runs: direct sends it as is; auto searches and uses the best-fitting Way;
  *  ask searches and waits for the person to pick one (the default, so no procedure is ever applied on its own). */
 type ProcMode = "direct" | "auto" | "ask"
@@ -260,6 +267,10 @@ const delegationWay = (d: Delegation | null): WayOption | null => d?.way ? {
   id: d.way.id, name: d.way.name, approval: d.way.approval, review: "", why: d.why,
   goal: d.goal, tool: d.tool, steps: d.steps,
 } : null
+
+/** A stored locator ({type, value}) or one as typed: one line, for a step's note. */
+const locatorText = (l: unknown) =>
+  typeof l === "string" ? l : l && typeof l === "object" ? String((l as any).value || "") : ""
 
 export default function Home() {
   const [directory, setDirectory] = useState("")
@@ -706,6 +717,17 @@ export default function Home() {
     setProcMode(mode)
     try { localStorage.setItem("kell.procedure.mode", mode) } catch { /* the state still changes */ }
   }, [])
+  // The model the main composer's bar names (provider/id, no value = Chat, kell's router decides). A pick is this person's
+  // standing choice and outlasts a reload, unlike the per-turn router rung: it replaces that rung for the turn it sends and
+  // rides in the plan, so a Way's steps and the contract describe the same run the chat does (2026-11-18).
+  const [chatModel, setChatModel] = useState("")
+  useEffect(() => {
+    try { const saved = localStorage.getItem("kell.chat.model"); if (saved) setChatModel(saved) } catch { /* storage blocked */ }
+  }, [])
+  const chooseChatModel = useCallback((m: string) => {
+    setChatModel(m)
+    try { if (m) localStorage.setItem("kell.chat.model", m); else localStorage.removeItem("kell.chat.model") } catch { /* the state still changes */ }
+  }, [])
   // Opening or starting a chat always returns the middle column to the session itself.
   useEffect(() => { setAgentView("main") }, [sessionID])
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -769,8 +791,16 @@ export default function Home() {
   // Files staged in the composer. Paths stay paths: the API decides whether a path reference or an attachment is cheaper.
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [leavingAtts, setLeavingAtts] = useState<string[]>([])   // chips playing their exit before they leave the list
-  const [dragFiles, setDragFiles] = useState(false)
+  const [dragFiles, setDragFiles] = useState(false)             // a file over the chat: the overlay says it will attach
+  const [overComposer, setOverComposer] = useState(false)       // a file over the composer itself: its box lights up
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // "Submit a Way" is the app's own sheet, over the chat (components/SubmitWay). It used to hop to the website's rooms
+  // and ask for their panel with ?panel=submit; the request left before their view even existed, and every load of that
+  // view went back to plain /chat, so in the app the button appeared to do nothing. The submission always went to the same
+  // backend tool (submit_goal), so the sheet is native: it is also where a new Way is written.
+  const [submitOpen, setSubmitOpen] = useState(false)
+  /** The Way on screen when the sheet was opened: it can seed the new Way's steps, on request and never by itself. */
+  const [submitFrom, setSubmitFrom] = useState<WayOption | null>(null)
   // The command palette (Ctrl/Cmd-K): app actions and "go to file", with the last few choices first.
   const [palette, setPalette] = useState(false)
   const [paletteQ, setPaletteQ] = useState("")
@@ -833,6 +863,18 @@ export default function Home() {
       if (j.up) void loadSessions()
     })
     fetch("/api/settings").then((r) => r.json()).then(setSettings).catch(() => undefined)
+    // The model list can be empty on the first read (a personal lane fetches it from the gateway when the engine is up),
+    // and an empty list is why a model picker could look like it had nothing to offer. Read again until it has one.
+    let tries = 0
+    const t = window.setInterval(() => {
+      tries += 1
+      if (tries > 20) { window.clearInterval(t); return }             // ~1 min: then the next sign-in or Settings read fills it
+      void fetch("/api/settings").then((r) => r.json()).then((j) => {
+        setSettings(j)
+        if (Array.isArray(j?.catalog) && j.catalog.length) window.clearInterval(t)
+      }).catch(() => undefined)
+    }, 3_000)
+    return () => window.clearInterval(t)
   }, [])
   // Typeface (View > Font): apply the saved choice, tell the native menu which one it is, then follow later menu clicks.
   useEffect(() => {
@@ -1436,37 +1478,49 @@ export default function Home() {
 
   // ---- Attachments -----------------------------------------------------------------------------------------------
   // The cheapest path wins: a text file inside the project is sent as a path reference (the agent reads it with its
-  // own tools); only images, PDFs and files outside the project are attached as bytes. Nothing is copied through the page.
-  const fileToDataUrl = (f: File) => new Promise<string>((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(String(r.result || ""))
-    r.onerror = () => reject(r.error)
-    r.readAsDataURL(f)
-  })
+  // own tools); only images, PDFs and files outside the project are attached as bytes, and a picture's bytes are read
+  // properly (downscaled, lib/attach.ts) whatever its path. Files on disk reach the model through /api/attach/read.
   const addPaths = async (paths: string[]) => {
     if (!paths.length || !directory) return
     try {
       const r = await fetch("/api/attach", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory, paths }) })
       const j = await r.json()
       if (!r.ok) { setConsoleNote(String(j.error || "Could not attach that file")); return }
+      // Read the pictures and PDFs first, in one call: an image's path is not its picture, and the engine needs the bytes.
+      let blobs: Record<string, { dataUrl: string; mime: string }> = {}
+      try {
+        const read = await fetch("/api/attach/read", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paths }) })
+        const rb = await read.json()
+        if (read.ok && Array.isArray(rb.files)) for (const f of rb.files) blobs[String(f.name)] = { dataUrl: String(f.dataUrl), mime: String(f.mime) }
+      } catch { /* the text references below still work */ }
       const next: Attachment[] = (Array.isArray(j.files) ? j.files : []).map((f: any) => ({
         id: crypto.randomUUID(), name: String(f.name || "attachment"), size: Number(f.size) || 0,
         mime: String(f.mime || "application/octet-stream"), path: String(f.path),
         ...(f.rel ? { rel: String(f.rel) } : {}),
+        ...(blobs[String(f.name)] ? { mime: blobs[String(f.name)].mime, dataUrl: blobs[String(f.name)].dataUrl } : {}),
       }))
-      setAttachments((a) => [...a, ...next].slice(0, 10))
+      setAttachments((a) => [...a, ...next].slice(0, MAX_ATTACHMENTS))
     } catch { setConsoleNote("Could not attach that file") }
   }
   const addBrowserFiles = async (files: File[]) => {
+    const room = MAX_ATTACHMENTS - attachments.length
+    if (files.length > room) setConsoleNote(`A message takes ${MAX_ATTACHMENTS} files at a time.`)
     const next: Attachment[] = []
-    for (const f of files.slice(0, 10)) {
+    for (const f of files.slice(0, Math.max(0, room))) {
+      if (f.size > MAX_ATTACH_BYTES) { setConsoleNote(`${f.name} is larger than 25 MB`); continue }
+      const mime = f.type || "application/octet-stream"
+      // A picture is never a path reference: the model has to see the bytes, wherever the file lives (lib/attach.ts).
+      if (isImage(mime)) {
+        try { next.push({ id: crypto.randomUUID(), name: f.name, size: f.size, mime, dataUrl: await imageDataUrl(f, mime) }) }
+        catch { setConsoleNote(`Could not read ${f.name}`) }
+        continue
+      }
       const p = desktop()?.pathForFile?.(f) || (f as any).path
       if (p) { await addPaths([p]); continue }
-      if (f.size > 25 * 1024 * 1024) { setConsoleNote(`${f.name} is larger than 25 MB`); continue }
-      try { next.push({ id: crypto.randomUUID(), name: f.name, size: f.size, mime: f.type || "application/octet-stream", dataUrl: await fileToDataUrl(f) }) }
+      try { next.push({ id: crypto.randomUUID(), name: f.name, size: f.size, mime, dataUrl: await readDataUrl(f) }) }
       catch { setConsoleNote(`Could not read ${f.name}`) }
     }
-    if (next.length) setAttachments((a) => [...a, ...next].slice(0, 10))
+    if (next.length) setAttachments((a) => [...a, ...next].slice(0, MAX_ATTACHMENTS))
   }
   const pickAttachments = async () => {
     if (desktop()?.pickFiles) { await addPaths(await desktop()!.pickFiles!()); return }
@@ -1684,6 +1738,45 @@ export default function Home() {
     return await Promise.race([planP, new Promise<null>((ok) => setTimeout(() => ok(null), 60_000))])
   }
 
+  // One opener for both entry points (the Procedure panel's button and the palette): a new Way is written here, and the
+  // Way on screen is offered as a starting point, so the form is not always blank in front of a stored procedure.
+  const openSubmitWay = (from?: WayOption | null) => { setSubmitFrom(from ?? null); setSubmitOpen(true) }
+
+  // A Way just submitted: its record, in the chat's sheet and in the right panel, from the steps the submission read
+  // back (the submission row's own ids stay where they are; this is for reading, and it says it is under review).
+  const openSubmittedWay = async (submissionId: string) => {
+    try {
+      const r = await fetch("/api/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ submissionId }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j?.submission) { appendNote(`Could not read that submission: ${j?.error || r.status}`); return }
+      const s = j.submission
+      const way: WayOption = {
+        id: String(s.submission_id || s.id || submissionId),
+        name: String(s.goal_name || s.goal || "Submitted Way"),
+        approval: String(s.status || "reviewing"),
+        review: String(s.mode_label || ""),
+        why: "Just submitted from the desktop app. Each step is reviewed on its own; an approved Way goes into kell's rankings marked \"AI approved\".",
+        goal: s.goal_id ? { id: String(s.goal_id), name: String(s.goal_name || s.goal || "") } : null,
+        tool: null,
+        steps: (Array.isArray(s.steps) ? s.steps : []).map((o: any, i: number) => {
+          // The step's own words, then the reviewer's verdict in one line, since the record's note is what it shows.
+          const body = o.kind === "human" ? String(o.description || "") : String(o.prompt || locatorText(o.locator))
+          const verdict = o.status && o.status !== "reviewing"
+            ? `${o.status === "rejected" ? "Not approved" : o.status}${o.reason ? `: ${o.reason}` : ""}` : ""
+          return {
+            order: Number(o.order) || i + 1,
+            kind: o.kind === "human" ? "human" : "prompt",
+            title: String(o.title || body || `Step ${i + 1}`),
+            ...(body || verdict ? { note: [body, verdict].filter(Boolean).join(" · ") } : {}),
+          }
+        }),
+      }
+      setAgentView("main")
+      setInspectWay(way)
+      if (!rightOpen) toggleSidebar("right")
+    } catch (err) { appendNote(`Could not read that submission: ${String((err as Error)?.message || err)}`) }
+  }
+
   const send = async (again?: string, filesOverride?: Attachment[], asGoal = false) => {
     const body = again ?? text
     const outgoing = again === undefined ? attachments : (filesOverride ?? [])
@@ -1705,6 +1798,30 @@ export default function Home() {
       return
     }
     if (!asGoal && /^\/btw\b/i.test(body.trim())) { handleBtwCommand(body.trim()); if (again === undefined) { setText(""); histPos.current = null } return }
+    // /model: the composer's own model pick, by name. `/model` alone lists what this lane offers; `/model chat` goes back
+    // to kell's router. It never spends a turn.
+    if (!asGoal && /^\/model\b/i.test(body.trim())) {
+      const want = body.trim().replace(/^\/model\s*/i, "").trim()
+      const list = settings?.catalog || []
+      if (!want) {
+        appendNote(list.length
+          ? `Models on this lane: ${list.slice(0, 24).map(shortModel).join(", ")}${list.length > 24 ? ", …" : ""}. Type /model <name>, or /model chat to let kell's router choose.`
+          : "No model list on this machine yet: Chat (kell's router) is the choice available.")
+      } else if (/^(chat|auto|default)$/i.test(want)) {
+        chooseChatModel("")
+        appendNote("Model: Chat. kell's router picks the model for each task.")
+      } else {
+        const hit = list.find((m) => m.toLowerCase() === want.toLowerCase())
+          ?? list.find((m) => shortModel(m).toLowerCase() === want.toLowerCase())
+          ?? list.find((m) => shortModel(m).toLowerCase().includes(want.toLowerCase()))
+        if (hit) { chooseChatModel(hit); appendNote(`Model: ${shortModel(hit)}. It runs the next turn, and this chat keeps it.`) }
+        else appendNote(list.length
+          ? `No model here is called "${want}". /model lists them.`
+          : `No model list on this machine yet, so "${want}" cannot be chosen. Sign in again, or check Settings > Models.`)
+      }
+      if (again === undefined) { setText(""); histPos.current = null }
+      return
+    }
     if (!asGoal) {
       // Direct / Auto / Ask, switchable from the composer or by typing the command (the same names, one dispatcher).
       const m = /^\/(direct|auto|ask)\s*$/i.exec(body.trim())
@@ -1721,6 +1838,7 @@ export default function Home() {
       }
     }
     setAgentView("main")                                    // a new prompt is for the session, not the agent view
+    // /model is answered above and needs no project; a prompt still does.
     if ((!body.trim() && !outgoing.length) || !directory) return
     // Only this chat's own turn blocks a send. Another chat answering is not this chat's business (2026-11-17).
     const key = sessionID ?? newKey
@@ -1746,7 +1864,7 @@ export default function Home() {
     setBusy(true); busyRef.current = true
     setStopNote("")
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
-    if (skipSearch) { await runTurn(sent, outgoing, null, key, sessionID); return }
+    if (skipSearch) { await runTurn(sent, outgoing, chatModel ? withChatModel(planFromOption(sent, settings?.models || {}, null, null)) : null, key, sessionID); return }
     const routed = await routedP
     // A new session was started while the search ran: its picker, card, or error belongs to the chat the person left.
     if (turnGen.current !== gen) { endTurn(key); return }
@@ -1755,7 +1873,7 @@ export default function Home() {
     if (routed && procMode === "auto") {
       // Auto: the best-fitting Way is applied without a click. No Way means the model does the work, with no card.
       const best = routed.options[0] ?? null
-      const plan = planFromOption(sent, settings?.models || {}, routed.goal, best)
+      const plan = withChatModel(planFromOption(sent, settings?.models || {}, routed.goal, best))
       setDelegateOptions(routed.options)
       setDelegateGoals(routed.goals)
       setPendingTurn(null)
@@ -1813,6 +1931,9 @@ export default function Home() {
     let ended = false
     let failed = false
     let said = false
+    // What the person asked for in the composer, and whether the engine ran something else (said once, not per step).
+    const wantModel = chatModel
+    let modelMismatch = false
     const reader = r.body.getReader()
     const dec = new TextDecoder()
     // A blocking event (a permission, missing credit, an error) in a chat that is not on screen: keep its card for when
@@ -1897,6 +2018,17 @@ export default function Home() {
         else if (t === "session.step.started") {
           const id = String(d.assistantMessageID || "")
           if (live() && id && d.model?.id) setLedger((rows) => [...rows.filter((r) => r.id !== id), { id, model: d.model.id, providerID: d.model.providerID }])
+          // The model the person chose in the composer is a promise, not a hint: when the engine ran a different one (the
+          // engine keeps its own model list and a choice from outside it is ignored), say so in one line here, once per
+          // turn, rather than letting the chat claim a model that never ran (2026-11-18).
+          if (live() && d.model?.id && wantModel && !modelMismatch) {
+            const ran = `${d.model.providerID ? `${d.model.providerID}/` : ""}${d.model.id}`
+            const same = ran === wantModel || d.model.id === wantModel.split("/").pop()
+            if (!same) {
+              modelMismatch = true
+              appendNote(`You chose ${shortModel(wantModel)}, but the engine ran ${ran}: it does not offer that model on this lane. The turn is priced and reported as ${ran}.`)
+            }
+          }
         }
         else if (t === "session.step.ended") {
           const id = String(d.assistantMessageID || "")
@@ -1981,12 +2113,18 @@ export default function Home() {
     }
   }
 
+  // A plan with the composer's model, when the person named one: the router's rung becomes this choice, and the reason
+  // says whose choice it was so the panel never claims kell picked it.
+  const withChatModel = (plan: Delegation): Delegation => chatModel
+    ? { ...plan, model: toModelRef(chatModel), rung: null, why: `you chose ${chatModel} in the composer` }
+    : plan
+
   // The person picked one of the Ways: build its plan (model rung, brief) and run the waiting turn.
   const applyOption = (option: WayOption) => {
     const pending = pendingTurn
     const key = pending?.sid ?? chatKeyRef.current
     if (!pending || runningRef.current[key]) return           // a double click must not start the turn twice
-    const plan = planFromOption(pending.text, settings?.models || {}, pending.goal, option)
+    const plan = withChatModel(planFromOption(pending.text, settings?.models || {}, pending.goal, option))
     planRef.current = plan
     setDelegation(plan)
     setDelegateOptions([])
@@ -2017,8 +2155,10 @@ export default function Home() {
     applyOption({ ...o, steps: stepsFor(o) })
     setInspectWay(null)
   }
-  // Ask kell to rewrite the steps (title and note) from a sentence: the editor's input, like the canvas's.
-  const askProcedure = async (o: WayOption, text: string) => {
+  // Ask kell to rewrite the steps (title and note) from a sentence: the editor's input, like the canvas's. The bar's
+  // pictures and its model go with it (app/api/procedure/edit); files still being read travel as undefined, and the
+  // route says so rather than describing a picture it never received.
+  const askProcedure = async (o: WayOption, text: string, files?: BarAttachment[], model?: string) => {
     const steps = stepsFor(o)
     const r = await fetch("/api/procedure/edit", {
       method: "POST", headers: { "content-type": "application/json" },
@@ -2026,11 +2166,14 @@ export default function Home() {
         name: o.name, goal: o.goal?.name || "",
         steps: steps.map(({ title, note, kind, tool, model }) => ({ title, note, kind, tool, model })),
         instruction: text,
+        files: (files || []).filter((f) => f.dataUrl).map(({ name, mime, dataUrl, size }) => ({ name, mime, dataUrl, size })),
+        ...(model ? { model: toModelRef(model) } : {}),
       }),
     })
     const j = await r.json().catch(() => ({}))
     if (!r.ok) throw new Error(j.error || `the edit answered ${r.status}`)
     if (Array.isArray(j.steps)) replaceProcSteps(o, j.steps as DelegationStep[])
+    return typeof j.note === "string" ? j.note : undefined
   }
 
   // "Run without a Way": the turn still runs, on the model the ladder would pick for the task, with no procedure
@@ -2039,7 +2182,7 @@ export default function Home() {
     const pending = pendingTurn
     const key = pending?.sid ?? chatKeyRef.current
     if (!pending || runningRef.current[key]) return
-    const plan = planFromOption(pending.text, settings?.models || {}, pending.goal, null)
+    const plan = withChatModel(planFromOption(pending.text, settings?.models || {}, pending.goal, null))
     planRef.current = plan
     setDelegation(plan)
     setDelegateOptions([])
@@ -2519,7 +2662,7 @@ export default function Home() {
     { id: "stop", title: "Stop kell", hint: "end the running turn; nothing is undone", run: () => void stop() },
     { id: "code", title: "Go to the coding agent", run: () => setPane("code") },
     { id: "rooms", title: "Go to the team rooms", run: () => setPane("rooms") },
-    { id: "submit-way", title: "Submit a Way", hint: "teach kell a goal and its steps; each step is reviewed", run: () => { setPane("rooms"); desktop()?.rooms.panel?.("submit") } },
+    { id: "submit-way", title: "Submit a Way", hint: "write a goal and its steps; each step is reviewed", run: () => openSubmitWay(null) },
     { id: "desktop-sessions", title: "My desktop sessions", hint: "what the rooms can ask this desktop, and who may", run: () => { setPane("rooms"); desktop()?.rooms.panel?.("desktop") } },
     { id: "console", title: "Open the console", run: () => void openConsole() },
     { id: "goal", title: "Set a goal", hint: "/goal <condition> — kell keeps working until it holds", run: () => { setText("/goal "); textRef.current?.focus() } },
@@ -3289,6 +3432,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                       <ProcedurePicker goal={pendingTurn.goal} options={delegateOptions} goals={delegateGoals} onInspect={setInspectWay}
                         stepsFor={stepsFor} onEdit={editProcStep} onAdd={addProcStep} onRemove={removeProcStep}
                         onAsk={askProcedure} catalog={settings?.catalog || []}
+                        initialAsk={pendingTurn.text} initialFiles={pendingTurn.files}
                         onPick={applyOption} onSkip={runWithoutWay} />
                     </div>
                   </div>
@@ -3472,10 +3616,16 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
               <span className="dk-delegate-chip-why">{delegation.goal ? delegation.goal.name : delegation.why}</span>
             </button>
           )}
-          <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
+          <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}
+            onDragEnter={(e) => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); setOverComposer(true) } }}
+            onDragOver={(e) => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy" } }}
+            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverComposer(false) }}
+            onDrop={(e) => { e.preventDefault(); setOverComposer(false); void addBrowserFiles(Array.from(e.dataTransfer.files || [])) }}
+            data-over={overComposer || undefined}>
             <span className="dg-composer-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the message box" onPointerDown={startComposerResize} />
-            {attachments.length > 0 && attachmentChips(attachments, true)}
-            <input ref={fileInputRef} type="file" multiple hidden
+            {/* The chips, pictures as thumbnails: the same strip the procedure's ask bar draws (components/AttachStrip). */}
+            <AttachStrip files={attachments} onRemove={removeAttachment} onOpen={openAttachment} leaving={leavingAtts} />
+            <input ref={fileInputRef} type="file" multiple hidden accept="image/*,.pdf,.txt,.md,.json,.csv,.log,text/*,application/pdf"
               onChange={(e) => { const fs = Array.from(e.currentTarget.files || []); e.currentTarget.value = ""; void addBrowserFiles(fs) }} />
             {slashCmds.length > 0 && (
               // The slash menu: the website chat's .dg-commands list, same glass and yellow active row. Picking fills the
@@ -3500,6 +3650,10 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                   </button>
                 ))}
               </div>
+              {/* The same bar's other control: which model answers, from this machine's catalog (app/api/settings). Chat
+                  means kell's router picks the rung, which is what the app did before there was a bar to choose on. */}
+              <ModelPicker value={chatModel} catalog={settings?.catalog || []} onChange={chooseChatModel}
+                label="Model for the main chat" />
               {busy && (
                 // The stop sits with the mode choice, above the message box: the turn it stops is the one the mode
                 // applies to, and it stays reachable without taking the send button's place.
@@ -3515,7 +3669,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
               aria-controls={slashCmds.length ? "dk-slash" : undefined}
               aria-activedescendant={slashCmds.length ? `dk-slash-${slashAt}` : undefined}
               onChange={(e) => { setText(e.target.value); histPos.current = null; setCmdIdx(0) }}
-              placeholder={directory ? "Tell kell what to do… (/ for commands)" : "Open a project first"}
+              placeholder={directory ? "Tell kell what to do… (/ for commands)" : "Open a project first … or /model to choose a model"}
               disabled={!!engine && !engine.up}
               onPaste={(e) => { const fs = Array.from(e.clipboardData.files || []); if (fs.length) { e.preventDefault(); void addBrowserFiles(fs) } }}
               onKeyDown={(e) => {
@@ -3673,9 +3827,9 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
             onEdit={(i, patch) => panelWay && editProcStep(panelWay, i, patch)}
             onAdd={() => panelWay && addProcStep(panelWay)}
             onRemove={(i) => panelWay && removeProcStep(panelWay, i)}
-            onAsk={panelWay ? (t) => askProcedure(panelWay, t) : undefined}
+            onAsk={panelWay ? (t, files, model) => askProcedure(panelWay, t, files, model) : undefined}
             onUse={pendingTurn && panelWay ? () => useProcWay(panelWay) : undefined}
-            onSubmitWay={() => { setPane("rooms"); desktop()?.rooms.panel?.("submit") }}
+            onSubmitWay={() => openSubmitWay(panelWay)}
             previewLabel={inspectWay ? "Open in the chat" : delegateOptions.length ? "Preview · pick in the chat" : undefined}
             glass={glassGraph} onToggleGlass={toggleGlassGraph} />
         </aside>
@@ -3762,6 +3916,9 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
             </div>
           </div>
         </div>
+      )}
+      {submitOpen && (
+        <SubmitWay onClose={() => setSubmitOpen(false)} onSubmitted={(id) => openSubmittedWay(id)} from={submitFrom} />
       )}
       {showInbox && <InboxPanel items={inboxItems} onClose={() => setShowInbox(false)} onOpenChat={(sid) => void openAnyChat(sid)} onAnswered={() => void loadInbox()} />}
       {showConn && <ConnectorsPanel onClose={() => setShowConn(false)} />}

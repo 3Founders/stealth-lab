@@ -172,6 +172,9 @@ export async function POST(req: Request) {
         try {
           if (stopped) { close(); return }
           await client.session.prompt({ sessionID, text: promptText, ...(model ? { model } : {}), ...(attached.files.length ? { files: attached.files } : {}) } as any)
+          // A model the person named is also the session's own, so every later turn of this chat (a reply typed while the
+          // engine restarts, a queued prompt) starts from it rather than from whatever the session last used.
+          if (model) { try { await client.session.switchModel({ sessionID, model } as any) } catch { /* per-turn only */ } }
           await pump
         } finally {
           // One assistant row per turn, assembled from the stream. A failed turn keeps the user row and any text received.
