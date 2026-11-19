@@ -52,10 +52,11 @@ contextBridge.exposeInMainWorld("kellDesktop", {
   },
   // The bottom panel's terminal: a shell in the project folder (electron/terminal.ts).
   term: {
-    create: (cwd: string, cols: number, rows: number): Promise<{ id: string } | { error: string }> => ipcRenderer.invoke("kell:term-create", cwd, cols, rows),
+    create: (cwd: string, cols: number, rows: number): Promise<{ id: string; shell: string; cwd: string } | { error: string }> => ipcRenderer.invoke("kell:term-create", cwd, cols, rows),
     write: (id: string, data: string) => ipcRenderer.send("kell:term-write", id, data),
     resize: (id: string, cols: number, rows: number) => ipcRenderer.send("kell:term-resize", id, cols, rows),
     kill: (id: string) => ipcRenderer.send("kell:term-kill", id),
+    pasteText: (): Promise<string> => ipcRenderer.invoke("kell:term-paste"),
     onData: (cb: (id: string, data: string) => void) => {
       const h = (_e: unknown, id: string, data: string) => cb(String(id), String(data))
       ipcRenderer.on("kell:term-data", h)

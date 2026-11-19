@@ -329,6 +329,9 @@
   -webkit-backdrop-filter: blur(14px) saturate(1.15); backdrop-filter: blur(14px) saturate(1.15);
   box-shadow: 0 1px 0 rgba(255,255,255,.55) inset, 0 12px 32px rgba(15,23,42,.10); }
 .dk-proc-node, .dk-proc-link, .dk-proc-steps, .dk-proc-foot { position: relative; z-index: 2; }
+/* The Submit a Way form stands on the card the way the procedure graph did: the card's own background is a ::before at
+   z-index 1, so the form has to be lifted above it or it is painted underneath an opaque sheet. */
+.dk-proc-graph > .sw { position: relative; z-index: 2; }
 .dk-proc-node { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 7px 9px; border-radius: 10px;
   border: 1px solid color-mix(in oklab, var(--ink) 10%, rgba(0,0,0,0));
   background: color-mix(in oklab, var(--surface) 84%, rgba(0,0,0,0)); }
@@ -360,6 +363,31 @@
 .dk-step-opts:active, .dk-step-del:active { transform: scale(.9); }
 .dk-step-opts[aria-expanded="true"] { background: rgba(0,0,0,.06); color: var(--ink); }
 .dk-step-model { font-weight: 500; color: var(--cobalt); }
+/* The model kell would put on a step, offered: a quiet chip that becomes the step's model when clicked. */
+.dk-step-suggest { margin-left: 6px; padding: 1px 7px; font-size: 10px; line-height: 1.6; border-radius: 999px;
+  border: 1px dashed var(--rule-strong, var(--rule)); background: transparent; color: var(--grey); cursor: pointer;
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-step-suggest:hover { transform: translateY(-1px); border-color: var(--ink); color: var(--ink); }
+/* What the model thought, kept apart from its answer: collapsed under a summary, so a copied reply never carries it. */
+.dk-thought { margin: 4px 0 8px; border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 0 10px;
+  background: color-mix(in oklab, var(--paper, #fff) 82%, rgba(0, 0, 0, .04)); }
+.dk-thought > summary { cursor: pointer; padding: 7px 0; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); }
+.dk-thought-text { padding: 0 0 10px; font-size: 12.5px; line-height: 1.5; color: var(--text-2, #4b5563); white-space: pre-wrap; }
+/* The composer bar's own switches: Thoughts, Edits. */
+.dk-bar-btn { font: inherit; font-size: 11.5px; padding: 4px 9px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--rule, #e5e7eb); background: transparent; color: var(--grey);
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-bar-btn:hover:not(:disabled) { transform: translateY(-1px); color: var(--ink); border-color: var(--rule-strong, var(--rule)); }
+.dk-bar-btn[data-on] { color: var(--ink); border-color: var(--rule-strong, var(--rule)); background: var(--soft, rgba(0, 0, 0, .05)); }
+.dk-bar-btn:disabled { opacity: .45; cursor: default; }
+/* The edits panel: the files the turn changed, with their diffs, above the bar that sent it. */
+.dk-edits { margin: 6px 0 2px; border: 1px solid var(--rule, #e5e7eb); border-radius: 12px; padding: 8px 10px; max-height: 260px; overflow-y: auto;
+  background: var(--surface, #fff); animation: dk-panel-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; }
+.dk-edits-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.dk-edits-head b { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
+.dk-edits-head span { font-size: 11.5px; color: var(--text-2, #4b5563); }
+.dk-edits-head button { margin-left: auto; }
+@media (prefers-reduced-motion: reduce) { .dk-edits { animation: none } .dk-bar-btn:hover { transform: none } }
 .dk-model-pick { grid-column: 1 / -1; display: grid; gap: 4px; padding: 6px; border: 1px solid var(--rule-strong);
   border-radius: 8px; background: var(--paper); }
 .dk-model-pick input { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; padding: 4px 6px;
@@ -1356,7 +1384,7 @@
   .dk-page .dk-panel > *, .dk-page .dk-activity li, .dk-page .dk-activity li[data-state="running"] .dk-act-mark,
   .dk-page .dk-head-toggle, .dk-palette-backdrop, .dk-palette, .dk-btw, .dk-page .dk-agent,
   .dk-page .dk-file, .dk-page .dk-card, .dk-page .dk-agent-view, .dk-page .dg-atts .dg-att,
-  .dk-page .dk-signin { animation: none !important; }
+  .dk-page .dk-signin, .dk-page .dk-bottom { animation: none !important; }
   .dk-page .dk-icon, .dk-page .dk-winbtn, .dk-page .dk-tree-row, .dk-page .dk-tree-row .chev,
   .dk-page .dk-signin, .dk-page .dk-conn,
   .dk-page .dk-sess-toggle svg, .dk-page .dk-fold > summary h2::before, .dk-page button.dk-fold svg,
@@ -1365,6 +1393,7 @@
   .dk-page .dk-resize, .dk-page .dk-resize::after, .dk-page .dk-act-mark, .dk-page .dk-activity li, .dk-page .dk-help-menu a,
   .dk-page .dk-agent, .dk-palette-row, .dk-stop, .dk-queue-tools button, .dk-empty-prompt { transition: none !important; }
   .dk-page .dg-shell, .dk-page .dg-side, .dk-page .dk-panel { transition: none !important; }
+  .dk-page .dk-bottom { transition: none !important; }
   .dk-page .dk-fold::details-content, .dk-page .dk-file::details-content, .dk-page .dk-sess-more::details-content { transition: none !important; }
 }
 
@@ -1387,12 +1416,24 @@ button.dk-fold[aria-expanded="true"] svg { transform: none; }
    header's two tool buttons open it; the top edge drags its height. */
 .dk-page .dk-head-tool[aria-pressed="true"] { color: var(--ink); background: var(--soft, rgba(0,0,0,.06)); }
 .dk-bottom { position: relative; flex: none; display: flex; flex-direction: column; min-height: 120px; margin: 0 14px 10px;
-  border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); overflow: hidden;
+  /* Closing collapses the height so the chat takes the space back (the one layout change this panel makes, like the
+     sidebar's). A drag writes the height straight from the pointer, so it must not be transitioned. */
+  transition: height var(--dk-sheet-d, .24s) var(--dk-sheet, cubic-bezier(.4, 0, .6, 1)); }
+.dk-bottom[data-dragging="true"] { transition: none; }
+/* Entrance and exit follow docs/ios_animation.md: transform and opacity only, the Apple ease in, the dialog curve out. */
+.dk-bottom[data-open="true"] { animation: dk-sheet-up .46s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dk-bottom[data-closing="true"] { min-height: 0; animation: dk-sheet-down .24s cubic-bezier(.4, 0, 1, 1) both; }
+@keyframes dk-sheet-up { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes dk-sheet-down { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(10px); } }
 .dk-bottom[hidden] { display: none; }
 .dk-bottom[data-max="true"] { height: calc(100% - 120px); }
 .dk-bottom-grip { position: absolute; top: -3px; left: 0; right: 0; height: 7px; cursor: ns-resize; z-index: 2; }
 .dk-bottom-grip:hover { background: linear-gradient(transparent 2px, var(--rule-strong) 2px, var(--rule-strong) 4px, transparent 4px); }
-.dk-bottom-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 8px; border-bottom: 1px solid var(--rule); }
+.dk-bottom-head { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 8px; border-bottom: 1px solid var(--rule); }
+.dk-bottom-head .dk-iconrow { margin-left: auto; }
+.dk-term-shell { font-size: 11px; color: var(--grey); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 820px) { .dk-term-shell { display: none; } }
 .dk-bottom-tabs { display: flex; gap: 2px; }
 .dk-bottom-tab { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 6px;
   font-size: 12.5px; color: var(--grey); cursor: pointer; }

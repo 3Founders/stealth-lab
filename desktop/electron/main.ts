@@ -5,7 +5,7 @@
 // The child gets ELECTRON_RUN_AS_NODE=1 so it runs as plain node, listens on an OS-picked port (port 0 probed, never a
 // fixed one â€” the OpenCode desktop app owns 28894 and is never touched), and its whole tree â€” including the opencode
 // engine it starts through lib/engine.ts's /api routes â€” dies with the app.
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron"
+import { app, BrowserWindow, clipboard, dialog, ipcMain, session, shell } from "electron"
 import { markQuitting, startPresence } from "./presence"
 import { isSignInLink, openSignIn } from "./signin"
 import { popupAppMenu, setAppMenu, setFontChoice } from "./menu"
@@ -198,6 +198,9 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.on("kell:term-write", (_e, id: unknown, data: unknown) => termWrite(String(id), String(data)))
     ipcMain.on("kell:term-resize", (_e, id: unknown, cols: unknown, rows: unknown) => termResize(String(id), Number(cols), Number(rows)))
     ipcMain.on("kell:term-kill", (_e, id: unknown) => termKill(String(id)))
+    // A right-click in the terminal pastes, the Windows Terminal habit. The clipboard is read in the main process:
+    // Chromium's clipboard-read permission would otherwise turn a paste into a prompt.
+    ipcMain.handle("kell:term-paste", () => clipboard.readText())
     ipcMain.on("kell:browser-bounds", (_e, rect) => { if (win) browserBounds(win, rect && typeof rect === "object" ? rect : null) })
     ipcMain.handle("kell:browser-go", (_e, url: unknown) => (win ? browserGo(win, String(url || "")) : null))
     ipcMain.on("kell:browser-act", (_e, what: unknown) => browserAct(String(what)))

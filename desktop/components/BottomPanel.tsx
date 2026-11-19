@@ -13,10 +13,11 @@ type Rect = { x: number; y: number; width: number; height: number }
 type BrowserState = { url: string; title: string; loading: boolean; back: boolean; forward: boolean }
 type Bridge = {
   term?: {
-    create: (cwd: string, cols: number, rows: number) => Promise<{ id: string } | { error: string }>
+    create: (cwd: string, cols: number, rows: number) => Promise<{ id: string; shell: string } | { error: string }>
     write: (id: string, data: string) => void
     resize: (id: string, cols: number, rows: number) => void
     kill: (id: string) => void
+    pasteText: () => Promise<string>
     onData: (cb: (id: string, data: string) => void) => () => void
     onExit: (cb: (id: string, code: number) => void) => () => void
   }
@@ -46,7 +47,20 @@ const DARK = { background: "#1b1a17", foreground: "#e9e6dc", cursor: "#e9e6dc", 
 const LIGHT = { background: "#fbfaf5", foreground: "#26241f", cursor: "#26241f", selectionBackground: "#d9d3bf" }
 const themeNow = () => (typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? DARK : LIGHT)
 
-type Term = { id?: string; dir: string; el: HTMLDivElement; xterm: any; fit: any; exited?: number; error?: string }
+type Term = { id?: string; dir: string; el: HTMLDivElement; xterm: any; fit: any; exited?: number; error?: string; shell?: string }
+
+/** Resolves true once the element has a size xterm can measure. A panel that is hidden, closing, or one frame old
+ *  measures 0x0, and a terminal opened there draws nothing and starts its shell at the wrong size. */
+const hasSize = (el: HTMLElement, tries = 30) => new Promise<boolean>((resolve) => {
+  const check = (left: number) => {
+    if (!el.isConnected) return resolve(false)
+    const r = el.getBoundingClientRect()
+    if (r.width >= 40 && r.height >= 30) return resolve(true)
+    if (left <= 0) return resolve(false)
+    setTimeout(() => check(left - 1), 40)
+  }
+  check(tries)
+})
 
 export default function BottomPanel({ directory, open, tab, onTab, onClose, active }: {
   directory: string
@@ -63,6 +77,22 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
     try { const v = Number(localStorage.getItem(HEIGHT_KEY)); return v >= 120 ? v : 260 } catch { return 260 }
   })
   const [maxed, setMaxed] = useState(false)
+  // Open/close motion (docs/ios_animation.md §4.4/§4.5): the panel rises as it fades in, and on close it fades down
+  // while its height collapses, so the chat takes the space back instead of jumping. `mounted` keeps it in the DOM
+  // for the exit; `hidden` takes it out after it has finished.
+  const [mounted, setMounted] = useState(open)
+  const [closing, setClosing] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const closingRef = useRef(false)
+  useEffect(() => { closingRef.current = closing }, [closing])
+  useEffect(() => {
+    if (open) { setMounted(true); setClosing(false); return }
+    if (!mounted) return
+    setClosing(true)
+    // 280ms, not 240: the exit runs for .24s, and hiding it on the last frame would cut the end off.
+    const timer = setTimeout(() => { setClosing(false); setMounted(false) }, 280)
+    return () => clearTimeout(timer)
+  }, [open, mounted])
 
   // ---- terminal ----
   const hostRef = useRef<HTMLDivElement>(null)
@@ -72,16 +102,30 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
 
   const fitNow = useCallback((t?: Term) => {
     if (!t?.fit || !t.el.isConnected || t.el.offsetParent === null) return
-    try { t.fit.fit(); if (t.id) d?.term?.resize(t.id, t.xterm.cols, t.xterm.rows) } catch { /* not laid out yet */ }
+    if (closingRef.current) return          // the height is collapsing: resizing the shell every frame would repaint it
+    const r = t.el.getBoundingClientRect()
+    if (r.width < 40 || r.height < 30) return   // hidden or closing: a fit here would shrink the shell to a column
+    try {
+      // Only when the size really changed: every resize makes ConPTY repaint its whole screen, so a ResizeObserver
+      // firing on an unchanged box must not cost a repaint.
+      const dims = t.fit.proposeDimensions?.()
+      if (!dims || !Number.isFinite(dims.cols) || !Number.isFinite(dims.rows)) return
+      if (dims.cols === t.xterm.cols && dims.rows === t.xterm.rows) return
+      t.fit.fit()
+      if (t.id) d?.term?.resize(t.id, t.xterm.cols, t.xterm.rows)
+    } catch { /* not laid out yet */ }
   }, [d])
 
   const start = useCallback(async (dir: string) => {
     const host = hostRef.current
-    if (!host || !d?.term) return
+    if (!host || !d?.term || !dir) return
+    // xterm measures its character cell once, when it opens, and cannot recover from a 0-width container: the panel is
+    // animating in and the tab can be off screen, so wait for real layout before opening it.
+    if (!(await hasSize(host))) return
     let t = terms.current.get(dir)
     if (!t) {
       const [{ Terminal }, { FitAddon }] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
-      if (terms.current.get(dir)) return
+      if (terms.current.get(dir) || !host.isConnected) return
       const el = document.createElement("div")
       el.className = "dk-term-screen"
       host.appendChild(el)
@@ -103,9 +147,12 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
     }
     if (t.id) return
     t.exited = undefined; t.error = undefined
-    requestAnimationFrame(() => fitNow(t))
+    // Size the terminal before the shell starts, so it never begins at 80x24 and repaints its whole screen at the real
+    // size (PowerShell re-wraps its prompt when that happens, which reads as a flash).
+    fitNow(t)
     const r = await d.term.create(dir, t.xterm.cols, t.xterm.rows)
-    if ("error" in r) { t.error = r.error; t.xterm.writeln(`\r\n${r.error}`) } else { t.id = r.id; fitNow(t) }   // the shell learns the real size
+    if ("error" in r) { t.error = r.error; t.xterm.writeln(`\r\n${r.error}`) }   // the shell learns the real size
+    else { t.id = r.id; t.shell = r.shell; fitNow(t) }
     bump((n) => n + 1)
   }, [d, fitNow])
 
@@ -129,7 +176,7 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
     if (!open || tab !== "terminal" || !directory) return
     void start(directory)
     const t = terms.current.get(directory)
-    if (t) requestAnimationFrame(() => { fitNow(t); t.xterm.focus() })
+    if (t) setTimeout(() => { fitNow(t); t.xterm.focus() }, 0)
   }, [open, tab, directory, start, fitNow])
 
   // Refit on any size change; follow the light/dark theme.
@@ -153,6 +200,18 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
     t.id = undefined
     t.xterm.reset()
     void start(directory)
+  }
+
+  // Right-click pastes, as in Windows Terminal: no menu, and no permission prompt (the clipboard is read in the main
+  // process). xterm.paste keeps bracketed paste mode, so a multi-line paste is one edit rather than a command per line.
+  const pasteAt = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    const t = terms.current.get(directory)
+    if (!t || !d?.term?.pasteText) return
+    const text = await d.term.pasteText()
+    if (!text) return
+    t.xterm.paste(text)
+    t.xterm.focus()
   }
 
   // ---- browser ----
@@ -189,9 +248,11 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault()
     const y0 = e.clientY, h0 = height
+    setDragging(true)
     const move = (ev: PointerEvent) => setHeight(Math.max(120, Math.min(window.innerHeight - 160, h0 + (y0 - ev.clientY))))
     const up = () => {
       window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up)
+      setDragging(false)
       setHeight((h) => { try { localStorage.setItem(HEIGHT_KEY, String(h)) } catch { /* private storage */ } return h })
     }
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", up)
@@ -200,7 +261,10 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
 
   const btn = "dk-icon dk-icon-sm"
   return (
-    <section className="dk-bottom" hidden={!open} data-max={maxed ? "true" : undefined} style={maxed ? undefined : { height }} aria-label="Terminal and browser">
+    <section className="dk-bottom" hidden={!mounted} data-open={open ? "true" : undefined}
+      data-closing={closing ? "true" : undefined} data-dragging={dragging ? "true" : undefined}
+      data-max={maxed ? "true" : undefined} style={closing ? { height: 0 } : maxed ? undefined : { height }}
+      aria-hidden={open ? undefined : true} aria-label="Terminal and browser">
       <span className="dk-bottom-grip" role="separator" aria-orientation="horizontal" aria-label="Drag to resize the panel" onPointerDown={startResize} />
       <div className="dk-bottom-head">
         <div className="dk-bottom-tabs" role="tablist" aria-label="Panel">
@@ -211,6 +275,8 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
             <GlobeIcon /><span>Browser</span>
           </button>
         </div>
+        {/* Which shell is running, so "is this really PowerShell?" is answered without typing into it. */}
+        {tab === "terminal" && current?.shell ? <span className="dk-term-shell" title={`This terminal runs ${current.shell} directly`}>{current.shell}</span> : null}
         <span className="dk-iconrow">
           {tab === "terminal" && (
             <button type="button" className={btn} onClick={restart} disabled={!d?.term || !current} aria-label="Restart the terminal" title="Restart the terminal">
@@ -230,7 +296,7 @@ export default function BottomPanel({ directory, open, tab, onTab, onClose, acti
       <div className="dk-bottom-body" hidden={tab !== "terminal"}>
         {!d?.term ? <p className="dk-note dk-bottom-note">The terminal runs in the kell app.</p>
           : !directory ? <p className="dk-note dk-bottom-note">Open a project to get a terminal in its folder.</p> : null}
-        <div className="dk-term" ref={hostRef} />
+        <div className="dk-term" ref={hostRef} onContextMenu={(e) => void pasteAt(e)} />
       </div>
 
       <div className="dk-bottom-body dk-browser" hidden={tab !== "browser"}>
