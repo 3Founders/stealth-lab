@@ -459,6 +459,9 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
             max_cost=None if constraints.get("max_cost_usd") is None else float(constraints["max_cost_usd"]))
     except ValueError as exc:
         raise RoutingError(str(exc)) from exc
+    if not result.meets_target:
+        # What decided instead of the reliability floor, so the first rung is not read as "the reliable choice".
+        target_info["fallback"] = "expected_utility"
 
     def describe(i: int) -> dict[str, Any]:
         return {"ladder": [unit_id(*columns[u][0]) for u in result.ladders[i]], **result.summary(i)}

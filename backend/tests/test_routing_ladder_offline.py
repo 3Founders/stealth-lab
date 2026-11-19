@@ -91,15 +91,19 @@ def test_choice_is_thompson_with_exact_propensity_and_honours_the_chance_constra
     assert res.ladders[res.chosen][0] == 0
 
 
-def test_when_nothing_meets_the_target_the_most_reliable_ladder_is_returned_and_flagged():
+def test_when_nothing_meets_the_target_the_best_utility_ladder_is_returned_and_flagged():
+    # A cheap unit that is slightly less likely to pass must lead when no ladder can reach rho: the target is out of
+    # reach on this prior, and paying 500x the price for three points of predicted success is not a good trade.
     rng = np.random.default_rng(2)
-    p, ew = _p(np.array([[-2.0, -1.0]] * 50), np.full(50, 0.5), 20)
+    p, ew = _p(np.array([[-1.6, -1.4]] * 50), np.full(50, 0.5), 20)
     zero = np.zeros(50)
-    res = ladder.choose(p, ew, zero, zero, np.ones(2), np.ones(2), cost_check=0.0, value=10.0, wrong_penalty=10.0,
-                        candidates=[0, 1], max_rungs=2, rho=0.95, confidence=0.9, rng=rng)
+    res = ladder.choose(p, ew, zero, zero, np.array([0.001, 0.5]), np.array([0.001, 0.5]), cost_check=0.0,
+                        value=1.0, wrong_penalty=1.0, candidates=[0, 1], max_rungs=1, rho=0.95,
+                        confidence=0.9, rng=rng)
     assert not res.meets_target and res.propensity == 1.0
-    lower = [ladder.weighted_quantile(res.p_ok[i], res.draw_weights, 0.1) for i in range(len(res.ladders))]
-    assert lower[res.chosen] == max(lower)
+    mean_utility = res.utility @ res.draw_weights
+    assert res.chosen == int(np.argmax(mean_utility))
+    assert res.ladders[res.chosen] == (0,), "the cheap unit leads when the target is out of reach"
 
 
 def test_max_cost_is_a_hard_cap_on_the_worst_case():

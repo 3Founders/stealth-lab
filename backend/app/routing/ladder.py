@@ -21,9 +21,11 @@ Choice: among ladders meeting the reliability chance constraint
     (rho may be a per-draw (S,) array: a target that moves with the posterior, e.g. a baseline unit's own P(ok))
 Thompson sampling picks one draw s* ~ weights and the ladder maximising U under s*;
 its propensity is EXACT (the fraction of draw-weight whose argmax is that ladder).
-If no ladder meets the constraint, the ladder with the highest (1 - confidence)
-quantile of P(ok) is returned, marked meets_target=False -- the most reliable option,
-stated as such.
+If no ladder meets the constraint, the target cannot be promised: the ladder with the highest
+expected utility is returned, marked meets_target=False. Utility already prices a wrong answer
+at `wrong_penalty` and a success at `value`, so it still buys reliability when reliability is
+what the money buys -- but it will not pay an order of magnitude more for a few points of
+predicted success on a prior that cannot clear the target anyway.
 
 STEP-LEVEL routing (one run.md node at a time): the value of a step is the value of
 the WHOLE run, which also needs the remaining steps to succeed. `continuation[s, n]`
@@ -265,8 +267,11 @@ def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.
 
     if not affordable.any():
         raise ValueError("no ladder fits max_cost_usd, even a single attempt")
-    lower = np.array([weighted_quantile(ok[i], draw_w, 1 - confidence) if affordable[i] else -np.inf
-                      for i in range(len(ladders))])
-    best = np.flatnonzero(lower == lower.max())
-    chosen = int(best[np.argmax((util[best] * draw_w).sum(axis=1))])        # tie: higher expected utility
+    # Nothing meets the target, so the hard floor cannot be promised. Take the best expected utility instead of the
+    # most reliable ladder: utility already prices a wrong answer at `wrong_penalty` and a success at `value`, so it
+    # still buys reliability when that is what the money buys -- but it will not pay ten times the price for three
+    # points of predicted success on a prior that cannot clear the target anyway (owner, 2026-11-19: the plan led
+    # with kimi-k3 at ~$0.38 an attempt where glm-5.3-flash was ~$0.036 for one point less).
+    mean_utility = np.where(affordable, util @ draw_w, -np.inf)
+    chosen = int(np.argmax(mean_utility))
     return LadderResult(ladders, ok, wrong, cost, util, draw_w, feasible, chosen, 1.0, False, p_step_ok=step_ok)
