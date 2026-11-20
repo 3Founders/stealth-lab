@@ -373,13 +373,15 @@
   background: color-mix(in oklab, var(--paper, #fff) 82%, rgba(0, 0, 0, .04)); }
 .dk-thought > summary { cursor: pointer; padding: 7px 0; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); }
 .dk-thought-text { padding: 0 0 10px; font-size: 12.5px; line-height: 1.5; color: var(--text-2, #4b5563); white-space: pre-wrap; }
-/* The composer bar's own switches: Thoughts, Edits. */
-.dk-bar-btn { font: inherit; font-size: 11.5px; padding: 4px 9px; border-radius: 999px; cursor: pointer;
+/* The composer bar's own switches: Thoughts, Edits. They sit beside the mode switch and are the same size as it --
+   `.dg-composer button` alone would make them 44px pills, taller than the modes next to them (2026-11-20). */
+.dg-composer .dk-bar-btn { font-family: inherit; font-size: 11.5px; height: 32px; padding: 0 14px;
+  display: inline-flex; align-items: center; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--rule, #e5e7eb); background: transparent; color: var(--grey);
   transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), color var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
-.dk-bar-btn:hover:not(:disabled) { transform: translateY(-1px); color: var(--ink); border-color: var(--rule-strong, var(--rule)); }
-.dk-bar-btn[data-on] { color: var(--ink); border-color: var(--rule-strong, var(--rule)); background: var(--soft, rgba(0, 0, 0, .05)); }
-.dk-bar-btn:disabled { opacity: .45; cursor: default; }
+.dg-composer .dk-bar-btn:hover:not(:disabled) { transform: translateY(-1px); color: var(--ink); border-color: var(--rule-strong, var(--rule)); background: transparent; }
+.dg-composer .dk-bar-btn[data-on] { color: var(--ink); border-color: var(--rule-strong, var(--rule)); background: var(--soft, rgba(0, 0, 0, .05)); }
+.dg-composer .dk-bar-btn:disabled { opacity: .45; cursor: default; }
 /* The edits panel: the files the turn changed, with their diffs, above the bar that sent it. */
 .dk-edits { margin: 6px 0 2px; border: 1px solid var(--rule, #e5e7eb); border-radius: 12px; padding: 8px 10px; max-height: 260px; overflow-y: auto;
   background: var(--surface, #fff); animation: dk-panel-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; }
@@ -606,13 +608,15 @@
 .dk-composer-top .dk-mode { align-self: center; }
 .dg-composer .dk-composer-top .dk-stop { width: 28px; height: 28px; border-radius: 999px; }
 .dg-composer .dk-composer-top .dk-stop svg { width: 12px; height: 12px; }
-.dk-mode-thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 8px) / 3);
+.dk-mode-thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 10px) / 4);
   border-radius: 999px; background: var(--ink); pointer-events: none; transform: translateX(0);
   transition: transform var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
-.dk-mode[data-mode="auto"] .dk-mode-thumb { transform: translateX(calc(100% + 2px)); }
-.dk-mode[data-mode="ask"] .dk-mode-thumb { transform: translateX(calc(200% + 4px)); }
-.dg-composer .dk-mode-btn { position: relative; z-index: 1; height: auto; padding: 3px 11px; border: 0; border-radius: 999px;
-  background: none; color: var(--grey); font-size: 11px; line-height: 16px; cursor: pointer;
+.dk-mode[data-mode="agent"] .dk-mode-thumb { transform: translateX(calc(100% + 2px)); }
+.dk-mode[data-mode="auto"] .dk-mode-thumb { transform: translateX(calc(200% + 4px)); }
+.dk-mode[data-mode="ask"] .dk-mode-thumb { transform: translateX(calc(300% + 6px)); }
+.dg-composer .dk-mode-btn { position: relative; z-index: 1; height: 26px; padding: 0 12px; border: 0; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; color: var(--grey); font-size: 11.5px; line-height: 1; cursor: pointer;
   transition: color var(--dg-micro-d) var(--dg-micro); }
 .dg-composer .dk-mode-btn[data-on] { color: var(--paper); }
 .dg-composer .dk-mode-btn:not(:disabled):hover { background: none; color: var(--ink); }
@@ -1666,3 +1670,17 @@ button.dk-sess-group { cursor: pointer; }
   }
   .dk-palette-backdrop, .dk-sw-backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
+
+/* ===== Submit a Way: SOLID, not glass (owner, 2026-11-20) =====
+   The sheet holds a form, and a translucent sheet over the chat made the conversation readable through its fields. It
+   keeps its hairline, its lift and its arrival, and loses the blur; the other menus keep the shared glass above.
+   Written last so it wins over that shared block without !important. */
+.dk-sw { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* The scrim still dims the chat, but no longer blurs it. */
+.dk-sw-backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* The procedure card the form stands on had a glass finish while the graph was showing; behind a form it is a panel. */
+.dk-proc[data-glass="on"] .dk-proc-graph:has(> .sw)::before {
+  background: var(--surface); border-color: var(--rule); box-shadow: 0 10px 28px rgba(0, 0, 0, .06);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+.dk-proc[data-glass="on"] .dk-proc-graph:has(> .sw) .dk-proc-aurora { opacity: 0; }
