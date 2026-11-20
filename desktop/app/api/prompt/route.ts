@@ -165,9 +165,12 @@ export async function POST(req: Request) {
             ? { id: plan.model.id, providerID: plan.model.providerID }
             : undefined
         const promptText = contract ? `${text}\n\n${contract}` : text
+        // The composer's mode: "agent" adds the research rules (lib/tools.ts AGENT_RULES), so the model knows it may run
+        // several web searches through kell's tools instead of one.
+        const mode = String(body.mode || "")
         try {
           await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools",
-            value: contract ? `${rulesFor(isHome(e.directory))}\n\n${contract}` : rulesFor(isHome(e.directory)) } as any)
+            value: contract ? `${rulesFor(isHome(e.directory), mode)}\n\n${contract}` : rulesFor(isHome(e.directory), mode) } as any)
         } catch { /* the prompt still runs */ }
         try {
           if (stopped) { close(); return }

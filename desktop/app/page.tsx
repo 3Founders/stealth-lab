@@ -17,12 +17,13 @@ import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
 import { applyFont, readFont, saveFont } from "@/lib/font"
 import type { Delegation, DelegationStep, GoalOption, WayOption } from "@/lib/plan"
-import { planFromOption } from "@/lib/plan"
-import ProcedurePanel from "@/components/ProcedurePanel"
+import { planFromOption, recommendStepModel } from "@/lib/plan"
 import ProcedurePicker from "@/components/ProcedurePicker"
 import AttachStrip from "@/components/AttachStrip"
 import ModelPicker, { toModelRef } from "@/components/ModelPicker"
-import SubmitWay from "@/components/SubmitWay"
+import SubmitWayPanel from "@/components/SubmitWayPanel"
+import ModesIntro from "@/components/ModesIntro"
+import { submissionsApi } from "@/lib/submissions-client"
 import { MAX_ATTACHMENTS, fileToDataUrl as readDataUrl, imageDataUrl, isImage, MAX_ATTACH_BYTES, type BarAttachment } from "@/lib/attach"
 import BottomPanel, { GlobeIcon, TerminalIcon, type PanelTab } from "@/components/BottomPanel"
 
@@ -195,7 +196,7 @@ const desktop = () => (typeof window !== "undefined" ? (window as unknown as { k
 
 // A tool that needs a sign-in is no longer shown in the app: kell's gateway answer is left to the agent (2026-11-16).
 
-type Line = { who: "user" | "assistant" | "plan" | "permission" | "goal" | "catalog"; text: string; at?: number; server?: string
+type Line = { who: "user" | "assistant" | "thought" | "plan" | "permission" | "goal" | "catalog"; text: string; at?: number; server?: string
               sessionID?: string; requestID?: string; answer?: string
               files?: Attachment[]
               /** plan lines: the Way run the missing credit paused, or (low) the balance before a long Way starts */
@@ -224,11 +225,16 @@ const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
 ]
 /** A model's short name: "deepseek-v4-pro" from "kell/deepseek-v4-pro". */
 const shortModel = (m: string) => m.split("/").pop() || m
+/** What the status says when kell thinks a stronger model would help. Offered, never applied: the cheap rung runs the
+ *  turn, and the person takes the suggestion from the model menu (2026-11-19). */
+const suggestLine = (plan: Delegation | null) =>
+  plan?.suggest ? ` · kell suggests ${shortModel(plan.suggest.model.id)} (${plan.suggest.why}); pick it in the model menu` : ""
 /** How a prompt is handled before the model runs: direct sends it as is; auto searches and uses the best-fitting Way;
  *  ask searches and waits for the person to pick one (the default, so no procedure is ever applied on its own). */
-type ProcMode = "direct" | "auto" | "ask"
+type ProcMode = "direct" | "agent" | "auto" | "ask"
 const PROC_MODES: Array<{ id: ProcMode; label: string; hint: string }> = [
   { id: "direct", label: "Direct", hint: "Straight to the model, no procedure search (/direct)" },
+  { id: "agent", label: "Agent", hint: "The model decides: it may search the web with kell's tools (Exa), run several sweeps and iterate; kell applies no stored Way (/agent)" },
   { id: "auto", label: "Auto", hint: "Search for a procedure and use the best fit automatically (/auto)" },
   { id: "ask", label: "Ask", hint: "Search for a procedure and show the ways to pick from (/ask)" },
 ]
@@ -710,7 +716,7 @@ export default function Home() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem("kell.procedure.mode")
-      if (saved === "direct" || saved === "auto" || saved === "ask") setProcMode(saved)
+      if (saved === "direct" || saved === "agent" || saved === "auto" || saved === "ask") setProcMode(saved)
     } catch { /* storage blocked: the default stands */ }
   }, [])
   const chooseProcMode = useCallback((mode: ProcMode) => {
@@ -728,6 +734,20 @@ export default function Home() {
     setChatModel(m)
     try { if (m) localStorage.setItem("kell.chat.model", m); else localStorage.removeItem("kell.chat.model") } catch { /* the state still changes */ }
   }, [])
+  // What the model thought, and which files this chat changed: both live in the bar above the message box, so they are
+  // one click away instead of being lost (2026-11-19). Thoughts default on; the choice outlasts a reload.
+  const [showThoughts, setShowThoughts] = useState(true)
+  useEffect(() => {
+    try { if (localStorage.getItem("kell.show.thoughts") === "off") setShowThoughts(false) } catch { /* storage blocked */ }
+  }, [])
+  const toggleThoughts = () => {
+    setShowThoughts((on) => {
+      const next = !on
+      try { localStorage.setItem("kell.show.thoughts", next ? "on" : "off") } catch { /* kept for this run */ }
+      return next
+    })
+  }
+  const [editsOpen, setEditsOpen] = useState(false)
   // Opening or starting a chat always returns the middle column to the session itself.
   useEffect(() => { setAgentView("main") }, [sessionID])
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -794,13 +814,20 @@ export default function Home() {
   const [dragFiles, setDragFiles] = useState(false)             // a file over the chat: the overlay says it will attach
   const [overComposer, setOverComposer] = useState(false)       // a file over the composer itself: its box lights up
   const fileInputRef = useRef<HTMLInputElement>(null)
-  // "Submit a Way" is the app's own sheet, over the chat (components/SubmitWay). It used to hop to the website's rooms
-  // and ask for their panel with ?panel=submit; the request left before their view even existed, and every load of that
-  // view went back to plain /chat, so in the app the button appeared to do nothing. The submission always went to the same
-  // backend tool (submit_goal), so the sheet is native: it is also where a new Way is written.
-  const [submitOpen, setSubmitOpen] = useState(false)
-  /** The Way on screen when the sheet was opened: it can seed the new Way's steps, on request and never by itself. */
-  const [submitFrom, setSubmitFrom] = useState<WayOption | null>(null)
+  // The first open says what Direct / Auto / Ask do, once per machine (kell:modes-seen, kept by app/api/prefs because the
+  // app's origin changes every start). The switch itself is a three-word control above the message box; a person who
+  // never learns the difference leaves it on Ask and wonders why nothing runs.
+  const [modesIntro, setModesIntro] = useState(false)
+  useEffect(() => {
+    try { if (!localStorage.getItem("kell:modes-seen")) setModesIntro(true) } catch { /* storage blocked: the app still works */ }
+  }, [])
+  const closeModesIntro = () => {
+    try { localStorage.setItem("kell:modes-seen", "1") } catch { /* kept for this run only */ }
+    setModesIntro(false)
+  }
+  // "Submit a Way" lives in the right sidebar (components/SubmitWayPanel), in the place the read-only Procedure record
+  // used to take. There is no second copy over the chat: one form, one place to write a Way. It used to hop to the
+  // website's rooms with ?panel=submit, and that request left before their view existed, so the button looked dead.
   // The command palette (Ctrl/Cmd-K): app actions and "go to file", with the last few choices first.
   const [palette, setPalette] = useState(false)
   const [paletteQ, setPaletteQ] = useState("")
@@ -1471,6 +1498,13 @@ export default function Home() {
     if (last?.who === "assistant") { const c = l.slice(0, -1); c.push({ who: "assistant", text: last.text + delta, at: last.at }); return c }
     return [...l, { who: "assistant", text: delta, at: Date.now() }]
   })
+  // What the model thought before it answered: its own block in the transcript, collapsed under "Thoughts". Kept apart
+  // from the reply so a copied answer never carries the reasoning, and hidden by the bar's Thoughts switch.
+  const appendThought = (delta: string) => setLines((l) => {
+    const last = l.at(-1)
+    if (last?.who === "thought") { const c = l.slice(0, -1); c.push({ ...last, text: last.text + delta }); return c }
+    return [...l, { who: "thought", text: delta, at: Date.now() }]
+  })
 
   // The prompt an answer came from, for "Ask again".
   const lastUserBefore = (i: number) => { for (let k = i - 1; k >= 0; k--) if (lines[k].who === "user") return lines[k].text; return undefined }
@@ -1682,7 +1716,7 @@ export default function Home() {
   // Ask the router for the task's Goal and the Ways it offers. The route streams its progress, so the panel shows
   // "asking the router" instead of going silent. Nothing runs yet: the person picks a Way from the cards (or chooses to
   // run without one), and only then does the turn start.
-  const planFor = async (text: string, sid: string | null): Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null> => {
+  const planFor = async (text: string, sid: string | null, always = false): Promise<{ goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null> => {
     const seq = ++planSeq.current
     planErr.current = ""
     let settle: (p: { goal: Delegation["goal"]; options: WayOption[]; goals: GoalOption[]; skip?: boolean } | null) => void = () => undefined
@@ -1693,7 +1727,7 @@ export default function Home() {
         const r = await fetch("/api/delegate", {
           method: "POST",
           headers: { "content-type": "application/json", accept: "text/event-stream" },
-          body: JSON.stringify({ text, models: settings?.models || {}, timeoutMs: 20_000 }),
+          body: JSON.stringify({ text, models: settings?.models || {}, timeoutMs: 20_000, always }),
         })
         if (!r.ok || !r.body) { planErr.current = `the procedure search answered ${r.status}`; settle(null); return }
         const reader = r.body.getReader()
@@ -1738,43 +1772,10 @@ export default function Home() {
     return await Promise.race([planP, new Promise<null>((ok) => setTimeout(() => ok(null), 60_000))])
   }
 
-  // One opener for both entry points (the Procedure panel's button and the palette): a new Way is written here, and the
-  // Way on screen is offered as a starting point, so the form is not always blank in front of a stored procedure.
-  const openSubmitWay = (from?: WayOption | null) => { setSubmitFrom(from ?? null); setSubmitOpen(true) }
-
-  // A Way just submitted: its record, in the chat's sheet and in the right panel, from the steps the submission read
-  // back (the submission row's own ids stay where they are; this is for reading, and it says it is under review).
-  const openSubmittedWay = async (submissionId: string) => {
-    try {
-      const r = await fetch("/api/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ submissionId }) })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok || !j?.submission) { appendNote(`Could not read that submission: ${j?.error || r.status}`); return }
-      const s = j.submission
-      const way: WayOption = {
-        id: String(s.submission_id || s.id || submissionId),
-        name: String(s.goal_name || s.goal || "Submitted Way"),
-        approval: String(s.status || "reviewing"),
-        review: String(s.mode_label || ""),
-        why: "Just submitted from the desktop app. Each step is reviewed on its own; an approved Way goes into kell's rankings marked \"AI approved\".",
-        goal: s.goal_id ? { id: String(s.goal_id), name: String(s.goal_name || s.goal || "") } : null,
-        tool: null,
-        steps: (Array.isArray(s.steps) ? s.steps : []).map((o: any, i: number) => {
-          // The step's own words, then the reviewer's verdict in one line, since the record's note is what it shows.
-          const body = o.kind === "human" ? String(o.description || "") : String(o.prompt || locatorText(o.locator))
-          const verdict = o.status && o.status !== "reviewing"
-            ? `${o.status === "rejected" ? "Not approved" : o.status}${o.reason ? `: ${o.reason}` : ""}` : ""
-          return {
-            order: Number(o.order) || i + 1,
-            kind: o.kind === "human" ? "human" : "prompt",
-            title: String(o.title || body || `Step ${i + 1}`),
-            ...(body || verdict ? { note: [body, verdict].filter(Boolean).join(" · ") } : {}),
-          }
-        }),
-      }
-      setAgentView("main")
-      setInspectWay(way)
-      if (!rightOpen) toggleSidebar("right")
-    } catch (err) { appendNote(`Could not read that submission: ${String((err as Error)?.message || err)}`) }
+  // The palette's "Submit a Way": bring the sidebar's panel into view. It is always the same panel, so nothing is
+  // opened twice and a submission already on screen is not replaced by a blank form.
+  const openSubmitWay = () => {
+    if (!rightOpen) toggleSidebar("right")
   }
 
   const send = async (again?: string, filesOverride?: Attachment[], asGoal = false) => {
@@ -1824,16 +1825,18 @@ export default function Home() {
     }
     if (!asGoal) {
       // Direct / Auto / Ask, switchable from the composer or by typing the command (the same names, one dispatcher).
-      const m = /^\/(direct|auto|ask)\s*$/i.exec(body.trim())
+      const m = /^\/(direct|agent|auto|ask)\s*$/i.exec(body.trim())
       if (m) {
         const mode = m[1].toLowerCase() as ProcMode
         chooseProcMode(mode)
         if (again === undefined) { setText(""); histPos.current = null }
         appendNote(mode === "direct"
           ? "Procedure mode: Direct. Prompts go straight to the model; kell does not search for a procedure."
-          : mode === "auto"
-            ? "Procedure mode: Auto. When a procedure fits, kell uses the best fit and says which one."
-            : "Procedure mode: Ask. When a procedure fits, the ways appear here and kell waits for your pick.")
+          : mode === "agent"
+            ? "Procedure mode: Agent. The model decides: it may search the web with kell's tools, run several sweeps and iterate. kell applies no stored Way."
+            : mode === "auto"
+              ? "Procedure mode: Auto. When a procedure fits, kell uses the best fit and says which one."
+              : "Procedure mode: Ask. When a procedure fits, the ways appear here and kell waits for your pick.")
         return
       }
     }
@@ -1852,10 +1855,10 @@ export default function Home() {
     beginTurn(key, sessionID)
     // The procedure search starts now, before the model, unless the person chose Direct or this is small talk. When it
     // runs, every task shows the Goals/Ways it found, even when none has a written Way. The model never starts the
-    // search itself (2026-11-16). JEV decides whether the prompt asks for a procedure at all; ordinary work skips the
-    // picker inside /api/delegate.
-    const skipSearch = procMode === "direct" || CHAT_ONLY.test(sent.trim())
-    const routedP = skipSearch ? null : planFor(sent, sessionID)
+    // search itself (2026-11-16). Ask searches whatever the task sounds like (the person asked to see the Ways); Auto
+    // still lets JEV judge, because a Way applied on its own to ordinary work is a surprise, not a help.
+    const skipSearch = procMode === "direct" || procMode === "agent" || CHAT_ONLY.test(sent.trim())
+    const routedP = skipSearch ? null : planFor(sent, sessionID, procMode === "ask")
     if (asGoal) setLines((l) => [...l, { who: "goal", text: sent, at: Date.now() }])
     else setLines((l) => [...l, { who: "user", text: sent, at: Date.now(), files: outgoing }])
     setSteps([])
@@ -1882,7 +1885,7 @@ export default function Home() {
         setDelegation(plan)
         setDelegateAnswer(""); setDelegateErr(""); setDelegateNote("")
         setDelegateStatus(best
-          ? `Auto: using the best fit, ${best.name}`
+          ? `Auto: using the best fit, ${best.name}${suggestLine(plan)}`
           : "Auto: no stored procedure fits - the model does the work")
       }
       await runTurn(sent, outgoing, plan, key, sessionID)
@@ -1919,7 +1922,7 @@ export default function Home() {
     const ctl = new AbortController()
     const mine = { key: turn.key, sid: turn.sid, ctl }
     turnCtl.current.push(mine)
-    const payload = { sessionID: turn.sid || undefined, directory, text: sent, model: plan?.model ?? undefined, plan: plan ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
+    const payload = { sessionID: turn.sid || undefined, directory, text: sent, mode: procMode, model: plan?.model ?? undefined, plan: plan ?? undefined, files: outgoing.map(({ name, path, dataUrl, mime, rel, size }) => ({ name, path, dataUrl, mime, rel, size })) }
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: ctl.signal })
     if (!r.ok || !r.body) {
       const err = await r.text()
@@ -1966,6 +1969,10 @@ export default function Home() {
             moveTurn(from, nextSid)
             // A new session's id belongs to the chat the turn was started in. If the person is still there, show it.
             if (here) { onScreen.current = nextSid; setSessionID(nextSid) }
+            // app/api/prompt has already written the local row for this session, so the list can show the chat NOW --
+            // while it answers -- instead of only when the turn ends (owner, 2026-11-20: a new chat was missing from the
+            // sidebar until it finished). The row carries the live pulse while it runs.
+            void loadSessions()
           }
           void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID: ev.sessionID }) }).catch(() => undefined)
         }
@@ -1973,6 +1980,12 @@ export default function Home() {
           const delta = String(d.delta ?? d.text ?? "")
           if (turn.sid && delta) { turnText.current[turn.sid] = (turnText.current[turn.sid] || "") + delta; said = true }
           if (live()) appendAssistant(delta)
+        }
+        else if (t === "session.reasoning.delta" || t === "session.thought.delta") {
+          // The model's own words before the answer. The engine names it "reasoning"; the older name is kept so a
+          // different engine build still shows it. Never merged into the reply (2026-11-19).
+          const delta = String(d.delta ?? d.text ?? "")
+          if (delta && live()) appendThought(delta)
         }
         else if (t === "session.tool.input.started") {
           // The tool's name comes only here; the called / success / failed events carry the call's id (2026-11-07: every chip read "tool").
@@ -2133,7 +2146,7 @@ export default function Home() {
     setPendingTurn(null)
     setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateLog([])
     beginTurn(key, pending.sid)
-    setDelegateStatus(`Working with ${plan.model?.id || "the engine's default"}…`)
+    setDelegateStatus(`Working with ${plan.model?.id || "the engine's default"}…${suggestLine(plan)}`)
     void runTurn(pending.text, pending.files, plan, key, pending.sid)
   }
 
@@ -2150,6 +2163,16 @@ export default function Home() {
     setProcSteps(o, stepsFor(o).filter((_, n) => n !== i).map((s, n) => ({ ...s, order: n + 1 })))
   const replaceProcSteps = (o: WayOption, steps: DelegationStep[]) =>
     setProcSteps(o, steps.map((s, n) => ({ ...s, order: n + 1 })))
+  const suggestProcModels = (o: WayOption) => {
+    const models = settings?.models
+    if (!models) return
+    // One change for all steps: editProcStep per step would each read the same stale draft and keep only the last.
+    setProcSteps(o, stepsFor(o).map((s) => {
+      if (s.model) return s                                   // a person's pick is never overwritten
+      const rec = recommendStepModel(s, models)
+      return rec ? { ...s, model: rec.model } : s
+    }))
+  }
   const useProcWay = (o: WayOption) => {
     if (!pendingTurn) return
     applyOption({ ...o, steps: stepsFor(o) })
@@ -2662,7 +2685,7 @@ export default function Home() {
     { id: "stop", title: "Stop kell", hint: "end the running turn; nothing is undone", run: () => void stop() },
     { id: "code", title: "Go to the coding agent", run: () => setPane("code") },
     { id: "rooms", title: "Go to the team rooms", run: () => setPane("rooms") },
-    { id: "submit-way", title: "Submit a Way", hint: "write a goal and its steps; each step is reviewed", run: () => openSubmitWay(null) },
+    { id: "submit-way", title: "Submit a Way", hint: "write a goal and its steps; each step is reviewed", run: () => openSubmitWay() },
     { id: "desktop-sessions", title: "My desktop sessions", hint: "what the rooms can ask this desktop, and who may", run: () => { setPane("rooms"); desktop()?.rooms.panel?.("desktop") } },
     { id: "console", title: "Open the console", run: () => void openConsole() },
     { id: "goal", title: "Set a goal", hint: "/goal <condition> — kell keeps working until it holds", run: () => { setText("/goal "); textRef.current?.focus() } },
@@ -3314,6 +3337,15 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                       </div>
                     )
                   }
+                  if (l.who === "thought") {
+                    if (!showThoughts) return null
+                    return (
+                      <details className="dk-thought" key={i} open={i === lines.length - 1}>
+                        <summary>Thoughts</summary>
+                        <div className="dk-thought-text">{l.text}</div>
+                      </details>
+                    )
+                  }
                   if (l.who === "plan") {
                     return (
                       <div className="dg-run" data-agent="true" key={i}>
@@ -3432,6 +3464,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                       <ProcedurePicker goal={pendingTurn.goal} options={delegateOptions} goals={delegateGoals} onInspect={setInspectWay}
                         stepsFor={stepsFor} onEdit={editProcStep} onAdd={addProcStep} onRemove={removeProcStep}
                         onAsk={askProcedure} catalog={settings?.catalog || []}
+                        models={settings?.models} onSuggest={suggestProcModels}
                         initialAsk={pendingTurn.text} initialFiles={pendingTurn.files}
                         onPick={applyOption} onSkip={runWithoutWay} />
                     </div>
@@ -3639,6 +3672,17 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                 ))}
               </ul>
             )}
+            {editsOpen && (files.length > 0 || otherFiles.length > 0) && (
+              <div className="dk-edits" role="region" aria-label="Edits in this chat">
+                <div className="dk-edits-head">
+                  <b>Edits</b>
+                  <span>{files.length} file{files.length === 1 ? "" : "s"} in the last turn{otherMore ? ` · ${otherMore} more earlier` : ""}</span>
+                  <button type="button" className="dk-icon dk-icon-sm" aria-label="Close edits" onClick={() => setEditsOpen(false)}>×</button>
+                </div>
+                <FileList files={files} />
+                {filesNote && <p className="dk-note">{filesNote}</p>}
+              </div>
+            )}
             <div className="dk-composer-top">
               <div className="dk-mode" role="group" aria-label="Procedure mode" data-mode={procMode}>
                 <span className="dk-mode-thumb" aria-hidden="true" />
@@ -3654,6 +3698,16 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                   means kell's router picks the rung, which is what the app did before there was a bar to choose on. */}
               <ModelPicker value={chatModel} catalog={settings?.catalog || []} onChange={chooseChatModel}
                 label="Model for the main chat" />
+              {/* Two things the turn produces that used to be invisible: the model's own reasoning, and the files it
+                  changed. Both are one click from the bar that sent the message (2026-11-19). */}
+              <button type="button" className="dk-bar-btn" aria-pressed={showThoughts} data-on={showThoughts || undefined}
+                title={showThoughts ? "Thoughts are shown: click to hide them" : "Thoughts are hidden: click to show them"}
+                onClick={toggleThoughts}>Thoughts</button>
+              <button type="button" className="dk-bar-btn" aria-pressed={editsOpen} data-on={editsOpen || undefined}
+                title={files.length ? `${files.length} file${files.length === 1 ? "" : "s"} changed in this chat` : "No edits in this chat yet"}
+                disabled={!files.length && !otherFiles.length} onClick={() => setEditsOpen((o) => !o)}>
+                Edits{files.length ? ` ${files.length}` : ""}
+              </button>
               {busy && (
                 // The stop sits with the mode choice, above the message box: the turn it stops is the one the mode
                 // applies to, and it stays reachable without taking the send button's place.
@@ -3823,15 +3877,33 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
             </section>
           )}
           {/* The procedure record, editable in the panel: the card open in the chat, else the best fit, else the chosen Way. */}
-          <ProcedurePanel option={panelWay} steps={panelWay ? stepsFor(panelWay) : []} catalog={settings?.catalog || []}
-            onEdit={(i, patch) => panelWay && editProcStep(panelWay, i, patch)}
-            onAdd={() => panelWay && addProcStep(panelWay)}
-            onRemove={(i) => panelWay && removeProcStep(panelWay, i)}
-            onAsk={panelWay ? (t, files, model) => askProcedure(panelWay, t, files, model) : undefined}
-            onUse={pendingTurn && panelWay ? () => useProcWay(panelWay) : undefined}
-            onSubmitWay={() => openSubmitWay(panelWay)}
-            previewLabel={inspectWay ? "Open in the chat" : delegateOptions.length ? "Preview · pick in the chat" : undefined}
-            glass={glassGraph} onToggleGlass={toggleGlassGraph} />
+          {/* The right sidebar is Submit a Way: written here, drafted here, or submitted for review. It replaced the
+              read-only Procedure record (2026-11-18, owner's call): one place to write a Way, and the same panel the
+              rooms use, so a Way looks the same wherever it is written. The record of the Way a turn is running is still
+              in the chat, as its card. */}
+          <section className="dk-proc" data-glass={glassGraph ? "on" : "off"} aria-label="Submit a Way">
+            <div className="dk-proc-head">
+              <span className="dk-proc-title">
+                <h2>Submit a Way</h2>
+                <InfoTip align="start" text="Write a new Way step by step. Drafts stay on this computer and run here; submitting sends it to kell's reviewer, which checks every step." />
+              </span>
+              <span className="dk-proc-actions">
+                <button type="button" className="dk-icon dk-icon-sm dk-proc-toggle" aria-pressed={glassGraph}
+                  aria-label={glassGraph ? "Turn the glass effect off" : "Turn the glass effect on"}
+                  title={glassGraph ? "Glass effect on" : "Glass effect off"} onClick={toggleGlassGraph}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 3.5l1.7 4.3 4.3 1.7-4.3 1.7L12 15.5l-1.7-4.3L6 9.5l4.3-1.7z" />
+                    <path d="M18.6 14.4l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
+                  </svg>
+                </button>
+              </span>
+            </div>
+            <div className="dk-proc-graph" key="submit">
+              <span className="dk-proc-aurora" aria-hidden="true" />
+              <SubmitWayPanel api={submissionsApi} compact />
+            </div>
+          </section>
         </aside>
         <div className="dk-scrim-right" onClick={() => setRightOpen(false)} aria-hidden="true" />
       </div>
@@ -3917,9 +3989,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
           </div>
         </div>
       )}
-      {submitOpen && (
-        <SubmitWay onClose={() => setSubmitOpen(false)} onSubmitted={(id) => openSubmittedWay(id)} from={submitFrom} />
-      )}
+      {modesIntro && <ModesIntro onClose={closeModesIntro} />}
       {showInbox && <InboxPanel items={inboxItems} onClose={() => setShowInbox(false)} onOpenChat={(sid) => void openAnyChat(sid)} onAnswered={() => void loadInbox()} />}
       {showConn && <ConnectorsPanel onClose={() => setShowConn(false)} />}
       {showSched && <SchedulesPanel onClose={() => { setShowSched(false); void loadInbox() }} onOpenChat={(sid) => void openAnyChat(sid)} homeDir={homePath || homeRef.current} projectDir={directory} />}

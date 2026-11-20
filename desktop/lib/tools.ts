@@ -89,7 +89,18 @@ export const CHAT_RULES = [
   "If you need something only the person can tell you, ask in your reply and stop there.",
 ].join("\n\n")
 
-/** The rules for a turn in `directory`: the chats folder gets the assistant rules, a project the coding rules. */
-export const rulesFor = (isChats: boolean) => `${isChats ? CHAT_RULES : TOOL_RULES}
+// Agent mode (2026-11-20): the model decides how to get the answer, including research. kell's own tools carry it --
+// discover_tools names a search tool and use_tool runs it (Exa runs on kell's key, no sign-in), and the engine's own
+// web search stays off (lib/pooled.ts) so the model does not bypass kell's record of what was searched.
+export const AGENT_RULES = [
+  "This turn is Agent mode: you decide how to get the answer, and research is expected when the task needs facts you do not have. The engine's own web search is off; web search and fetching go through kell's tools.",
+  "To search: call kell_discover_tools (for example with \"web search\" or \"fetch a page\") to see the tools this deployment has, then kell_use_tool with the tool's name and its arguments. Exa's web search runs on kell's key with no sign-in.",
+  "A sweep is not one call. Search, read what came back, and search again for what is missing -- several times if the task needs it, with different queries when a sweep is thin. Do not stop after one search while the answer is still incomplete, and say in your reply what you searched and which sources you used.",
+  "kell's find_ways already ran for this task and its result is above; follow it when it fits, and call it again yourself only if you need a different Way. kell applies no stored Way in this mode.",
+].join("\n\n")
 
-${DOC_RULES}`
+/** The rules for a turn in `directory`: the chats folder gets the assistant rules, a project the coding rules. Agent mode
+ *  adds the research rules, because its whole difference is that the model may search as often as it needs. */
+export const rulesFor = (isChats: boolean, mode?: string) => `${isChats ? CHAT_RULES : TOOL_RULES}
+
+${mode === "agent" ? `${AGENT_RULES}\n\n` : ""}${DOC_RULES}`
