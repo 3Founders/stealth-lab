@@ -22,6 +22,33 @@ def preview(payload: Any) -> dict:
     return intake.preview(intake.parse(payload))
 
 
+async def _refine_limit(pool: Any, owner_id: str) -> None:
+    """A rewrite is one model call, so it has its own bucket: it stores nothing and runs no reviewer, so it must not
+    spend the submission quota the person needs for the Way itself."""
+    from datetime import timedelta
+
+    from app.economy import constants as econ
+    from app.services.governance import RateLimit, RateLimiter, RateLimitExceeded
+
+    path = "goals/submissions/refine"
+    limiter = RateLimiter(pool, limits={
+        path: RateLimit(max_requests=econ.SUBMISSION_REFINE_RATE_LIMIT_MAX, window=timedelta(hours=1)),
+    })
+    try:
+        await limiter.check_and_record(f"user:{owner_id}", path)
+    except RateLimitExceeded as exc:
+        raise intake.SubmissionError(f"too many rewrites; retry in {exc.retry_after_seconds}s") from exc
+
+
+async def refine(pool: Any, owner_id: str, payload: Any, *, mode: str, instruction: str = "") -> dict:
+    """Improve, specialize or abstract a draft (app/submissions/refine.py). Nothing is stored: the answer is shown and
+    the person submits it through `submit`, so the normal review and limits apply to what they send."""
+    from app.submissions import refine as refine_mod
+
+    await _refine_limit(pool, owner_id)
+    return await refine_mod.refine(payload, mode=mode, instruction=instruction)
+
+
 async def _reviewed(pool: Any, submission_id: str, owner_id: str, wait: float) -> dict:
     task = asyncio.create_task(review.review_submission(pool, submission_id))
     _BACKGROUND.add(task)

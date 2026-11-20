@@ -1,6 +1,8 @@
 """Goal submission over HTTP (docs/goal_submission.md). Signed-in callers only; everyone sees and changes only their own.
 
     POST /v1/goals/submissions/preview          {goal, description, steps}  -> the mode it will be filed under
+    POST /v1/goals/submissions/refine           {goal, description, steps, mode, instruction?}  -> the same Way rewritten
+                                                (improve | specialize | abstract), shown and not stored
     POST /v1/goals/submissions                  {goal, description, steps}  -> stored and reviewed, step by step
     GET  /v1/goals/submissions                  -> the caller's submissions
     GET  /v1/goals/submissions/{id}             -> one, with each step's state and the reason for a rejection
@@ -61,6 +63,17 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
             return _json(request, api.preview(await _body(request)))
         except api.ERRORS as exc:
             return _error(request, str(exc), 400)
+
+    @server.custom_route("/v1/goals/submissions/refine", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def submission_refine(request: Request) -> Response:
+        # Before the `{submission_id}` route below, or "refine" would be read as an id.
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        body = await _body(request)
+        mode = str(body.pop("mode", "") or "")
+        instruction = str(body.pop("instruction", "") or "")
+        return await _answer(request, api.refine(pool, subject, body, mode=mode, instruction=instruction))
 
     @server.custom_route("/v1/goals/submissions", methods=["GET", "POST", "OPTIONS"], include_in_schema=False)
     async def submissions(request: Request) -> Response:

@@ -89,5 +89,8 @@ SUBMISSION_RATE_LIMIT_WINDOW_HOURS = _i("KEL_SUBMISSION_RATE_LIMIT_WINDOW_HOURS"
 # and one cap across ALL users (many throwaway accounts share it).
 SUBMISSION_DAILY_MAX = _i("KEL_SUBMISSION_DAILY_MAX", 30)
 SUBMISSION_GLOBAL_HOURLY_MAX = _i("KEL_SUBMISSION_GLOBAL_HOURLY_MAX", 300)
+# A rewrite (improve / specialize / abstract) is one model call that stores nothing and runs no reviewer, so it has
+# its own hourly bucket instead of spending the submission quota the person needs for the Way itself.
+SUBMISSION_REFINE_RATE_LIMIT_MAX = _i("KEL_SUBMISSION_REFINE_RATE_LIMIT_MAX", 30)
 USAGE_EVENT_RATE_LIMIT_MAX = _i("KEL_USAGE_EVENT_RATE_LIMIT_MAX", 60)
 USAGE_EVENT_RATE_LIMIT_WINDOW_HOURS = _i("KEL_USAGE_EVENT_RATE_LIMIT_WINDOW_HOURS", 1)

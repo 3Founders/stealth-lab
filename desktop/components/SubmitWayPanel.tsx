@@ -1,8 +1,11 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  runnable, STATUS_LABEL, type Run, type RunRow, type StepIn, type Submission, type SubmissionRow, type SubmissionsApi,
-} from "@/lib/submissions-api";
+  runnable, STATUS_LABEL, type RefineMode, type RefineResult, type Run, type RunRow, type StepIn, type Submission,
+  type SubmissionRow,
+} from "@/lib/submissions-shared";
+// Type only: lib/submissions-api reads the sign-in from disk (lib/mcp.ts), so nothing of it may reach this bundle.
+import type { SubmissionsApi } from "@/lib/submissions-api";
 import LocatorField from "./LocatorField";
 import "./submitway.css";
 
@@ -23,7 +26,7 @@ const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : use
  */
 type View = { kind: "new" } | { kind: "list" } | { kind: "one"; id: string } | { kind: "runs" } | { kind: "run"; id: string };
 
-/** A step in the form, with a key of its own so React can move the card itself when â†‘/â†“ swap two steps (and animate it). The key is
+/** A step in the form, with a key of its own so React can move the card itself when ↑/↓ swap two steps (and animate it). The key is
  *  local: cleanStep drops it before anything is sent. */
 type DraftStep = StepIn & { id: string };
 
@@ -59,8 +62,13 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
   const [mode, setMode] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  // Improve / specialize / abstract: kell rewrites the goal AND every step, the person reviews, then submits both.
+  const [refining, setRefining] = useState<"" | RefineMode>("");
+  const [refineNote, setRefineNote] = useState("");
+  const [proposal, setProposal] = useState<RefineResult | null>(null);
+  const [refineError, setRefineError] = useState("");
   const listRef = useRef<HTMLOListElement>(null);
-  // The tops of the cards just before a â†‘/â†“ swap, by step id. After the render moves the cards, the layout effect plays each one from its
+  // The tops of the cards just before a ↑/↓ swap, by step id. After the render moves the cards, the layout effect plays each one from its
   // old place to its new one (a FLIP), so the two steps visibly trade places instead of the text changing in place.
   const pendingFlip = useRef<Map<string, number> | null>(null);
 
@@ -138,6 +146,37 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
     finally { setSending(false); }
   };
 
+  // One of the three rewrites. It sends the whole draft and gets the same Way back, rewritten: the goal, the
+  // description and every step. Nothing is stored and nothing is submitted here.
+  const refineDraft = async (kind: RefineMode) => {
+    setRefineError("");
+    if (!goal.trim()) { setRefineError("Write the goal first: there is nothing to rewrite yet."); return; }
+    if (!usable.length) { setRefineError("Add at least one step: there is nothing to rewrite yet."); return; }
+    setRefining(kind);
+    try { setProposal(await api.refine({ goal, description, steps: usable }, kind, refineNote)); }
+    catch (err) { setRefineError((err as Error).message); }
+    finally { setRefining(""); }
+  };
+
+  const useProposal = (p: RefineResult) => {
+    setGoal(p.goal); setDescription(p.description);
+    setSteps(p.steps.map((s) => ({ ...s, id: newStepId() })));
+    setProposal(null);
+  };
+
+  // "Use this and submit": the proposal is already a valid Way (the server checked it), so the goal and its steps go
+  // to review together in one action. The form is not changed on the way out; the submission view is what follows.
+  const submitProposal = async (p: RefineResult) => {
+    setError("");
+    setSending(true);
+    try {
+      const out = await api.submit({ goal: p.goal, description: p.description, steps: p.steps });
+      try { window.localStorage.removeItem(DRAFT_KEY); } catch { /* storage blocked */ }
+      onDone(out.id);
+    } catch (err) { setError((err as Error).message); }
+    finally { setSending(false); }
+  };
+
   return (
     <form className="sw-form" onSubmit={(e) => void submit(e)}>
       <label className="sw-field">
@@ -149,13 +188,63 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
         <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="One or two sentences" />
       </label>
 
+      {/* The same Way, rewritten three ways. kell changes the goal and every step; the person reviews the proposal and
+          only then submits, so the goal and the procedure always go together. */}
+      <div className="sw-refine">
+        <div className="sw-refine-head">
+          <b>Improve, specialize or abstract</b>
+          <span>kell rewrites the goal and its steps. Nothing is submitted until you say so.</span>
+        </div>
+        <input value={refineNote} onChange={(e) => setRefineNote(e.target.value)} maxLength={300}
+          aria-label="What the rewrite should change" placeholder="Optional: what should change? e.g. make it about Python repos"
+          onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault() }} />
+        <div className="sw-row">
+          <button type="button" className="btn-line sw-btn" disabled={!!refining || sending} onClick={() => void refineDraft("improve")}
+            title="The same job, said precisely: a goal that names the outcome, steps that each do one thing.">
+            {refining === "improve" ? "Improving…" : "Improve"}
+          </button>
+          <button type="button" className="btn-line sw-btn" disabled={!!refining || sending} onClick={() => void refineDraft("specialize")}
+            title="Narrower: one concrete case (a repository, language, format or audience), named in the goal.">
+            {refining === "specialize" ? "Specializing…" : "Specialize"}
+          </button>
+          <button type="button" className="btn-line sw-btn" disabled={!!refining || sending} onClick={() => void refineDraft("abstract")}
+            title="Broader: the family of jobs this draft belongs to, with the case details taken out.">
+            {refining === "abstract" ? "Abstracting…" : "Abstract"}
+          </button>
+        </div>
+        {refining && <p className="sw-dim" role="status">kell is rewriting the goal and the steps…</p>}
+        {refineError && <p className="sw-error" role="alert">{refineError}</p>}
+        {proposal && (
+          <div className="sw-proposal" role="region" aria-label={`Proposed ${proposal.mode_label} Way`}>
+            <p className="sw-proposal-kicker">{proposal.mode_label}: {proposal.mode_note}</p>
+            <p className="sw-proposal-goal">{proposal.goal}</p>
+            {proposal.description && <p className="sw-dim">{proposal.description}</p>}
+            <ol className="sw-proposal-steps">
+              {proposal.steps.map((s, i) => (
+                <li key={i}>
+                  <b>{s.title || `Step ${i + 1}`}</b>
+                  <span className="sw-proposal-who">{s.kind === "human" ? "a person" : "automated"}</span>
+                  <span>{s.kind === "human" ? s.description : s.prompt || (typeof s.locator === "string" ? s.locator : s.locator?.value)}</span>
+                </li>
+              ))}
+            </ol>
+            <div className="sw-row">
+              <button type="button" className="btn-ink sw-btn" disabled={sending} onClick={() => useProposal(proposal)}>Use this</button>
+              <button type="button" className="btn-line sw-btn" disabled={sending} onClick={() => void submitProposal(proposal)}>Use this and submit</button>
+              <button type="button" className="btn-line sw-btn" onClick={() => setProposal(null)}>Discard</button>
+            </div>
+            <p className="sw-dim">Submitting sends the goal and every step together, exactly as reviewed here.</p>
+          </div>
+        )}
+      </div>
+
       <ol className="sw-steps" ref={listRef}>
         {steps.map((s, i) => (
           <li key={s.id} className="sw-step">
             <StepEditor step={s} n={i + 1} onChange={(x) => put(i, x)} />
             <div className="sw-step-tools">
-              <button type="button" aria-label={`Move step ${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)}>â†‘</button>
-              <button type="button" aria-label={`Move step ${i + 1} down`} disabled={i === steps.length - 1} onClick={() => move(i, 1)}>â†“</button>
+              <button type="button" aria-label={`Move step ${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+              <button type="button" aria-label={`Move step ${i + 1} down`} disabled={i === steps.length - 1} onClick={() => move(i, 1)}>↓</button>
               <button type="button" aria-label={`Remove step ${i + 1}`} disabled={steps.length === 1} onClick={() => setSteps((all) => all.filter((_, j) => j !== i))}>Remove</button>
             </div>
           </li>
@@ -169,9 +258,9 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
       {mode && <p className="sw-mode" role="status" key={mode}>{mode}</p>}
       {error && <p className="sw-error" role="alert" key={error}>{error}</p>}
       <div className="sw-row">
-        <button type="submit" className="btn-ink sw-btn" disabled={sending} data-busy={sending || undefined}><span>{sending ? "Submittingâ€¦ kell is reviewing each step" : "Submit for review"}</span></button>
+        <button type="submit" className="btn-ink sw-btn" disabled={sending} data-busy={sending || undefined}><span>{sending ? "Submitting… kell is reviewing each step" : "Submit for review"}</span></button>
       </div>
-      <p className="sw-dim">Each step becomes its own reusable goal. kell's AI reviewer checks every step; approved steps go into search marked â€œAI approvedâ€, and a rejected step comes back with the reason so you fix just that one.</p>
+      <p className="sw-dim">Each step becomes its own reusable goal. kell's AI reviewer checks every step; approved steps go into search marked “AI approved”, and a rejected step comes back with the reason so you fix just that one.</p>
     </form>
   );
 }
@@ -208,6 +297,10 @@ function StepEditor({ step, n, onChange }: { step: StepIn; n: number; onChange: 
           <button type="button" role="radio" aria-checked={step.kind === "automated"} onClick={() => setKind("automated")}>Automated</button>
         </span>
       </div>
+      {/* The step's heading, first: it is what the person is naming, and everything below is what happens under that
+          name. Always editable (2026-11-18); kell fills it in from the words when it is left out, so it stays optional. */}
+      <input aria-label={`Heading for step ${n}`} value={step.title || ""} onChange={(e) => set("title", e.target.value)}
+        placeholder="Heading for this step (optional: kell writes one from the words below)" />
       {step.kind === "human" ? (
         <textarea rows={2} aria-label={`What the person does in step ${n}`} value={step.description || ""} onChange={(e) => set("description", e.target.value)}
           placeholder="Exactly what the person does, e.g. Search 'diffusion transformers' on arxiv.org and copy the top 5 links" />
@@ -218,11 +311,6 @@ function StepEditor({ step, n, onChange }: { step: StepIn; n: number; onChange: 
           <LocatorField n={n} value={locator} onChange={(v) => onChange({ ...step, locator: v })} />
         </>
       )}
-      {/* The step's heading, always editable: it names the step in the list, in review and in the run's output, so it is not
-          something to show only when a locator happens to need it (2026-11-18). kell fills it in from the words when it is
-          left out, so it stays optional. */}
-      <input aria-label={`Heading for step ${n}`} value={step.title || ""} onChange={(e) => set("title", e.target.value)}
-        placeholder="Heading for this step (optional: kell writes one from the words above)" />
     </div>
   );
 }
@@ -247,7 +335,7 @@ function Mine({ api, onOpen }: { api: SubmissionsApi; onOpen: (id: string) => vo
   const [error, setError] = useState("");
   useEffect(() => { void api.list().then(setRows).catch((e) => setError((e as Error).message)); }, [api]);
   if (error) return <p className="sw-error" role="alert">{error}</p>;
-  if (!rows) return <p className="sw-dim">Loadingâ€¦</p>;
+  if (!rows) return <p className="sw-dim">Loading…</p>;
   if (!rows.length) return <p className="sw-dim">Nothing submitted yet.</p>;
   return (
     <ul className="sw-list">
@@ -256,7 +344,7 @@ function Mine({ api, onOpen }: { api: SubmissionsApi; onOpen: (id: string) => vo
           <button type="button" onClick={() => onOpen(r.id)}>
             <span className="sw-name">{r.goal_name}</span>
             <span className="sw-pill" data-status={r.status} key={r.status}>{STATUS_LABEL[r.status]}</span>
-            <span className="sw-dim">{r.steps} step{r.steps === 1 ? "" : "s"}{r.rejected ? ` Â· ${r.rejected} to fix` : ""} Â· {new Date(r.created_at).toLocaleDateString()}</span>
+            <span className="sw-dim">{r.steps} step{r.steps === 1 ? "" : "s"}{r.rejected ? ` · ${r.rejected} to fix` : ""} · {new Date(r.created_at).toLocaleDateString()}</span>
           </button>
         </li>
       ))}
@@ -292,7 +380,7 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
   };
 
   if (error && !sub) return <p className="sw-error" role="alert">{error}</p>;
-  if (!sub) return <p className="sw-dim">Loadingâ€¦</p>;
+  if (!sub) return <p className="sw-dim">Loading…</p>;
   return (
     <div className="sw-one">
       <div className="sw-one-head">
@@ -318,7 +406,7 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
                   <StepEditor step={fixing.step} n={s.order} onChange={(x) => setFixing({ order: s.order, step: x })} />
                   {s.status !== "rejected" && <p className="sw-dim">kell reviews the change; once it passes, the Way gets its next version and runs use it.</p>}
                   <div className="sw-row">
-                    <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={() => void fix()}><span>{busy ? "Reviewingâ€¦" : "Send the fix"}</span></button>
+                    <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={() => void fix()}><span>{busy ? "Reviewing…" : "Send the fix"}</span></button>
                     <button type="button" className="btn-line sw-btn" onClick={() => setFixing(null)}>Cancel</button>
                   </div>
                 </div>
@@ -340,7 +428,7 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
 function matchNote(s: Submission["steps"][number]): string {
   const d = s.goal_match?.decision || "";
   const name = s.goal_match?.goal;
-  if ((d === "exact" || d.startsWith("same")) && name) return `Joins kell's existing goal â€œ${name}â€.`;
+  if ((d === "exact" || d.startsWith("same")) && name) return `Joins kell's existing goal “${name}”.`;
   if (d.startsWith("possible_duplicate")) return "Kept as a new goal (it may be close to an existing one).";
   return "";
 }
@@ -369,7 +457,7 @@ function RunBox({ api, id }: { api: SubmissionsApi; id: string }) {
       {!run || run.status === "done" || run.status === "failed" ? (
         <div className="sw-row">
           <input aria-label="What to run it on" value={input} onChange={(e) => setInput(e.target.value)} placeholder="What to run it on (optional), e.g. diffusion transformers" />
-          <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={() => void go(() => api.run(id, input))}><span>{busy ? "Runningâ€¦" : run ? "Run again" : "Run"}</span></button>
+          <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={() => void go(() => api.run(id, input))}><span>{busy ? "Running…" : run ? "Run again" : "Run"}</span></button>
         </div>
       ) : null}
       {run && <RunOut run={run} note={note} setNote={setNote} busy={busy}
@@ -398,11 +486,11 @@ function RunOut({ run, note, setNote, busy, onDone }: {
             ? <p>Sign in to the tool first: <a href={run.waiting_on.link} target="_blank" rel="noopener noreferrer">open the sign-in</a>, then mark it done.</p>
             : <p>{run.waiting_on.description}</p>}
           <textarea rows={2} aria-label="What you did or found" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What you did or found (passed to the next steps)" />
-          <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={onDone}><span>{busy ? "Continuingâ€¦" : "Done, continue"}</span></button>
+          <button type="button" className="btn-ink sw-btn" disabled={busy} data-busy={busy || undefined} onClick={onDone}><span>{busy ? "Continuing…" : "Done, continue"}</span></button>
         </div>
       )}
       {run.status === "waiting_session" && (
-        <p className="sw-dim">The next step is done by the AI in the chat that started this run (the desktop app or your assistant): say â€œcontinueâ€ there.</p>
+        <p className="sw-dim">The next step is done by the AI in the chat that started this run (the desktop app or your assistant): say “continue” there.</p>
       )}
       {run.status === "done" && <p className="sw-mode" role="status">Done.</p>}
       {run.status === "failed" && <p className="sw-error" role="alert">The run stopped: {run.error}</p>}
@@ -432,7 +520,7 @@ function Runs({ api, onOpen }: { api: SubmissionsApi; onOpen: (id: string) => vo
     try { await api.cancel(id); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(""); }
   };
   if (error && !rows) return <p className="sw-error" role="alert">{error}</p>;
-  if (!rows) return <p className="sw-dim">Loadingâ€¦</p>;
+  if (!rows) return <p className="sw-dim">Loading…</p>;
   if (!rows.length) return <p className="sw-dim">No runs in progress.</p>;
   return (
     <>
@@ -442,10 +530,10 @@ function Runs({ api, onOpen }: { api: SubmissionsApi; onOpen: (id: string) => vo
             <button type="button" onClick={() => onOpen(r.run_id)}>
               <span className="sw-name">{r.way_name}</span>
               <span className="sw-pill" data-status={r.status}>{RUN_LABEL[r.status] || r.status}</span>
-              <span className="sw-dim">Step {r.step} of {r.of}{r.step_title ? `: ${r.step_title}` : ""}{r.input ? ` Â· â€œ${r.input.slice(0, 80)}â€` : ""}</span>
+              <span className="sw-dim">Step {r.step} of {r.of}{r.step_title ? `: ${r.step_title}` : ""}{r.input ? ` · “${r.input.slice(0, 80)}”` : ""}</span>
             </button>
             <button type="button" className="btn-line sw-btn" aria-label={`Cancel the run of ${r.way_name}`} disabled={busy === r.run_id}
-              onClick={() => void cancel(r.run_id)}>{busy === r.run_id ? "Cancellingâ€¦" : "Cancel"}</button>
+              onClick={() => void cancel(r.run_id)}>{busy === r.run_id ? "Cancelling…" : "Cancel"}</button>
           </li>
         ))}
       </ul>
@@ -468,10 +556,10 @@ function OneRun({ api, id, onBack }: { api: SubmissionsApi; id: string; onBack: 
   return (
     <section className="sw-run" aria-label="This run">
       <div className="sw-row">
-        <button type="button" className="btn-line sw-btn" onClick={onBack}>â† My runs</button>
+        <button type="button" className="btn-line sw-btn" onClick={onBack}>← My runs</button>
         {open && <button type="button" className="btn-line sw-btn" disabled={busy} onClick={() => void go(() => api.cancel(id))}>Cancel this run</button>}
       </div>
-      {!run && !error && <p className="sw-dim">Loadingâ€¦</p>}
+      {!run && !error && <p className="sw-dim">Loading…</p>}
       {run && <RunOut run={run} note={note} setNote={setNote} busy={busy}
         onDone={() => void go(async () => { const r = await api.done(run.id, note); setNote(""); return r; })} />}
       {error && <p className="sw-error" role="alert" key={error}>{error}</p>}

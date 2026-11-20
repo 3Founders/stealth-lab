@@ -163,3 +163,17 @@
 .sw-loc-field input[data-problem] { border-color: #b3261e; }
 .sw-loc-field .sw-loc-problem { color: #b3261e; }
 .sw-loc-field .sw-dim { margin: 0; font-size: 12px; }
+
+/* Improve / specialize / abstract (2026-11-20): the rewrite controls, and the proposal they return for review. The
+   proposal is a normal card on the site's tokens; it rises 6px as it fades in, transform and opacity only. */
+.sw-refine { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; background: color-mix(in srgb, currentColor 3%, transparent); }
+.sw-refine-head { display: flex; flex-direction: column; gap: 2px; }
+.sw-refine-head span { font-size: .9em; color: var(--text-2); }
+.sw-proposal { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface); animation: sw-proposal-in .28s var(--sw-ease) both; }
+.sw-proposal-kicker { margin: 0; font-size: .82em; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
+.sw-proposal-goal { margin: 0; font-weight: 600; }
+.sw-proposal-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.sw-proposal-steps li { display: flex; flex-direction: column; gap: 1px; }
+.sw-proposal-who { font-size: .8em; color: var(--text-2); }
+@keyframes sw-proposal-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sw-proposal { animation: none; } }

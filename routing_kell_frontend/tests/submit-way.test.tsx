@@ -41,6 +41,14 @@ function fakeApi(): SubmissionsApi & { calls: Record<string, unknown[][]> } {
   return {
     calls,
     preview: rec("preview", () => ({ goal: "ML research", mode: "human_ai", mode_label: "Human+AI", message: "This will be submitted as Human+AI.", steps: [] })),
+    refine: rec("refine", () => ({
+      goal: "Research diffusion transformers in PyTorch repositories", description: "Find and summarise recent papers.",
+      mode: "specialize", mode_label: "Specialized", mode_note: "narrower: one concrete case, named in the goal",
+      steps: [
+        { kind: "human", title: "Find papers", description: "Search arxiv for diffusion transformers and copy 5 links" },
+        { kind: "automated", title: "Summarise", prompt: "Summarise each link in two lines" },
+      ],
+    })),
     submit: rec("submit", () => submitted()),
     list: rec("list", () => []),
     get: rec("get", () => submitted()),
@@ -161,5 +169,29 @@ describe("Submit a Way", () => {
     expect(box().value).toBe("summarise each link in two lines");   // typed into the prompt, as kell's step
     act(() => tag("A person").click());                              // automated -> a person
     expect(box().value).toBe("summarise each link in two lines");
+  });
+
+  it("rewrites the goal and the steps, then submits both from the proposal", async () => {
+    const api = fakeApi();
+    root = createRoot(host);
+    act(() => root!.render(<SubmitWay api={api} />));
+    type(host.querySelector('input[placeholder^="e.g. Summarise"]') as HTMLInputElement, "ML research");
+    type(host.querySelector('textarea[aria-label="What the person does in step 1"]') as HTMLTextAreaElement, "Search arxiv and copy 5 links");
+    await flush(600);
+
+    act(() => byText("Specialize").click());
+    await flush();
+    const draft = api.calls.refine[0][0] as { goal: string; steps: unknown[] };
+    expect(draft.goal).toBe("ML research");
+    expect(draft.steps).toHaveLength(1);
+    expect(api.calls.refine[0].slice(1)).toEqual(["specialize", ""]);
+    expect(host.textContent).toContain("Specialized: narrower");
+    expect(host.textContent).toContain("Research diffusion transformers in PyTorch repositories");
+
+    act(() => byText("Use this and submit").click());
+    await flush();
+    const sent = api.calls.submit[0][0] as { goal: string; steps: { title: string }[] };
+    expect(sent.goal).toBe("Research diffusion transformers in PyTorch repositories");
+    expect(sent.steps.map((s) => s.title)).toEqual(["Find papers", "Summarise"]);
   });
 });

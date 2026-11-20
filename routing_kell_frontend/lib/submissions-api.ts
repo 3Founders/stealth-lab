@@ -12,6 +12,14 @@ export interface StepIn { kind: StepKind; title?: string; description?: string; 
 export interface SubmissionIn { goal: string; description?: string; steps: StepIn[] }
 
 export interface Preview { goal: string; mode: string; mode_label: string; message: string; steps: StepIn[] }
+
+/** The three rewrites a Way can be asked for before it is submitted (app/submissions/refine.py). */
+export type RefineMode = "improve" | "specialize" | "abstract";
+
+/** A rewrite of the WHOLE draft: the goal, its description and every step. Nothing is stored until it is submitted. */
+export interface RefineResult {
+  goal: string; description: string; mode: RefineMode; mode_label: string; mode_note: string; steps: StepIn[]; model?: string;
+}
 export interface Step {
   order: number; kind: StepKind; title: string; description: string; prompt: string;
   locator: { type: LocatorType; value: string } | null; status: "reviewing" | "ai_approved" | "approved" | "rejected";
@@ -89,6 +97,9 @@ export function submissionsApi(deps: SubmissionsDeps) {
   const body = (s: SubmissionIn) => ({ goal: s.goal.trim(), description: (s.description || "").trim(), steps: s.steps.map(cleanStep) });
   return {
     preview: (s: SubmissionIn) => call<Preview>("POST", "/submissions/preview", body(s)),
+    // Improve / specialize / abstract: one model call that stores nothing; the person submits the result themselves.
+    refine: (s: SubmissionIn, mode: RefineMode, instruction?: string) =>
+      call<RefineResult>("POST", "/submissions/refine", { ...body(s), mode, instruction: (instruction || "").trim() }),
     submit: (s: SubmissionIn) => call<Submission>("POST", "/submissions", body(s)),
     list: () => call<{ submissions: SubmissionRow[] }>("GET", "/submissions").then((r) => r.submissions),
     get: (id: string) => call<Submission>("GET", `/submissions/${encodeURIComponent(id)}`),
