@@ -181,6 +181,10 @@ describe("Submit a Way", () => {
 
     act(() => byText("Specialize").click());
     await flush();
+    expect(host.textContent).toContain("Rewrite this Way");          // the rewrite has a page of its own
+    expect(host.textContent).toContain("ML research");               // the draft is shown there
+    act(() => byText("Rewrite").click());
+    await flush();
     const draft = api.calls.refine[0][0] as { goal: string; steps: unknown[] };
     expect(draft.goal).toBe("ML research");
     expect(draft.steps).toHaveLength(1);
@@ -203,6 +207,9 @@ describe("Submit a Way", () => {
     expect(host.textContent).toContain("ML research");                 // the submission view, not the form
 
     act(() => byText("Specialize").click());
+    await flush();
+    expect(host.textContent).toContain("Rewrite this Way");
+    act(() => byText("Rewrite").click());
     await flush();
     const draft = api.calls.refine[0][0] as { goal: string; steps: unknown[] };
     expect(draft.goal).toBe("ML research");                            // the submission's goal, with its steps

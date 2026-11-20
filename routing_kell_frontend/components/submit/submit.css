@@ -164,11 +164,15 @@
 .sw-loc-field .sw-loc-problem { color: #b3261e; }
 .sw-loc-field .sw-dim { margin: 0; font-size: 12px; }
 
-/* Improve / specialize / abstract (2026-11-20): the rewrite controls, and the proposal they return for review. The
-   proposal is a normal card on the site's tokens; it rises 6px as it fades in, transform and opacity only. */
-.sw-refine { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; background: color-mix(in srgb, currentColor 3%, transparent); }
-.sw-refine-head { display: flex; flex-direction: column; gap: 2px; }
-.sw-refine-head span { font-size: .9em; color: var(--text-2); }
+/* Improve / specialize / abstract (2026-11-20): the rewrite is its own page -- the Way as it stands, what should
+   change, the mode, and the proposal. The proposal is a normal card; it rises 6px as it fades in (transform and
+   opacity only). */
+.sw-refine-page { display: flex; flex-direction: column; gap: 14px; }
+.sw-refine-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sw-refine-title { margin: 0; font-size: 1.1em; }
+.sw-draft { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; background: color-mix(in srgb, currentColor 3%, transparent); }
+.sw-draft p { margin: 0; }
+.sw-draft ol { margin: 4px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 2px; }
 .sw-proposal { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface); animation: sw-proposal-in .28s var(--sw-ease) both; }
 .sw-proposal-kicker { margin: 0; font-size: .82em; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
 .sw-proposal-goal { margin: 0; font-weight: 600; }
