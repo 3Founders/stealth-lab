@@ -81,8 +81,26 @@ export async function POST(req: Request) {
         }
         const client = await clientFor(e)                 // async: loads the ESM-only client via import()
         // Subscribe before prompting: otherwise the turn's session.idle can fire before the stream starts.
-        const sessionID: string = body.sessionID ||
-          (await client.session.create({ location: { directory: e.directory }, metadata: { kell: true } })).id
+        // A chat the engine no longer has (its session was removed, or an app restart lost it) is made again under the
+        // SAME id, so the app's own row and the engine's session stay one chat. The local transcript is handed to the
+        // model as prior context below, so the conversation can go on (2026-11-20: a restored chat had its transcript
+        // but no engine session).
+        let sessionID = String(body.sessionID || "")
+        let restored = false
+        if (sessionID) {
+          try { await client.session.get({ sessionID } as any) }
+          catch {
+            restored = true
+            try {
+              await client.session.create({ id: sessionID, location: { directory: e.directory }, metadata: { kell: true } } as any)
+            } catch {
+              // An engine that refuses the id still gets a session; the chat goes on under the engine's own id.
+              sessionID = (await client.session.create({ location: { directory: e.directory }, metadata: { kell: true } })).id
+            }
+          }
+        } else {
+          sessionID = (await client.session.create({ location: { directory: e.directory }, metadata: { kell: true } })).id
+        }
         turnSession = sessionID
         if (stopped) { try { await client.session.interrupt({ sessionID }) } catch { /* nothing ran */ } close(); return }
         enc({ type: "session", sessionID })
@@ -140,7 +158,11 @@ export async function POST(req: Request) {
         let prior = ""
         try {
           const local = getSession(sessionID)
-          if (local && local.source !== "kell") {
+          // A restored chat (this session's engine record was gone, or the row says it was restored) gets the same
+          // compressed prior as an imported chat: the model must know what was already said.
+          let flagged = false
+          try { flagged = JSON.parse(local?.metadata || "{}")?.restored === true } catch { /* not JSON */ }
+          if (local && (local.source !== "kell" || restored || flagged)) {
             const bits: string[] = []
             let used = 0
             for (const m of getAssistantMessages(sessionID, 12)) {
