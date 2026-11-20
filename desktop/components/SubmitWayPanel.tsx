@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   runnable, STATUS_LABEL, type RefineMode, type RefineResult, type Run, type RunRow, type StepIn, type Submission,
   type SubmissionRow,
@@ -46,7 +46,7 @@ export default function SubmitWay({ api, compact = false, initial }: { api: Subm
       </nav>
       {view.kind === "new" && <NewWay api={api} onDone={(id) => setView({ kind: "one", id })} />}
       {view.kind === "list" && <Mine api={api} onOpen={(id) => setView({ kind: "one", id })} />}
-      {view.kind === "one" && <One api={api} id={view.id} />}
+      {view.kind === "one" && <One api={api} id={view.id} onOpen={(id) => setView({ kind: "one", id })} />}
       {view.kind === "runs" && <Runs api={api} onOpen={(id) => setView({ kind: "run", id })} />}
       {view.kind === "run" && <OneRun api={api} id={view.id} onBack={() => setView({ kind: "runs" })} />}
     </div>
@@ -54,6 +54,29 @@ export default function SubmitWay({ api, compact = false, initial }: { api: Subm
 }
 
 // ------------------------------------------------------------------------------------------------------------ the form
+
+/** The rewrite as a person reads it: the goal, the description and every step, with the actions the caller supplies.
+ *  Shared by the new-Way form and by a submitted Way being rewritten, so the two always look the same. */
+function ProposalCard({ p, children }: { p: RefineResult; children: ReactNode }) {
+  return (
+    <div className="sw-proposal" role="region" aria-label={`Proposed ${p.mode_label} Way`}>
+      <p className="sw-proposal-kicker">{p.mode_label}: {p.mode_note}</p>
+      <p className="sw-proposal-goal">{p.goal}</p>
+      {p.description && <p className="sw-dim">{p.description}</p>}
+      <ol className="sw-proposal-steps">
+        {p.steps.map((s, i) => (
+          <li key={i}>
+            <b>{s.title || `Step ${i + 1}`}</b>
+            <span className="sw-proposal-who">{s.kind === "human" ? "a person" : "automated"}</span>
+            <span>{s.kind === "human" ? s.description : s.prompt || (typeof s.locator === "string" ? s.locator : s.locator?.value)}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="sw-row">{children}</div>
+      <p className="sw-dim">Submitting sends the goal and every step together, exactly as reviewed here.</p>
+    </div>
+  );
+}
 
 function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => void }) {
   const [goal, setGoal] = useState("");
@@ -215,26 +238,11 @@ function NewWay({ api, onDone }: { api: SubmissionsApi; onDone: (id: string) => 
         {refining && <p className="sw-dim" role="status">kell is rewriting the goal and the steps…</p>}
         {refineError && <p className="sw-error" role="alert">{refineError}</p>}
         {proposal && (
-          <div className="sw-proposal" role="region" aria-label={`Proposed ${proposal.mode_label} Way`}>
-            <p className="sw-proposal-kicker">{proposal.mode_label}: {proposal.mode_note}</p>
-            <p className="sw-proposal-goal">{proposal.goal}</p>
-            {proposal.description && <p className="sw-dim">{proposal.description}</p>}
-            <ol className="sw-proposal-steps">
-              {proposal.steps.map((s, i) => (
-                <li key={i}>
-                  <b>{s.title || `Step ${i + 1}`}</b>
-                  <span className="sw-proposal-who">{s.kind === "human" ? "a person" : "automated"}</span>
-                  <span>{s.kind === "human" ? s.description : s.prompt || (typeof s.locator === "string" ? s.locator : s.locator?.value)}</span>
-                </li>
-              ))}
-            </ol>
-            <div className="sw-row">
-              <button type="button" className="btn-ink sw-btn" disabled={sending} onClick={() => useProposal(proposal)}>Use this</button>
-              <button type="button" className="btn-line sw-btn" disabled={sending} onClick={() => void submitProposal(proposal)}>Use this and submit</button>
-              <button type="button" className="btn-line sw-btn" onClick={() => setProposal(null)}>Discard</button>
-            </div>
-            <p className="sw-dim">Submitting sends the goal and every step together, exactly as reviewed here.</p>
-          </div>
+          <ProposalCard p={proposal}>
+            <button type="button" className="btn-ink sw-btn" disabled={sending} onClick={() => useProposal(proposal)}>Use this</button>
+            <button type="button" className="btn-line sw-btn" disabled={sending} onClick={() => void submitProposal(proposal)}>Use this and submit</button>
+            <button type="button" className="btn-line sw-btn" onClick={() => setProposal(null)}>Discard</button>
+          </ProposalCard>
         )}
       </div>
 
@@ -354,7 +362,7 @@ function Mine({ api, onOpen }: { api: SubmissionsApi; onOpen: (id: string) => vo
 
 // --------------------------------------------------------------------------------------------------------- one submission
 
-function One({ api, id }: { api: SubmissionsApi; id: string }) {
+function One({ api, id, onOpen }: { api: SubmissionsApi; id: string; onOpen: (id: string) => void }) {
   const [sub, setSub] = useState<Submission | null>(null);
   const [error, setError] = useState("");
   const [fixing, setFixing] = useState<{ order: number; step: StepIn } | null>(null);
@@ -420,7 +428,69 @@ function One({ api, id }: { api: SubmissionsApi; id: string }) {
         ))}
       </ol>
       {error && <p className="sw-error" role="alert" key={error}>{error}</p>}
+      <RewriteBox api={api} sub={sub} onOpen={onOpen} />
       {runnable(sub) && <RunBox api={api} id={sub.id} />}
+    </div>
+  );
+}
+
+/** Improve / specialize / abstract a Way that is already submitted. The result is a NEW submission: the Way on screen
+ *  is a reviewed record with per-step versions, so it is not rewritten in place. Submitting the proposal files it for
+ *  review with its goal and every step, and the view moves to the new one. */
+function RewriteBox({ api, sub, onOpen }: { api: SubmissionsApi; sub: Submission; onOpen: (id: string) => void }) {
+  const [refining, setRefining] = useState<"" | RefineMode>("");
+  const [note, setNote] = useState("");
+  const [proposal, setProposal] = useState<RefineResult | null>(null);
+  const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
+  const draft = {
+    goal: sub.goal_name, description: sub.description,
+    steps: sub.steps.map((s) => ({ kind: s.kind, title: s.title, description: s.description, prompt: s.prompt,
+      locator: s.locator ?? undefined })),
+  };
+  const refine = async (kind: RefineMode) => {
+    setError(""); setRefining(kind);
+    try { setProposal(await api.refine(draft, kind, note)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setRefining(""); }
+  };
+  const submit = async (p: RefineResult) => {
+    setError(""); setSending(true);
+    try { const out = await api.submit({ goal: p.goal, description: p.description, steps: p.steps }); onOpen(out.id); }
+    catch (e) { setError((e as Error).message); }
+    finally { setSending(false); }
+  };
+  return (
+    <div className="sw-refine">
+      <div className="sw-refine-head">
+        <b>Improve, specialize or abstract this Way</b>
+        <span>kell rewrites the goal and its steps. Submitting makes a new Way for review; this one stays as it is.</span>
+      </div>
+      <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300}
+        aria-label="What the rewrite should change" placeholder="Optional: what should change? e.g. make it about Python repos"
+        onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault() }} />
+      <div className="sw-row">
+        <button type="button" className="btn-line sw-btn" disabled={!!refining || sending} onClick={() => void refine("improve")}
+          title="The same job, said precisely: a goal that names the outcome, steps that each do one thing.">
+          {refining === "improve" ? "Improving…" : "Improve"}
+        </button>
+        <button type="button" className="btn-line sw-btn" disabled={!!refining || sending} onClick={() => void refine("specialize")}
+          title="Narrower: one concrete case (a repository, language, format or audience), named in the goal.">
+          {refining === "specialize" ? "Specializing…" : "Specialize"}
+        </button>
+        <button type="button" className="btn-line sw-btn" disabled={!!refining || sending} onClick={() => void refine("abstract")}
+          title="Broader: the family of jobs this Way belongs to, with the case details taken out.">
+          {refining === "abstract" ? "Abstracting…" : "Abstract"}
+        </button>
+      </div>
+      {refining && <p className="sw-dim" role="status">kell is rewriting the goal and the steps…</p>}
+      {error && <p className="sw-error" role="alert">{error}</p>}
+      {proposal && (
+        <ProposalCard p={proposal}>
+          <button type="button" className="btn-ink sw-btn" disabled={sending} onClick={() => void submit(proposal)}>Submit as a new Way</button>
+          <button type="button" className="btn-line sw-btn" onClick={() => setProposal(null)}>Discard</button>
+        </ProposalCard>
+      )}
     </div>
   );
 }

@@ -194,4 +194,25 @@ describe("Submit a Way", () => {
     expect(sent.goal).toBe("Research diffusion transformers in PyTorch repositories");
     expect(sent.steps.map((s) => s.title)).toEqual(["Find papers", "Summarise"]);
   });
+
+  it("rewrites a submitted Way from My submissions and files it as a new one", async () => {
+    const api = fakeApi();
+    root = createRoot(host);
+    act(() => root!.render(<SubmitWay api={api} initial="sub1" />));
+    await flush();
+    expect(host.textContent).toContain("ML research");                 // the submission view, not the form
+
+    act(() => byText("Specialize").click());
+    await flush();
+    const draft = api.calls.refine[0][0] as { goal: string; steps: unknown[] };
+    expect(draft.goal).toBe("ML research");                            // the submission's goal, with its steps
+    expect(draft.steps).toHaveLength(2);
+    expect(api.calls.refine[0].slice(1)).toEqual(["specialize", ""]);
+
+    act(() => byText("Submit as a new Way").click());
+    await flush();
+    const sent = api.calls.submit[0][0] as { goal: string; steps: { title: string }[] };
+    expect(sent.goal).toContain("PyTorch");
+    expect(sent.steps.map((s) => s.title)).toEqual(["Find papers", "Summarise"]);
+  });
 });
