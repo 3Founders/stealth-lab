@@ -190,6 +190,11 @@ export async function personalEngineConfig(env: NodeJS.ProcessEnv = process.env,
       ? "Running models on your own plan in the app isn't connected yet (the server refuses the app's sign-in for models). Use the Rooms tab, or kell.org.in, for now."
       : why ? `kell refused this sign-in: ${why}` : "kell did not accept this sign-in. Sign out and sign in again." }
   }
+  // A 404 is not "try again": it means the host has no deployment at all (Railway answers
+  // "Application not found" at the edge). Say which server, so the person knows it is kell's
+  // side and not the engine, and do not promise a retry that cannot work.
+  if (res.status === 404)
+    return { ok: false, reason: "unreachable", message: `kell's server is not running at ${origin} (404): it has no live deployment right now. The coding engine cannot start until it is back.` }
   if (!res.ok) return { ok: false, reason: "unreachable", message: `kell answered ${res.status}; try again in a moment.` }
   const body: any = await res.json().catch(() => null)
   const models: Model[] = (Array.isArray(body?.data) ? body.data : [])
