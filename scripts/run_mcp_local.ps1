@@ -41,5 +41,16 @@ Get-Content .env | ForEach-Object {
 
 if (-not $env:DATABASE_URL) { throw "DATABASE_URL is not set in backend/.env" }
 
+# The provider connections file (deploy/provider_connections.json) is what makes
+# /v1/models non-empty. The hosted service sets this to /repo/backend/deploy/...;
+# locally the path is the checkout's, and without it the app says "No models are
+# available to this account yet."
+if (-not $env:STEALTH_PROVIDER_CONNECTIONS_FILE) {
+  $env:STEALTH_PROVIDER_CONNECTIONS_FILE = (Join-Path $backend "deploy\provider_connections.json")
+}
+if (-not (Test-Path $env:STEALTH_PROVIDER_CONNECTIONS_FILE)) {
+  throw "provider connections file not found: $env:STEALTH_PROVIDER_CONNECTIONS_FILE"
+}
+
 Write-Host "kell MCP server on http://127.0.0.1:$Port (db: $(([uri]$env:DATABASE_URL).Host))"
 python -m uvicorn app.mcp_server.server:app --host 127.0.0.1 --port $Port --workers 1 --log-level info
