@@ -1,8 +1,11 @@
 # Where output artefacts live
+**Reports, decks and thumbnails do not belong in Neon.** 2026-11-22. Companion to `docs/procedure_billing.md` and
+`docs/thumbnails.md` (the listing picture, sample runs and PII). Written for the agent wiring the storage; the
+frontend half (`Output` and `More like this` on the Way page) is already in place.
 
-**Reports, decks and thumbnails do not belong in Neon.** 2026-11-22. Companion to `docs/procedure_billing.md`.
-Written for the agent wiring the storage; the frontend half (`Output` and `More like this` on the Way page) is
-already in place.
+> **Pricing and execution decisions now live in `docs/blinkit/`** (2026-11-23). This document remains the authority on
+> *where artefacts live*; for what a step may produce, what it reads, and how that is priced, read
+> `docs/blinkit/execution.md` and `docs/blinkit/pricing_discussions.md` first.
 
 ---
 
