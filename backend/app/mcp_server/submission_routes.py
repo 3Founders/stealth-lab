@@ -105,7 +105,18 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
             limit = int(request.query_params.get("limit") or 12)
         except ValueError:
             limit = 12
-        return _json(request, {"ways": await api.list_public(pool, q=q, limit=max(1, min(limit, 50)))})
+        try:
+            offset = int(request.query_params.get("offset") or 0)
+        except ValueError:
+            offset = 0
+        limit = max(1, min(limit, 50))
+        offset = max(0, min(offset, 10_000))
+        # Fetch one extra row to answer `has_more` without a second count query; the extra row is
+        # never returned. A client can then stop cleanly instead of asking for one empty page.
+        rows = await api.list_public(pool, q=q, limit=limit + 1, offset=offset)
+        ways = rows[:limit]
+        return _json(request, {"ways": ways, "has_more": len(rows) > limit,
+                               "next_offset": offset + len(ways)})
 
     @server.custom_route("/v1/goals/submissions/{submission_id}", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def submission_get(request: Request) -> Response:

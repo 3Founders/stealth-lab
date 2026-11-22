@@ -4,7 +4,8 @@ import Link from "next/link";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import type { ApiState } from "@/lib/api";
 import { routeGoals, routeWays, type GoalRankResult, type RouteGoal, type RouteTool } from "@/lib/kel-api";
-import { listPublicWays, type PublicWay } from "@/lib/public-ways";
+import LoadMore from "@/components/LoadMore";
+import { usePublicWays } from "@/lib/use-public-ways";
 import { priceLabel } from "@/lib/way-rate";
 import "./route.css";
 
@@ -104,20 +105,8 @@ export default function TaskPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [detailError, setDetailError] = useState("");
   const [fallbackTools, setFallbackTools] = useState<RouteTool[] | null>(null);
-  const [ways, setWays] = useState<PublicWay[]>([]);
-  const [waysState, setWaysState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const publicWays = usePublicWays();
   const controller = useRef<AbortController | undefined>(undefined);
-
-  async function loadWays(term: string) {
-    setWaysState("loading");
-    const result = await listPublicWays(term, 12);
-    if (result.kind === "ok") {
-      setWays(result.data);
-      setWaysState("ok");
-    } else {
-      setWaysState("error");
-    }
-  }
 
   async function load(term: string) {
     const normalized = term.trim();
@@ -130,7 +119,7 @@ export default function TaskPage() {
     setDetails({});
     setDetailError("");
     setFallbackTools(null);
-    void loadWays(normalized);
+    void publicWays.load(normalized);
     // `/v1/goals/rank` is not registered on the server (only mentioned in comments in server.py), so the fast
     // first tier was a 404 on every search — the page reported "the router answered an error" and never found a
     // Goal. `/v1/goals/route` IS registered (app/mcp_server/room_agent_routes.py) and returns the same `goals`
@@ -177,7 +166,7 @@ export default function TaskPage() {
       setQuery(q);
       void load(q);
     } else {
-      void loadWays("");
+      void publicWays.load("");
     }
   }, []);
   useEffect(() => () => controller.current?.abort(), []);
@@ -218,18 +207,18 @@ export default function TaskPage() {
         <section aria-labelledby="h-ways" style={{ marginTop: 32 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}>
             <h2 id="h-ways" className="h2" style={{ margin: 0 }}>Ways</h2>
-            <span className="caption">{waysState === "loading" ? "searching…" : ways.length ? `${ways.length} shown` : ""}</span>
+            <span className="caption">{publicWays.state === "loading" ? "searching…" : publicWays.ways.length ? `${publicWays.ways.length} shown` : ""}</span>
           </div>
-          {waysState === "loading" && <p className="route-note" role="status">Searching the published Ways…</p>}
-          {waysState === "error" && <p className="route-note">The catalogue could not be reached.</p>}
-          {waysState === "ok" && ways.length === 0 && (
+          {publicWays.state === "loading" && <p className="route-note" role="status">Searching the published Ways…</p>}
+          {publicWays.state === "error" && <p className="route-note">The catalogue could not be reached.</p>}
+          {publicWays.state === "ok" && publicWays.ways.length === 0 && (
             <p className="route-note">
               No published Way matches {asked ? `“${asked}”` : "that"} yet. The Goal tier below may still help.
             </p>
           )}
-          {ways.length > 0 && (
+          {publicWays.ways.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16, marginTop: 16 }}>
-              {ways.map((way) => {
+              {publicWays.ways.map((way) => {
                 const price = way.price_paise && way.price_paise > 0 ? priceLabel(way.price_paise, way.price_currency) : null;
                 return (
                   <Link
@@ -254,6 +243,9 @@ export default function TaskPage() {
                 );
               })}
             </div>
+          )}
+          {publicWays.state === "ok" && (
+            <LoadMore hasMore={publicWays.hasMore} busy={publicWays.loadingMore} onMore={publicWays.more} />
           )}
         </section>
 

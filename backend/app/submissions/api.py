@@ -247,9 +247,9 @@ async def mine(pool: Any, owner_id: str) -> list[dict]:
     return await store.list_for_owner(pool, owner_id)
 
 
-async def list_public(pool: Any, *, q: str = "", limit: int = 12) -> list[dict]:
+async def list_public(pool: Any, *, q: str = "", limit: int = 12, offset: int = 0) -> list[dict]:
     """The published-Ways catalogue: the same projection as one Way page, without per-caller licence state."""
-    rows = await public_catalog.list_public(pool, q=q, limit=limit)
+    rows = await public_catalog.list_public(pool, q=q, limit=limit, offset=offset)
     out: list[dict] = []
     for row in rows:
         row = dict(row)

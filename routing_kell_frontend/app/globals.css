@@ -998,3 +998,11 @@ main section > .install + p { margin-top: 14px; }
   .hero-install { max-width: 52em; width: 100%; }
 }
 
+
+/* Infinite catalogue: the sentinel sits after the grid, so the next page is requested just before
+   the reader reaches the bottom; the button is the same action for keyboard users and browsers
+   without IntersectionObserver. */
+.load-more { display: flex; justify-content: center; padding: 28px 0 8px; }
+.load-more button { border: 1px solid var(--rule-strong); border-radius: 999px; padding: 9px 20px; font: inherit; font-size: 15px; background: transparent; color: var(--ink); cursor: pointer; }
+.load-more button:disabled { opacity: .6; cursor: progress; }
+.load-more button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }

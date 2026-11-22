@@ -16,7 +16,7 @@ def _plain(row: dict) -> dict:
     return row
 
 
-async def list_public(pool: Any, *, q: str = "", limit: int = 12) -> list[dict]:
+async def list_public(pool: Any, *, q: str = "", limit: int = 12, offset: int = 0) -> list[dict]:
     term = (q or "").strip()
     rows = await pool.fetch(
         """SELECT g.id::text AS id, g.goal_name, g.description, g.mode, g.status, g.created_at,
@@ -29,5 +29,6 @@ async def list_public(pool: Any, *, q: str = "", limit: int = 12) -> list[dict]:
            WHERE g.status IN ('approved', 'ai_approved')
              AND ($1 = '' OR g.goal_name ILIKE '%' || $1 || '%' OR g.description ILIKE '%' || $1 || '%')
            GROUP BY g.id, p.price_paise, p.price_currency
-           ORDER BY g.created_at DESC LIMIT $2""", term, int(limit))
+           ORDER BY g.created_at DESC, g.id DESC LIMIT $2 OFFSET $3""",
+        term, int(limit), max(0, int(offset)))
     return [_plain(dict(r)) for r in rows]

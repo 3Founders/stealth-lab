@@ -2,7 +2,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { listPublicWays, type PublicWay } from "@/lib/public-ways";
+import LoadMore from "@/components/LoadMore";
+import { usePublicWays } from "@/lib/use-public-ways";
 import { priceLabel } from "@/lib/way-rate";
 import "./route/route.css";
 
@@ -17,18 +18,11 @@ const EXAMPLES = [
 export default function Home() {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [ways, setWays] = useState<PublicWay[]>([]);
-  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+  const { ways, state, hasMore, loadingMore, load, more } = usePublicWays();
 
   useEffect(() => {
-    let live = true;
-    listPublicWays("", 12).then((result) => {
-      if (!live) return;
-      if (result.kind === "ok") { setWays(result.data); setState("ok"); }
-      else setState("error");
-    });
-    return () => { live = false; };
-  }, []);
+    void load("");
+  }, [load]);
 
   function go(term: string) {
     const q = term.trim();
@@ -73,7 +67,7 @@ export default function Home() {
           <Link href="/task" className="small" style={{ textDecoration: "underline" }}>Browse all tasks →</Link>
         </div>
 
-        {state === "loading" && <p className="small dim" role="status">Loading the catalogue…</p>}
+        {(state === "idle" || state === "loading") && <p className="small dim" role="status">Loading the catalogue…</p>}
         {state === "error" && (
           <p className="small dim">The catalogue could not be reached. <Link href="/task" style={{ textDecoration: "underline" }}>Try the task page</Link>.</p>
         )}
@@ -108,6 +102,8 @@ export default function Home() {
             })}
           </div>
         )}
+
+        {state === "ok" && <LoadMore hasMore={hasMore} busy={loadingMore} onMore={more} />}
 
         <div className="close-links close-links-2" style={{ marginTop: 40 }}>
           <Link href="/home">How kell works <span>→</span></Link>

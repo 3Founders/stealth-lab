@@ -133,3 +133,17 @@
   .kwm { padding-top: 92px; padding-bottom: 64px; }
   .kwm-evidence { padding: 16px; }
 }
+
+/* 2c. No sample output — the Way as a short text post. Same information a social post carries:
+   who it is, what it does, what it costs; no invented thumbnail. */
+.kwm-post-card { display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: start; }
+.kwm-post-avatar { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--soft); border: 1px solid var(--rule); font-size: 15px; font-weight: 500; color: var(--ink); letter-spacing: .02em; }
+.kwm-post-body { display: grid; gap: 6px; min-width: 0; }
+.kwm-post-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.kwm-post-head b { font-size: 17px; font-weight: 500; }
+.kwm-post-text { font-size: 16.5px; line-height: 1.6; color: var(--text-2); max-width: 46em; }
+.kwm-post-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; color: var(--grey); }
+
+/* A related Way with no thumbnail reads as text with an avatar, not a two-letter tile. */
+.kwm-rail-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--soft); border: 1px solid var(--rule); font-size: 13px; font-weight: 500; color: var(--ink); }
+.kwm-rail-link[data-text="true"] { grid-template-columns: 36px 1fr; }
