@@ -234,7 +234,7 @@ async def create_payment_link(*, amount_paise: int, description: str, reference_
         "reminder_enable": False,
         "notes": {str(k): str(v) for k, v in (notes or {}).items()},
     }
-    async with http_client(timeout=30.0) as client:
+    async with http_client(timeout=20.0) as client:
         r = await client.post(RAZORPAY_LINKS, auth=(key, secret), json=body)
     if r.status_code >= 300:
         log.warning("razorpay refused a payment link: %s %s", r.status_code, r.text[:300])
@@ -250,7 +250,7 @@ async def fetch_payment_link(payment_link_id: str) -> Optional[dict[str, Any]]:
     from app.providers.adapters import http_client
 
     key, secret = _auth()
-    async with http_client(timeout=15.0) as client:
+    async with http_client(timeout=6.0) as client:
         r = await client.get(f"{RAZORPAY_LINKS}/{payment_link_id}", auth=(key, secret))
     if r.status_code == 404:
         return None
@@ -283,7 +283,7 @@ async def create_purchase(pool: Any, *, procedure_row_id: str, buyer_user_id: st
     currency = row["price_currency"] or "INR"
 
     active = await pool.fetchrow(
-        "SELECT id::text AS id, status, payment_link_id, amount_paise, procedure_version "
+        "SELECT id::text AS id, status, payment_link_id, checkout_url, amount_paise, procedure_version "
         "FROM procedure_purchases WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid "
         "AND status IN ('pending', 'paid') AND consumed_at IS NULL "
         "ORDER BY created_at DESC LIMIT 1", row["id"], buyer)
@@ -295,10 +295,19 @@ async def create_purchase(pool: Any, *, procedure_row_id: str, buyer_user_id: st
                     "price_paise": int(active["amount_paise"] or price), "currency": currency,
                     "version": int(active["procedure_version"] or row["version"])}
         purchase_id = active["id"]
+        if active.get("checkout_url"):
+            # The link already exists: hand it back without asking the gateway again. This is what
+            # makes a pre-warmed checkout feel instant.
+            return {"checkout_url": active["checkout_url"], "purchase_id": active["id"],
+                    "purchase_status": "pending", "price_paise": int(price),
+                    "currency": currency, "version": int(row["version"])}
         if active.get("payment_link_id"):
             link = await fetch_payment_link(str(active["payment_link_id"]))
             if link is not None:
                 if link.get("status") in ("created", "partially_paid") and link.get("short_url"):
+                    await pool.execute(
+                        "UPDATE procedure_purchases SET checkout_url = $2 WHERE id = $1::uuid",
+                        active["id"], link["short_url"])
                     return {"checkout_url": link["short_url"], "purchase_id": active["id"],
                             "purchase_status": "pending", "price_paise": int(price),
                             "currency": currency, "version": int(row["version"])}
@@ -325,7 +334,7 @@ async def create_purchase(pool: Any, *, procedure_row_id: str, buyer_user_id: st
         except asyncpg.UniqueViolationError:
             # Another request opened the active purchase between the read and the insert.
             active = await pool.fetchrow(
-                "SELECT id::text AS id, status, payment_link_id, amount_paise, procedure_version "
+                "SELECT id::text AS id, status, payment_link_id, checkout_url, amount_paise, procedure_version "
                 "FROM procedure_purchases WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid "
                 "AND status IN ('pending', 'paid') AND consumed_at IS NULL "
                 "ORDER BY created_at DESC LIMIT 1", row["id"], buyer)
@@ -341,8 +350,9 @@ async def create_purchase(pool: Any, *, procedure_row_id: str, buyer_user_id: st
         reference_id=purchase_id, callback_url=callback,
         notes={"purchase_id": purchase_id, "procedure_row_id": row["id"], "buyer_user_id": buyer})
     await pool.execute(
-        "UPDATE procedure_purchases SET payment_link_id = $2, order_id = $3 WHERE id = $1::uuid",
-        purchase_id, str(link["id"]), (str(link["order_id"]) if link.get("order_id") else None))
+        "UPDATE procedure_purchases SET payment_link_id = $2, order_id = $3, checkout_url = $4 WHERE id = $1::uuid",
+        purchase_id, str(link["id"]), (str(link["order_id"]) if link.get("order_id") else None),
+        str(link["short_url"]))
     return {"checkout_url": link["short_url"], "purchase_id": purchase_id, "purchase_status": "pending",
             "price_paise": int(price), "currency": currency, "version": int(row["version"])}
 

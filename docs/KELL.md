@@ -317,16 +317,17 @@ carries versioning, the Goal and verification together.
 | npm / deps.dev | ✅ | ❌ | ❌ |
 | Papers with Code / LMArena | ❌ | partial | ✅ |
 
-**Eight sections, in the order a sceptical buyer asks:**
+**The sections, in the order a sceptical buyer asks:**
 
-1. Identity — name, version, **the Goal inline**, publisher
-2. **Evidence panel — above the description** (a reader who doesn't believe it works shouldn't read how)
-3. What it does, and when it applies
-4. The decomposition — graph with **versions on the nodes**
-5. Version history — with a `**Breaking:**` marker that says what breaks
-6. Composition and dependents
-7. Provenance — and **how to re-run it yourself**
-8. Sideways navigation
+1. Identity — name, version
+2. **Output** — when a sample exists (a reader who doesn't believe it works shouldn't read how)
+3. **Price — one output** (present only when the Way is not free)
+4. What it does
+5. The decomposition — graph with **versions on the nodes**
+6. Version history — with a `**Breaking:**` marker that says what breaks
+7. Provenance — the **stored record**, on kell's domain, with a fingerprint of the page's copy
+8. Reviews — one person's verdict, kept **apart from the evidence** (a rating never moves a success rate)
+9. Sideways navigation, and a right-hand rail of related Ways
 
 Four rules the research insists on:
 
@@ -336,12 +337,15 @@ Four rules the research insists on:
   common failure mode"*.
 - **Borrow GRADE's wording ladder** — "results in" only at high certainty; otherwise "likely",
   "may", "the evidence is uncertain".
-- **A badge is worthless unless checkable.** npm provenance is the model; ours ends with
-  `kell way run <id>@<version> --benchmark …`.
+- **A badge is worthless unless checkable.** npm provenance is the model: the record is served on
+  kell's own domain and the page shows a fingerprint of the bytes it rendered. The fingerprint is a
+  consistency check, not a signature, and the copy says so.
 
-**Discussion without worthless debate**: no comment box. Three doors — *ran it* (one click →
-evidence row), *report* (exists), *propose an improvement* (anchor + evidence + what would
-change → a new version). The improvement path already exists in the economy
+**Discussion that is opinion, not evidence**: reviews are a separate table and a separate section.
+A 1-5 rating never feeds a capability number, an applicability decision or a ranking — those come
+from recorded runs. One review per person per Way; posting again edits it. The three doors remain —
+*ran it* (one click → evidence row), *report* (exists), *propose an improvement* (anchor + evidence
++ what would change → a new version). The improvement path already exists in the economy
 (`submission_type='improvement'`) and `IMPROVEMENT_REWARD` (20) is already **double**
 `NEW_PROCEDURE_REWARD` (10).
 

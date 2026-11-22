@@ -26,9 +26,10 @@ export default function BackButton({ inline = false }: { inline?: boolean } = {}
     setOwnHistory(true);
   }, [pathname]);
 
-  // No back control on the homepage, and none on the full-screen Chat (it has its own way home).
+  // No back control on the homepage, on the full-screen Chat (it has its own way home), or on a Way page
+  // (a sales page: the header already carries the way back, and a floating control competed with the title).
   // `inline` is the copy the full-screen Chat shows inside its own sidebar, where the floating one would sit on top of the chat.
-  if (pathname === "/" || (!inline && pathname.startsWith("/chat"))) return null;
+  if (pathname === "/" || (!inline && (pathname.startsWith("/chat") || pathname.startsWith("/way")))) return null;
 
   const onClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     if (!ownHistory || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;

@@ -52,16 +52,45 @@
 .kwm-output-fallback { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 13px; letter-spacing: .1em; color: var(--grey); }
 .kwm-output-meta { display: grid; gap: 8px; }
 
-/* 9. More like this — the thumbnail rail at the foot of the page. Fixed-ratio tiles so a missing picture still
-   leaves a tidy grid rather than a ragged one. */
-.kwm-similar-rail { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
-.kwm-similar-tile { display: grid; gap: 6px; align-content: start; }
-.kwm-similar-link { text-decoration: none; color: var(--ink); display: grid; gap: 6px; }
-.kwm-similar-thumb { display: block; width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--surface); }
-.kwm-similar-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.kwm-similar-blabel { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 22px; font-weight: 500; color: var(--grey); letter-spacing: .04em; }
-.kwm-similar-title { font-size: 15px; font-weight: 500; line-height: 1.35; }
-.kwm-similar-link:hover .kwm-similar-title { text-decoration: underline; text-underline-offset: 3px; }
+/* Layout: the reading column plus the related rail, like a video site's right-hand column. The rail
+   drops below the page on a narrow screen rather than squeezing the text. */
+.kwm-cols { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: clamp(24px, 3vw, 44px); align-items: start; }
+.kwm-main { display: grid; gap: 20px; min-width: 0; }
+.kwm-rail { display: grid; gap: 18px; position: sticky; top: 96px; align-content: start; }
+.kwm-rail-card { max-width: none; }
+.kwm-rail-list { list-style: none; display: grid; gap: 12px; }
+.kwm-rail-link { display: grid; grid-template-columns: 96px 1fr; gap: 10px; text-decoration: none; color: var(--ink); align-items: start; }
+.kwm-rail-thumb { display: block; width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.kwm-rail-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kwm-rail-blabel { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 18px; font-weight: 500; color: var(--grey); letter-spacing: .04em; }
+.kwm-rail-body { display: grid; gap: 3px; min-width: 0; }
+.kwm-rail-body b { font-size: 14px; font-weight: 500; line-height: 1.3; }
+.kwm-rail-link:hover b { text-decoration: underline; text-underline-offset: 3px; }
+.kwm-rail-out a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-size: 15px; }
+
+/* 6. Provenance facts ------------------------------------------------------- */
+.kwm-facts { display: grid; gap: 8px; }
+.kwm-facts > div { display: grid; grid-template-columns: 150px 1fr; gap: 12px; align-items: baseline; }
+.kwm-facts dt { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
+.kwm-facts dd { margin: 0; }
+
+/* 7. Reviews ---------------------------------------------------------------- */
+.kwm-stars { color: var(--ink); letter-spacing: .06em; }
+.kwm-review-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.kwm-review-list { list-style: none; display: grid; gap: 14px; }
+.kwm-review { border-top: 1px solid var(--rule); padding-top: 12px; display: grid; gap: 6px; }
+.kwm-review-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.kwm-review-form { display: grid; gap: 8px; border-top: 1px solid var(--rule); padding-top: 14px; }
+.kwm-rating { border: 0; margin: 0; padding: 0; display: grid; gap: 4px; }
+.kwm-rating-row { display: flex; gap: 4px; }
+.kwm-star { background: none; border: 1px solid var(--rule); border-radius: 6px; width: 38px; height: 38px; font-size: 18px; line-height: 1; cursor: pointer; color: var(--grey); }
+.kwm-star[aria-pressed="true"] { background: var(--yellow); border-color: var(--yellow); color: #171717; }
+.kwm-review-form textarea { font: inherit; font-size: 15px; line-height: 1.55; padding: 10px 12px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); color: var(--ink); width: 100%; max-width: 46em; resize: vertical; }
+
+@media (max-width: 980px) {
+  .kwm-cols { grid-template-columns: 1fr; }
+  .kwm-rail { position: static; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+}
 
 /* 4. Decomposition ---------------------------------------------------------- */
 .kwm-steps { list-style: none; display: grid; gap: 0; margin-top: 4px; }

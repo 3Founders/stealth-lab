@@ -162,6 +162,35 @@ async def test_a_used_purchase_does_not_block_buying_another_output(monkeypatch)
     assert out["purchase_status"] == "pending"
 
 
+@pytest.mark.asyncio
+async def test_a_prewarmed_checkout_is_returned_without_calling_the_gateway(monkeypatch):
+    # The page creates the link on hover; the click must not wait on Razorpay a second time.
+    pool = pool_for(price_row=procedure(),
+                    active={"id": PURCHASE, "status": "pending", "payment_link_id": "plink_1",
+                            "checkout_url": "https://rzp.io/i/warm", "amount_paise": 15000,
+                            "procedure_version": 3})
+    create = AsyncMock()
+    fetch = AsyncMock()
+    monkeypatch.setattr(pb, "create_payment_link", create)
+    monkeypatch.setattr(pb, "fetch_payment_link", fetch)
+    out = await pb.create_purchase(pool, procedure_row_id=ROW, buyer_user_id=BUYER)
+    assert out["checkout_url"] == "https://rzp.io/i/warm"
+    assert out["purchase_status"] == "pending"
+    create.assert_not_called()
+    fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_new_link_is_remembered_on_the_purchase(monkeypatch):
+    pool = pool_for(price_row=procedure(), active=None, inserted=PURCHASE)
+    monkeypatch.setattr(pb, "create_payment_link",
+                        AsyncMock(return_value={"id": "plink_3", "short_url": "https://rzp.io/i/ghi"}))
+    await pb.create_purchase(pool, procedure_row_id=ROW, buyer_user_id=BUYER)
+    update = pool.execute.await_args.args
+    assert "checkout_url = $4" in update[0]
+    assert update[4] == "https://rzp.io/i/ghi"
+
+
 # ------------------------------------------------------------------ bind / consume / refund
 
 @pytest.mark.asyncio

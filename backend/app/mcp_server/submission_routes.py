@@ -6,6 +6,8 @@
     POST /v1/goals/submissions                  {goal, description, steps}  -> stored and reviewed, step by step
     GET  /v1/goals/submissions                  -> the caller's submissions
     GET  /v1/goals/submissions/{id}             -> one, with each step's state and the reason for a rejection
+    GET  /v1/goals/submissions/{id}/reviews     -> public: ratings and comments, newest first
+    POST /v1/goals/submissions/{id}/reviews     {rating, body}  -> your review (edits your earlier one)
     POST /v1/goals/submissions/{id}/steps/{n}   {kind, description | prompt, locator}  -> fix step n, reviewed again
     POST /v1/goals/submissions/{id}/steps       {steps: [{order, ...}]}  -> fix several steps, reviewed together
     POST /v1/goals/submissions/{id}/rewrite     {instruction}  -> kell's rewrite of the steps, a proposal (nothing stored)
@@ -128,6 +130,47 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
         if found is None:
             return _error(request, "no such Way", 404)
         return _json(request, found)
+
+    @server.custom_route("/v1/goals/submissions/{submission_id}/reviews", methods=["GET", "POST", "OPTIONS"],
+                         include_in_schema=False)
+    async def submission_reviews(request: Request) -> Response:
+        """Reviews on a Way. GET is public (a buyer reads them before paying); POST needs a person.
+
+        Opinion lives here and measurement lives in the evidence panel: a rating never changes a
+        success rate, and this endpoint never returns one.
+        """
+        from app.services import way_reviews
+
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        submission_id = request.path_params["submission_id"]
+        if request.method == "GET":
+            try:
+                limit = int(request.query_params.get("limit") or 50)
+            except ValueError:
+                limit = 50
+            try:
+                return _json(request, await way_reviews.list_for(pool, submission_id, limit=limit))
+            except ValueError:
+                return _error(request, "no such Way", 404)
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        body = await _body(request)
+        try:
+            review = await way_reviews.upsert(
+                pool, submission_id=submission_id, author_user_id=subject,
+                rating=body.get("rating"), body=body.get("body"),
+                procedure_row_id=(str(body.get("procedure_row_id")) if body.get("procedure_row_id") else None),
+                source="website")
+        except LookupError:
+            return _error(request, "no such Way", 404)
+        except way_reviews.ReviewError as exc:
+            return _error(request, str(exc), 400)
+        return _json(request, {"review": review}, 201)
 
     @server.custom_route("/v1/goals/submissions/{submission_id}/steps/{order:int}", methods=["POST", "DELETE", "OPTIONS"],
                          include_in_schema=False)
