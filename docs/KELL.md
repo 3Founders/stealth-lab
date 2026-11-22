@@ -325,9 +325,10 @@ carries versioning, the Goal and verification together.
 4. What it does
 5. The decomposition — graph with **versions on the nodes**
 6. Version history — with a `**Breaking:**` marker that says what breaks
-7. Provenance — the **stored record**, on kell's domain, with a fingerprint of the page's copy
-8. Reviews — one person's verdict, kept **apart from the evidence** (a rating never moves a success rate)
-9. Sideways navigation, and a right-hand rail of related Ways
+7. Run this — the declared inputs, then one question at a time
+8. Provenance — a heading kept for later; nothing is claimed here today
+9. Reviews — one person's verdict, kept **apart from the evidence** (a rating never moves a success rate)
+10. Sideways navigation, and a right-hand rail of related Ways
 
 Four rules the research insists on:
 
@@ -337,9 +338,8 @@ Four rules the research insists on:
   common failure mode"*.
 - **Borrow GRADE's wording ladder** — "results in" only at high certainty; otherwise "likely",
   "may", "the evidence is uncertain".
-- **A badge is worthless unless checkable.** npm provenance is the model: the record is served on
-  kell's own domain and the page shows a fingerprint of the bytes it rendered. The fingerprint is a
-  consistency check, not a signature, and the copy says so.
+- **A badge is worthless unless checkable.** npm provenance is the model; the page does not claim
+  provenance it cannot show, and the Provenance section stays empty until it can.
 
 **Discussion that is opinion, not evidence**: reviews are a separate table and a separate section.
 A 1-5 rating never feeds a capability number, an applicability decision or a ranking — those come

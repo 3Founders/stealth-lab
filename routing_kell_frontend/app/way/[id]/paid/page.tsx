@@ -68,7 +68,7 @@ export default function PaidPage() {
   }, [id]);
 
   const wayHref = `/way/${encodeURIComponent(id)}`;
-  const runHref = `${wayHref}#kwm-prov-h`;
+  const runHref = `${wayHref}#kwm-run-h`;
   const signInHref = `/sign-in?redirect=${encodeURIComponent(`/way/${id}/paid`)}`;
 
   return (

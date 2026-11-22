@@ -67,11 +67,7 @@
 .kwm-rail-link:hover b { text-decoration: underline; text-underline-offset: 3px; }
 .kwm-rail-out a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-size: 15px; }
 
-/* 6. Provenance facts ------------------------------------------------------- */
-.kwm-facts { display: grid; gap: 8px; }
-.kwm-facts > div { display: grid; grid-template-columns: 150px 1fr; gap: 12px; align-items: baseline; }
-.kwm-facts dt { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
-.kwm-facts dd { margin: 0; }
+/* 6. Run this --------------------------------------------------------------- */
 
 /* 7. Reviews ---------------------------------------------------------------- */
 .kwm-stars { color: var(--ink); letter-spacing: .06em; }

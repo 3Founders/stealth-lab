@@ -347,27 +347,8 @@ export function WayCard({ way }: { way: Submission }) {
   // reload as if the purchase had happened.
   const [buying, setBuying] = useState(false);
   const [buyError, setBuyError] = useState<string | null>(null);
-  const [fingerprint, setFingerprint] = useState<string | null>(null);
   const price = priceLabel(way.price_paise, way.price_currency ?? "INR");
   const output = way.output ?? null;
-
-  // A fingerprint of exactly the record this page rendered. It is a check that two readers saw the
-  // same bytes, NOT a signature: kell does not claim it proves who wrote the Way. The hash is only
-  // shown when the browser can compute it (a secure context), because a made-up value would be worse
-  // than no value on a page about evidence.
-  useEffect(() => {
-    let live = true;
-    (async () => {
-      try {
-        if (!globalThis.crypto?.subtle) return;
-        const bytes = new TextEncoder().encode(JSON.stringify(way));
-        const digest = await crypto.subtle.digest("SHA-256", bytes);
-        const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
-        if (live) setFingerprint(hex.slice(0, 16));
-      } catch { /* no fingerprint rather than a false one */ }
-    })();
-    return () => { live = false; };
-  }, [way]);
 
   // The hosted checkout is created ahead of the click: a Razorpay link takes about five seconds to
   // make, so hover/focus starts the request and the click only redirects. One in-flight promise is
@@ -592,66 +573,36 @@ export function WayCard({ way }: { way: Submission }) {
             </p>
           </section>
 
-          {/* 6. Provenance. Not a curl against the connector: a reader checking the page should stay on
-              kell, so the record is served from this site and its fingerprint is shown. The fingerprint is
-              a consistency check, not a signature, and the copy says so. */}
-          <section className="kwm-card" aria-labelledby="kwm-prov-h">
-            <h2 id="kwm-prov-h">Provenance</h2>
-            <p>
-              Everything above — the steps, their review state and the price — is rendered from one stored
-              record. This page cannot show a step the record does not hold.
-            </p>
-            <dl className="kwm-facts">
-              <div>
-                <dt>Stored record</dt>
-                <dd>
-                  <Link href={`/way/${encodeURIComponent(way.id)}/record`}>View the record kell holds</Link>
-                </dd>
-              </div>
-              {fingerprint && (
-                <div>
-                  <dt>Fingerprint</dt>
-                  <dd>
-                    <span className="kwm-mono">{fingerprint}</span>{" "}
-                    <span className="kwm-small kwm-muted">SHA-256 of the record shown here</span>
-                  </dd>
-                </div>
-              )}
-              <div>
-                <dt>Review state</dt>
-                <dd>{status.label}</dd>
-              </div>
-            </dl>
-            <p className="kwm-small kwm-muted">
-              The fingerprint lets two readers check they saw the same bytes. It is not a signature, and
-              kell does not claim it proves who wrote the Way.
-            </p>
-            {runnable ? (
-              needsPurchase ? (
-                // A published, priced Way that the reader has not bought. Saying "Run this Way" here would
-                // promise a run the backend must refuse; the honest action is to point at the price.
+          {/* 6. Run this — the inputs the Way declares, then the questions a step asks mid-run
+              (docs/procedure_billing.md §7.1, app/submissions/way_inputs.py). Above provenance,
+              because running is what the buyer came for. Optional inputs are optional: a Way with
+              none starts with one press. */}
+          {runnable && (
+            <section className="kwm-card" aria-labelledby="kwm-run-h">
+              <h2 id="kwm-run-h">Run this</h2>
+              {needsPurchase ? (
+                // A published, priced Way that the reader has not bought. Saying "Run this Way" here
+                // would promise a run the backend must refuse; the honest action is the price.
                 <p>
                   <a className="kwm-cta" href="#kwm-price-h">
                     {price ? `Buy for ${price} to run this` : "Buy this to run it"}
                   </a>
                 </p>
               ) : (
-                // The run itself: inputs the Way declares, then the questions a step asks mid-run
-                // (docs/procedure_billing.md §7.1, app/submissions/way_inputs.py). Optional inputs are optional:
-                // a Way with none starts with one press.
                 <WayRun way={way} />
-              )
-            ) : (
-              <p className="kwm-muted">
-                This Way is {status.label.toLowerCase()}, so it does not run yet.
-              </p>
-            )}
+              )}
+            </section>
+          )}
+
+          {/* 7. Provenance — kept as a heading only. */}
+          <section className="kwm-card" aria-labelledby="kwm-prov-h">
+            <h2 id="kwm-prov-h">Provenance</h2>
           </section>
 
-          {/* 7. Reviews. Opinion, kept apart from the evidence: a rating never changes a success rate. */}
+          {/* 8. Reviews. Opinion, kept apart from the evidence: a rating never changes a success rate. */}
           <Reviews submissionId={way.id} />
 
-          {/* 8. Sideways navigation — the two doors that are not a comment box. */}
+          {/* 9. Sideways navigation — the two doors that are not a comment box. */}
           <footer className="kwm-next">
             <Link href="/submit">Browse Ways</Link>
             <Link href={`/submit?parent=${encodeURIComponent(way.id)}`}>Propose an improvement</Link>
