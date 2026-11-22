@@ -21,7 +21,7 @@
  * Data comes from the hosted submissions API (backend/app/mcp_server/submission_routes.py), the same object
  * the desktop and the rooms show. Nothing here invents a field: a section with no backing data says so.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { getAccessToken } from "@/lib/session";
 import { MCP_ORIGIN } from "@/lib/connector";
@@ -147,7 +147,7 @@ function Rate({ successes, total }: { successes: number | null; total: number | 
  *  - It does not claim the purchase is complete until the gateway confirms. While the request is in flight the
  *    button says so; a failure states that nothing was charged, because that is true.
  */
-function PriceBlock({ way, price, onBuy, onWarm, busy, error }: {
+function PriceBlock({ way, price, onBuy, onWarm, busy, error, run }: {
   way: Submission;
   price: string;
   onBuy: () => void;
@@ -155,19 +155,20 @@ function PriceBlock({ way, price, onBuy, onWarm, busy, error }: {
   onWarm: () => void;
   busy: boolean;
   error: string | null;
+  /** The run panel, once this person has paid. The purchased section IS the run section. */
+  run?: ReactNode;
 }) {
   const purchased = way.purchase_status === "paid" || way.licence_status === "purchased";
   const used = way.purchase_status === "used";
   const refunded = way.purchase_status === "refunded" || way.licence_status === "refunded";
 
   return (
-    <section className="kwm-card kwm-price" aria-labelledby="kwm-price-h">
-      <h2 id="kwm-price-h">{purchased ? "Purchased" : used ? "Output delivered" : "Buy one output"}</h2>
+    <section className="kwm-card kwm-price" aria-labelledby={purchased ? "kwm-run-h" : "kwm-price-h"}>
+      <h2 id={purchased ? "kwm-run-h" : "kwm-price-h"}>
+        {purchased ? "Run this" : used ? "Output delivered" : "Buy one output"}
+      </h2>
       {purchased ? (
-        <p>
-          You paid for <b>one run</b> of this version. Start it in kell desktop; the output is yours. This is
-          not a subscription, and a later revision is a separate purchase.
-        </p>
+        run ?? null
       ) : (
         <>
           <p className="kwm-price-figure">
@@ -503,7 +504,15 @@ export function WayCard({ way }: { way: Submission }) {
               block at all. It sits after Output because the price is only meaningful once the reader
               knows what it produces. */}
           {price && (
-            <PriceBlock way={way} price={price} onBuy={buy} onWarm={prewarm} busy={buying} error={buyError} />
+            <PriceBlock
+              way={way}
+              price={price}
+              onBuy={buy}
+              onWarm={prewarm}
+              busy={buying}
+              error={buyError}
+              run={runnable && !needsPurchase ? <WayRun way={way} /> : null}
+            />
           )}
 
           {/* 3. Description - what this Way does, in the author's words. */}
@@ -573,24 +582,12 @@ export function WayCard({ way }: { way: Submission }) {
             </p>
           </section>
 
-          {/* 6. Run this — the inputs the Way declares, then the questions a step asks mid-run
-              (docs/procedure_billing.md §7.1, app/submissions/way_inputs.py). Above provenance,
-              because running is what the buyer came for. Optional inputs are optional: a Way with
-              none starts with one press. */}
-          {runnable && (
+          {/* 6. A free Way still needs a place to run: when there is a price, the purchased section is
+              the run section. Declared inputs, then one question at a time. */}
+          {!price && runnable && (
             <section className="kwm-card" aria-labelledby="kwm-run-h">
               <h2 id="kwm-run-h">Run this</h2>
-              {needsPurchase ? (
-                // A published, priced Way that the reader has not bought. Saying "Run this Way" here
-                // would promise a run the backend must refuse; the honest action is the price.
-                <p>
-                  <a className="kwm-cta" href="#kwm-price-h">
-                    {price ? `Buy for ${price} to run this` : "Buy this to run it"}
-                  </a>
-                </p>
-              ) : (
-                <WayRun way={way} />
-              )}
+              <WayRun way={way} />
             </section>
           )}
 
@@ -614,7 +611,7 @@ export function WayCard({ way }: { way: Submission }) {
 
         {/* The right rail: related Ways first, then honest links out. On a narrow screen it drops below
             the page rather than squeezing the reading column. */}
-        <WayRail items={way.similar ?? []} goal={way.goal_name} />
+        <WayRail items={way.similar ?? []} />
       </div>
 
       {way.message && <p className="kwm-small kwm-muted">Note from kell: {way.message}</p>}
@@ -622,63 +619,41 @@ export function WayCard({ way }: { way: Submission }) {
   );
 }
 
-/** The right rail: related Ways (the column a video site puts beside the thing you are watching), then
- *  honest links out of kell. The outbound links are search links, not endorsements, and the copy says so. */
-function WayRail({ items, goal }: { items: WaySibling[]; goal: string }) {
-  const q = encodeURIComponent((goal || "").slice(0, 80));
+/** The right rail: related Ways, the column a video site puts beside the thing you are watching. */
+function WayRail({ items }: { items: WaySibling[] }) {
+  if (items.length === 0) return null;
   return (
     <aside className="kwm-rail" aria-label="Related">
-      {items.length > 0 && (
-        <section className="kwm-card kwm-rail-card" aria-labelledby="kwm-similar-h">
-          <h2 id="kwm-similar-h">More like this</h2>
-          <ul className="kwm-rail-list">
-            {items.map((s) => {
-              const p = priceLabel(s.price_paise, s.price_currency ?? "INR");
-              return (
-                <li key={s.id}>
-                  <a
-                    href={`/way/${encodeURIComponent(s.id)}`}
-                    className="kwm-rail-link"
-                    data-text={s.thumb_url ? undefined : "true"}
-                  >
-                    {s.thumb_url && (
-                      <span className="kwm-rail-thumb">
-                        <img src={s.thumb_url} alt="" loading="lazy" width={120} height={68} />
-                      </span>
-                    )}
-                    <span className="kwm-rail-body">
-                      <b>{s.goal_name}</b>
-                      {s.description && <span className="kwm-rail-desc">{s.description}</span>}
-                      <span className="kwm-small kwm-muted">
-                        {p ?? "Free"}
-                        {s.relation ? ` · ${s.relation}` : ""}
-                      </span>
+      <section className="kwm-card kwm-rail-card" aria-labelledby="kwm-similar-h">
+        <h2 id="kwm-similar-h">More like this</h2>
+        <ul className="kwm-rail-list">
+          {items.map((s) => {
+            const p = priceLabel(s.price_paise, s.price_currency ?? "INR");
+            return (
+              <li key={s.id}>
+                <a
+                  href={`/way/${encodeURIComponent(s.id)}`}
+                  className="kwm-rail-link"
+                  data-text={s.thumb_url ? undefined : "true"}
+                >
+                  {s.thumb_url && (
+                    <span className="kwm-rail-thumb">
+                      <img src={s.thumb_url} alt="" loading="lazy" width={120} height={68} />
                     </span>
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
-
-      <section className="kwm-card kwm-rail-card" aria-labelledby="kwm-elsewhere-h">
-        <h2 id="kwm-elsewhere-h">Elsewhere</h2>
-        <ul className="kwm-rail-list kwm-rail-out">
-          <li>
-            <a href={`https://www.youtube.com/results?search_query=${q}`} target="_blank" rel="noopener noreferrer">
-              Videos on YouTube
-            </a>
-          </li>
-          <li>
-            <a href={`https://www.google.com/search?q=${q}`} target="_blank" rel="noopener noreferrer">
-              Guides on the web
-            </a>
-          </li>
+                  )}
+                  <span className="kwm-rail-body">
+                    <b>{s.goal_name}</b>
+                    {s.description && <span className="kwm-rail-desc">{s.description}</span>}
+                    <span className="kwm-small kwm-muted">
+                      {p ?? "Free"}
+                      {s.relation ? ` · ${s.relation}` : ""}
+                    </span>
+                  </span>
+                </a>
+              </li>
+            );
+          })}
         </ul>
-        <p className="kwm-small kwm-muted">
-          Search links, not endorsements: kell has not watched or checked these.
-        </p>
       </section>
     </aside>
   );

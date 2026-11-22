@@ -58,14 +58,13 @@
 .kwm-main { display: grid; gap: 20px; min-width: 0; }
 .kwm-rail { display: grid; gap: 18px; position: sticky; top: 96px; align-content: start; }
 .kwm-rail-card { max-width: none; }
-.kwm-rail-list { list-style: none; display: grid; gap: 12px; }
+.kwm-rail-list { list-style: none; display: grid; gap: 12px; margin: 0; padding: 0; }
 .kwm-rail-link { display: grid; grid-template-columns: 96px 1fr; gap: 10px; text-decoration: none; color: var(--ink); align-items: start; }
 .kwm-rail-thumb { display: block; width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--surface); }
 .kwm-rail-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .kwm-rail-body { display: grid; gap: 3px; min-width: 0; }
 .kwm-rail-body b { font-size: 14px; font-weight: 500; line-height: 1.3; }
 .kwm-rail-link:hover b { text-decoration: underline; text-underline-offset: 3px; }
-.kwm-rail-out a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; font-size: 15px; }
 
 /* 6. Run this --------------------------------------------------------------- */
 
