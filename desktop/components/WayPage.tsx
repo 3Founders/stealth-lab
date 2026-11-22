@@ -15,6 +15,7 @@
 // cost more than it draws — the same judgment ProcedureGraph already records.
 import { useEffect, useState } from "react"
 import SubmitWayPanel from "@/components/SubmitWayPanel"
+import WayRunCanvas from "@/components/WayRunCanvas"
 import { submissionsApi } from "@/lib/submissions-client"
 import "./submitway.css"
 
@@ -212,6 +213,12 @@ export default function WayPage({ id, onBack }: { id: string; onBack?: () => voi
           <li><span className="dkw-chip">{version || "current"}</span><span>{status.label}</span></li>
         </ul>
         <p className="dkw-small dkw-muted">A change that breaks a consumer of this Way is marked <b>Breaking</b> and says what breaks.</p>
+      </section>
+
+      {/* 6a. Run it here: the same five kinds of message the website allows, as a canvas (components/WayRunCanvas). */}
+      <section className="dkw-card">
+        <h2>Run this Way</h2>
+        <WayRunCanvas submissionId={way.id} />
       </section>
 
       {/* 6. Composition and dependents. */}

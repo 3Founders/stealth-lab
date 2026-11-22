@@ -206,6 +206,7 @@ def test_an_explicit_desktop_message_still_reaches_the_desktop_when_the_router_f
     assert hit["session_id"] == "ses_api"
     # a general question is not hijacked by the fallback
     assert run(pool, dr.route(pool, ANUJ, None, "what is 2+2", [], None)) is None
+    assert run(pool, dr.route(pool, ANUJ, None, "explain the desktop build", [], None)) is None
 
 
 def test_http_routes(pool):

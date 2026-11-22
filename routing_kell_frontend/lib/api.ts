@@ -38,6 +38,33 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<Api
 }
 
 /**
+ * Download a file a run produced (docs/procedure_outputs.md) and save it.
+ *
+ * Fetched rather than linked, because the server reads the session from `Authorization` only: a plain `<a download>`
+ * sends no header and would fail as a 401 that the browser reports as a broken download. Throws with a sentence the
+ * page can show — a silent failure here is the buyer being told their paid file does not exist.
+ */
+export async function downloadArtifact(url: string, filename: string): Promise<void> {
+  if (!API_URL) throw new Error("the download endpoint is not configured");
+  const token = await getAccessToken();
+  const target = url.startsWith("http") ? url : `${API_URL}${url}`;
+  const res = await fetch(target, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (res.status === 402) throw new Error("this Way has not been bought on this account");
+  if (res.status === 401) throw new Error("sign in again to download this file");
+  if (!res.ok) throw new Error(`the download failed (${res.status})`);
+  const blob = await res.blob();
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke on the next tick: revoking immediately can cancel the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(href), 10_000);
+}
+
+/**
  * Write a keळ backend `/v1` route as the signed-in session, if any.
  * Requires an access token (see lib/session.ts) — an unauthenticated
  * caller gets `{kind:"unauthenticated"}` WITHOUT the request ever going

@@ -157,6 +157,9 @@ backend/conflict_candidates.json
 # stealth_app database role credentials and URLs (scripts/provision_app_role.py) -- secrets, never commit
 .stealth_app*.env
 
+# local runtime state and credentials (never pushed)
+/.stealth/
+
 
 # outreach prospect data, contact list and send log (local only)
 /outreach/

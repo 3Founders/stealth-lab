@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>kell: one-page memo for startups</title>
+<style>
+  @page { size: A4; margin: 11mm 14mm; }
+  * { box-sizing: border-box; }
+  body { font: 9.1pt/1.32 "Segoe UI", Calibri, Arial, sans-serif; color: #17171c; margin: 0; }
+  .top { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #3b2fc9; padding-bottom: 4px; }
+  .top b { font-size: 9pt; letter-spacing: .12em; text-transform: uppercase; color: #3b2fc9; }
+  .top span { font-size: 8.5pt; color: #666; }
+  h1 { font-size: 15.5pt; line-height: 1.18; margin: 9px 0 3px; letter-spacing: -.01em; }
+  .meta { font-size: 8.6pt; color: #555; margin-bottom: 7px; }
+  .meta b { color: #17171c; }
+  h2 { font-size: 8.6pt; letter-spacing: .1em; text-transform: uppercase; color: #3b2fc9; margin: 6px 0 2px; }
+  p { margin: 0 0 4px; }
+  ul { margin: 2px 0 3px; padding-left: 15px; }
+  li { margin-bottom: 1.5px; }
+  .lead { font-size: 9.6pt; line-height: 1.4; background: #f1effd; border-left: 3px solid #3b2fc9; padding: 6px 9px; margin: 4px 0 2px; }
+  table { border-collapse: collapse; width: 100%; font-size: 8.8pt; margin: 3px 0 3px; }
+  th, td { text-align: left; padding: 2.5px 6px; border-bottom: 1px solid #ddd; }
+  th { background: #f6f6f8; font-weight: 600; }
+  td.n { font-weight: 700; white-space: nowrap; }
+  .cols { display: flex; gap: 14px; } .cols > div { flex: 1; }
+  .small { font-size: 8pt; color: #555; }
+  .foot { margin-top: 7px; border-top: 1px solid #ccc; padding-top: 4px; font-size: 8pt; color: #555; display: flex; justify-content: space-between; }
+</style></head><body>
+
+<div class="top"><b>kell &nbsp;·&nbsp; Memo for startups</b><span>kell.org.in &nbsp;·&nbsp; November 2026</span></div>
+
+<h1>Your agents spend frontier prices on every step. They don't need to, and the choice of tools matters as much as the choice of model.</h1>
+<div class="meta"><b>To:</b> founders and engineering leads building with AI agents &nbsp;·&nbsp; <b>From:</b> Chaitanya Deshkar and Anuj Bhadbhade, kell &nbsp;·&nbsp; <b>Ask:</b> run one real task through kell and compare</div>
+
+<div class="lead"><b>The point.</b> kell is a single sign-in and a single bill in front of many models and tools. It picks the model and the tool for each task from what worked before, remembers the small pieces of context that made earlier runs succeed, and gives cheap models the steps they can do. You keep your own agent (Claude Code, Cursor, our app). We change what it is wired to.</div>
+
+<h2>1. The problem is on the invoice</h2>
+<p>Agent bills scale with usage: <i>“The token bill comes due: inside the industry scramble to manage AI's runaway costs”</i> (TechCrunch, 5 Jun 2026); <i>“AI Costs More Than The People It Replaced”</i> (Forbes, 2 Jul 2026). Startups feel it first: every step goes to the strongest model by default, and every tool is found, installed and configured by hand.</p>
+
+<h2>2. Why the fix is routing, not a better model</h2>
+<p>Because the tool changes the answer. In OpenRouter's independent test of hard web-research questions (Aug 2026, 25 searches per question), the <i>same model</i> scored 7 to 10 points apart with different search tools:</p>
+<table>
+<tr><th>Setup</th><th>Correct</th><th>Cost per question</th></tr>
+<tr><td>Claude Opus 5 + Perplexity search</td><td class="n">89%</td><td>$0.99</td></tr>
+<tr><td>Claude Opus 5 + Exa search</td><td class="n">82%</td><td>$1.29</td></tr>
+<tr><td>DeepSeek V4 Flash (lower cost) + Perplexity search</td><td class="n">77%</td><td>$0.08</td></tr>
+</table>
+<p class="small">Source: OpenRouter, via our deck. One task type, one test. We cite it to show the shape of the trade-off (the cheaper pairing gave up 12 points for about a twelfth of the cost), not as our own result.</p>
+
+<div class="cols">
+<div>
+<h2>3. What kell does</h2>
+<ul>
+<li><b>Model + tool recommendation.</b> A compound pick for the task, from prior runs and benchmarks, including tool discovery.</li>
+<li><b>Memory-based routing.</b> Saves the slices of context that made past runs pass, tries cheaper models first, escalates when the tests say so.</li>
+<li><b>One point for payment.</b> Sign in once, pay once, use many tools and data sources (MCP servers, APIs, connectors) without a contract each.</li>
+<li><b>Group chat for agents.</b> Rooms where people and agents (yours and teammates') share context instead of re-explaining it.</li>
+</ul>
+</div>
+<div>
+<h2>4. Why now</h2>
+<ul>
+<li>Models are converging and multiplying, so the edge moves to tools, data, context and one bill.</li>
+<li>Cost is now a procurement decision: Microsoft ended Claude Code licences and moved developers to Copilot (Forbes, 1 Jun 2026).</li>
+</ul>
+</div>
+</div>
+
+<h2>5. What is real today, and what is not</h2>
+<ul>
+<li><b>Built:</b> the hosted MCP server and plug-in for Claude Code and Cursor; a Windows desktop app that runs coding tasks; shared rooms; the tool search and sign-in flow; plans paid from your own wallet.</li>
+<li><b>Not yet proven:</b> a savings figure we would put our name to. Our own runs are mixed: some issues were solved for much less than the strongest model alone, others cost more. We publish results with their sample sizes, or not at all.</li>
+<li><b>Data path, plainly:</b> your prompt and repo notes reach our server; task text and files go to the model providers we route to. We are not zero-egress, and we do not yet have SOC 2 or a pen test. If that blocks you today, tell us and we will say so.</li>
+</ul>
+
+<h2>6. Risks we would name before you do</h2>
+<ul>
+<li><b>Provider dependence.</b> We route across a small set of model providers; an outage or empty balance at one degrades a turn. A third provider is on our list.</li>
+<li><b>Recommendation quality.</b> Routing is only worth it if the pick beats a default. That is the claim we are measuring, and the reason we ask for one real task, not a demo.</li>
+</ul>
+
+<h2>7. Team</h2>
+<p><b>Chaitanya Deshkar</b>, AI/ML, IIT Bombay. <b>Anuj Bhadbhade</b>, Mathematics and Computing, IISc Bangalore. We build the product, the server and the app ourselves.</p>
+
+<div class="lead" style="margin-top:7px"><b>Next step.</b> Send us one task your team ran this week and its cost. We run it through kell and show the model, tools, result and cost side by side, with the failures left in. If it doesn't beat your default, you've lost an hour.</div>
+
+<div class="foot"><span>kell.org.in</span><span>Draft for the founders to review before it is sent</span></div>
+</body></html>

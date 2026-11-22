@@ -34,10 +34,10 @@ ACTIVE = ("needs_approval", "queued", "running", "waiting_permission")
 # A message that clearly names a desktop/laptop/machine. When the routing model is down, out of budget, or unsure,
 # this lets an explicit "continue in my session" still reach the person's desktop instead of being answered by @kell.
 DESKTOP_INTENT = re.compile(
-    r"\b(?:my|the|this|that)\s+(?:desktop|laptop|machine|computer|pc|workstation)\b"
-    r"|\b(?:on|from|in)\s+(?:my|the|this|that)\s+(?:desktop|laptop|machine|computer|pc|workstation)\b"
+    r"\b(?:my|our)\s+(?:desktop|laptop|machine|computer|pc|workstation)\b"
+    r"|\b(?:on|from|in)\s+(?:my|our|this|that)\s+(?:desktop|laptop|machine|computer|pc|workstation)\b"
     r"|\b(?:continue|resume|pick\s+up|carry\s+on)\b[^.!?\n]{0,40}\b(?:session|chat|work|task|where)\b"
-    r"|\b(?:run|execute)\b[^.!?\n]{0,30}\b(?:tests?|build|command|script)\b[^.!?\n]{0,30}\b(?:desktop|laptop|machine|computer|pc|repo|project)\b",
+    r"|\b(?:run|execute)\b[^.!?\n]{0,30}\b(?:tests?|build|command|script)\b[^.!?\n]{0,30}\b(?:desktop|laptop|machine|computer|pc|workstation)\b",
     re.I,
 )
 

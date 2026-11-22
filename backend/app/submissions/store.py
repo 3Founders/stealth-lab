@@ -57,6 +57,8 @@ def step_record(step: Step, submission_id: str) -> dict:
         rec["prompt"] = step.prompt
     if step.locator:
         rec["locator"] = step.locator
+    if step.produces:
+        rec["produces"] = step.produces        # the file(s) this step hands back (db/222, submissions/artifacts.py)
     return rec
 
 
@@ -123,17 +125,19 @@ async def submit(pool: Any, owner_id: str, sub: Submission) -> dict:
     submission_id = str(await pool.fetchval(
         """INSERT INTO goal_submissions (owner_id, goal_id, goal_name, description, created_goal, mode, goal_match)
            VALUES ($1, $2::uuid, $3, $4, $5, $6, $7::jsonb) RETURNING id""",
-        owner_id, goal["id"], sub.goal, sub.description, created, sub.mode, match))
+        # ::jsonb wants JSON text, not a Python dict (see the note in goals.py: the same bug broke every Way submission).
+        owner_id, goal["id"], sub.goal, sub.description, created, sub.mode, json.dumps(match)))
     steps = []
     for step in sub.steps:
         way = await write_step_way(pool, submission_id, step, owner_id=owner_id)
         await pool.execute(
             """INSERT INTO goal_submission_steps (submission_id, step_order, kind, title, description, prompt, locator,
-                                                  goal_id, created_goal, procedure_row_id, goal_match)
-               VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8::uuid, $9, $10::uuid, $11::jsonb)""",
+                                                  goal_id, created_goal, procedure_row_id, goal_match, produces)
+               VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8::uuid, $9, $10::uuid, $11::jsonb, $12::jsonb)""",
             submission_id, step.order, step.kind, step.title, step.description, step.prompt,
-            step.locator, way["goal_id"], way["created_goal"],
-            way["procedure_row_id"], way["goal_match"])
+            json.dumps(step.locator), way["goal_id"], way["created_goal"],
+            way["procedure_row_id"], json.dumps(way["goal_match"]),
+            json.dumps(step.produces) if step.produces else None)
         steps.append({**step.as_dict(), **way, "status": "reviewing"})
     return {"submission_id": submission_id, "goal_id": goal["id"], "goal_match": match, "mode": sub.mode,
             "status": "reviewing",
@@ -159,13 +163,15 @@ async def replace_step(pool: Any, submission_id: str, owner_id: str, order: int,
         await conn.execute(
             """UPDATE goal_submission_steps SET kind = $2, title = $3, description = $4, prompt = $5, locator = $6::jsonb,
                       goal_id = $7::uuid, created_goal = $8, procedure_row_id = $9::uuid, goal_match = $10::jsonb,
+                      produces = $11::jsonb,
                       status = 'reviewing',
                       reason = '', checks = '{}', reviewer = '', reviewed_at = NULL, revision = revision + 1,
                       updated_at = now()
                WHERE id = $1""",
             row["id"], step.kind, step.title, step.description, step.prompt,
             step.locator, way["goal_id"], way["created_goal"],
-            way["procedure_row_id"], way["goal_match"])
+            way["procedure_row_id"], way["goal_match"],
+            json.dumps(step.produces) if step.produces else None)
         if row["goal_id"] and row["goal_id"] != way["goal_id"]:
             await _retire_unused_goal(conn, row["goal_id"], owner_id)
         kinds = [r["kind"] for r in await conn.fetch(
@@ -251,7 +257,8 @@ async def get(pool: Any, submission_id: str, *, owner_id: Optional[str] = None) 
     if sub is None:
         return None
     steps = await pool.fetch(
-        """SELECT step_order AS "order", kind, title, description, prompt, locator, goal_id::text AS goal_id,
+        """SELECT step_order AS "order", kind, title, description, prompt, locator, produces,
+                  goal_id::text AS goal_id,
                   procedure_row_id::text AS procedure_row_id, goal_match, status, reason, reviewer, revision, reviewed_at
            FROM goal_submission_steps WHERE submission_id = $1::uuid ORDER BY step_order""", submission_id)
     out = _plain(dict(sub))
@@ -273,6 +280,6 @@ def _plain(row: dict) -> dict:
     for k, v in list(row.items()):
         if hasattr(v, "isoformat"):
             row[k] = v.isoformat()
-        elif isinstance(v, str) and k == "locator":
+        elif isinstance(v, str) and k in ("locator", "produces"):
             row[k] = json.loads(v)
     return row

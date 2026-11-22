@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kell for teams</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+html,body{margin:0;height:100%;background:#0b0e11;overflow:hidden;font-family:'DM Sans',Arial,sans-serif}
+#stage{position:fixed;left:50%;top:50%;width:1920px;height:1080px;transform-origin:0 0}
+.slide{position:absolute;left:0;top:0;width:1920px;height:1080px;box-sizing:border-box;overflow:hidden;opacity:0;visibility:hidden;transition:opacity .35s ease}
+.slide.on{opacity:1;visibility:visible}
+.slide h1,.slide h2,.slide h3,.slide p,.slide ul,.slide ol,.slide li{margin:0}
+.slide *{box-sizing:border-box}
+#bar{position:fixed;left:0;bottom:0;height:4px;background:#F2B134;transition:width .3s ease}
+#hint{position:fixed;right:16px;bottom:12px;color:#8C949C;font:14px 'DM Sans',sans-serif}
+#notes{position:fixed;left:0;right:0;bottom:0;max-height:30vh;overflow:auto;background:#101418ee;color:#F3F0E8;padding:16px 24px;font:18px/1.5 'DM Sans',sans-serif;display:none}
+@media print{html,body{overflow:visible;height:auto;background:#fff}#stage{position:static;transform:none!important;width:auto;height:auto}.slide{position:relative;opacity:1;visibility:visible;page-break-after:always}#bar,#hint,#notes{display:none}}
+</style></head><body>
+<div id="stage">
+<section id="cover" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;justify-content:space-between">
+<p style="font-size:32px;font-weight:700;letter-spacing:6px;text-transform:uppercase;color:#F2B134">kell</p>
+<div style="display:flex;flex-direction:column;gap:40px">
+<h1 style="font-size:120px;font-weight:700;line-height:1.05;color:#F3F0E8">A better coding agent starts with a proven plan.</h1>
+<p style="font-size:44px;line-height:1.25;color:#B9C0C7">Small tasks go to cheap models. Hard reasoning stays with the best.</p>
+</div>
+<p style="font-size:24px;color:#8C949C">For incubator and department teams · October 2026</p>
+
+</section>
+<section id="problem" class="slide" style="background:#F3F0E8;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#9A5B00">The problem</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.1">One premium model does everything, and forgets what worked.</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Every task starts from zero</h3>
+<p style="font-size:32px;line-height:1.4;color:#4A5158">The agent re-invents the approach each time, even for work that has been done well before.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Small jobs use the dearest model</h3>
+<p style="font-size:32px;line-height:1.4;color:#4A5158">Summaries, reformatting and first drafts are paid for at the price of the hardest reasoning.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">No record of what passed</h3>
+<p style="font-size:32px;line-height:1.4;color:#4A5158">Nobody can say which approach actually worked, so good methods are not reused.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#5B6168">kell · 2</p>
+
+</section>
+<section id="how" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#F2B134">How it works</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.1">Find a proven way, hand off the small parts, check the result.</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<p style="font-size:44px;font-weight:700;color:#F2B134">1</p>
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Find</h3>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">The agent asks the library for a proven way to do this kind of task.</p>
+<p style="font-size:24px;font-family:'JetBrains Mono', 'Courier New', monospace;color:#8FD5B8">find_ways(task)</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<p style="font-size:44px;font-weight:700;color:#F2B134">2</p>
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Hand off</h3>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">Small sub-tasks go to a cheap open model. Hard reasoning stays put.</p>
+<p style="font-size:24px;font-family:'JetBrains Mono', 'Courier New', monospace;color:#8FD5B8">call_model(glm-5.3-flash)</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<p style="font-size:44px;font-weight:700;color:#F2B134">3</p>
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Check</h3>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">The result is checked before it is used, and the outcome is recorded.</p>
+<p style="font-size:24px;font-family:'JetBrains Mono', 'Courier New', monospace;color:#8FD5B8">report_result(passed)</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#8C949C">kell · 3</p>
+
+</section>
+<section id="library" class="slide" style="background:#F3F0E8;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#9A5B00">The global library</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.1">Ways that worked, with the receipts to show it.</h2>
+<div style="display:flex;gap:32px;align-items:stretch">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
+<p style="font-size:24px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9A5B00">Claims</p>
+<p style="font-size:32px;line-height:1.4">Small statements, each with its source and when it was true.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
+<p style="font-size:24px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9A5B00">Procedures</p>
+<p style="font-size:32px;line-height:1.4">Step-by-step ways built from those claims, with conditions for when they apply.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
+<p style="font-size:24px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9A5B00">Evidence</p>
+<p style="font-size:32px;line-height:1.4">Every reuse records pass or fail. A way that stops working loses trust and is retired.</p>
+</div>
+</div>
+<p style="font-size:32px;line-height:1.4;color:#4A5158">Anyone can read it. Publishing is a deliberate act, tied to a named person.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#5B6168">kell · 4</p>
+
+</section>
+<section id="playbooks" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#F2B134">Research playbooks and tools</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.1">Proven research routines, and a way to pay for the tools from one balance.</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Playbooks, first</h3>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">Market sizing, competitor scan, funding landscape, company due diligence, source-checked fact sheets.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Tools, one balance</h3>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">Discover a tool, inspect its price, run it. Planned: tool calls paid from the same balance as model calls.</p>
+</div>
+</div>
+<p style="font-size:24px;color:#8C949C">Planned items are being confirmed with tool providers; nothing on this slide is live yet.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#8C949C">kell · 5</p>
+
+</section>
+<section id="demo" class="slide" style="background:#F3F0E8;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#9A5B00">Where it runs</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.1">It works inside the tools people already use.</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px">
+<div style="height:380px;background:#FFFFFF;border:1px dashed #B8B2A3;border-radius:16px;display:flex;align-items:center;justify-content:center">
+<p style="font-size:24px;color:#5B6168">[screenshot: Claude Code]</p>
+</div>
+<h3 style="font-size:32px;font-weight:700">Claude Code</h3>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px">
+<div style="height:380px;background:#FFFFFF;border:1px dashed #B8B2A3;border-radius:16px;display:flex;align-items:center;justify-content:center">
+<p style="font-size:24px;color:#5B6168">[screenshot: Claude on the web]</p>
+</div>
+<h3 style="font-size:32px;font-weight:700">Claude on the web</h3>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px">
+<div style="height:380px;background:#FFFFFF;border:1px dashed #B8B2A3;border-radius:16px;display:flex;align-items:center;justify-content:center">
+<p style="font-size:24px;color:#5B6168">[screenshot: the kell site]</p>
+</div>
+<h3 style="font-size:32px;font-weight:700">The kell site</h3>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#5B6168">kell · 6</p>
+
+</section>
+<section id="measured" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#F2B134">Measured so far</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.1">The hand-off works, and the cost per call is tiny. The task-level savings are next.</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<p style="font-size:120px;font-weight:700;line-height:1;color:#F2B134">7</p>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">pilot calls completed and recorded in the ledger</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<p style="font-size:120px;font-weight:700;line-height:1;color:#F2B134">$0.004</p>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">total provider cost of those seven calls</p>
+</div>
+</div>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">Early pilot, public data only. We make no savings claim until we measure cost per solved task on real work, together with you.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#8C949C">kell · 7</p>
+
+</section>
+<section id="teams" class="slide" style="background:#F3F0E8;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#9A5B00">For teams</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.1">A team keeps control of who uses what, and what it costs.</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Limits and a stop button</h3>
+<p style="font-size:32px;line-height:1.4;color:#4A5158">Budgets per person and per month. One switch stops all spending.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Members and usage</h3>
+<p style="font-size:32px;line-height:1.4;color:#4A5158">Invite people, see usage by person, export the audit log.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Your own keys</h3>
+<p style="font-size:32px;line-height:1.4;color:#4A5158">Use kell’s models, your own provider keys, or both.</p>
+</div>
+</div>
+<p style="font-size:32px;line-height:1.4;color:#4A5158">Today the pooled models take public material only. Private code is planned on providers that keep no copy of it.</p>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#5B6168">kell · 8</p>
+
+</section>
+<section id="sold" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
+<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#F2B134">How it is paid for</p>
+<h2 style="font-size:72px;font-weight:700;line-height:1.1">Prepaid credits in rupees, for Indian teams first.</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Pay once, spend down</h3>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">A balance you top up. A call is refused at zero, so there are no surprise bills.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Pooled keys, no setup</h3>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">People do not bring their own keys. kell holds the provider accounts.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
+<h3 style="font-size:44px;font-weight:700;line-height:1.15">Invoices for teams</h3>
+<p style="font-size:32px;line-height:1.4;color:#B9C0C7">GST invoices with your company details are planned for team accounts.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#8C949C">kell · 9</p>
+
+</section>
+<section id="next" class="slide" style="background:#F2B134;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;justify-content:space-between">
+<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#101418">What we would like to do with you</p>
+<h2 style="font-size:96px;font-weight:700;line-height:1.05">Run a two-week pilot on one real task from your team.</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:3px solid #101418;padding-top:24px">
+<p style="font-size:32px;font-weight:700">1. Pick the task</p>
+<p style="font-size:32px;line-height:1.4">A coding or research job you already do.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:3px solid #101418;padding-top:24px">
+<p style="font-size:32px;font-weight:700">2. Measure it</p>
+<p style="font-size:32px;line-height:1.4">Cost per solved task, with and without kell.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:3px solid #101418;padding-top:24px">
+<p style="font-size:32px;font-weight:700">3. Decide together</p>
+<p style="font-size:32px;line-height:1.4">Keep it, change it, or stop. Your call.</p>
+</div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#101418">kell · 10 · [contact details]</p>
+
+</section>
+</div>
+<div id="bar"></div><div id="hint">← → to move · N for notes · F for full screen</div><div id="notes"></div>
+<script>
+const NOTES=["One line to open with: kell makes a coding agent cheaper and more reliable by giving it a proven plan first and handing the small parts to small models. Everything after this slide shows how, and what we have actually measured so far.", "Frame the problem in the audience's terms: they already use AI coding tools. The cost and the lack of memory are what they feel. Do not quote a percentage here; we have not measured one yet.", "This is the whole product in one picture. The agent keeps working in Claude Code, Claude on the web or the kell site. kell adds the plan, the cheaper hand-offs and the record. The glm-5.3-flash model is an open model that kell hosts access to.", "The library is the part nobody else can copy quickly: it is knowledge plus proof. Be honest that it is early. The next slide covers the research playbooks being added now.", "Be clear about status: the playbooks are being written now; the one-balance tool access is a plan that depends on agreements with tool providers. The discover, inspect, run pattern is the same one existing agent-tool marketplaces use, which is why people will find it familiar.", "Replace the three placeholders with real screenshots before presenting, or switch to the live demo here. Show one delegated call in each place if time allows.", "These numbers come straight from the usage ledger (settled calls in the pilot organisation on 28 October 2026). They are small because the pilot is small. Do not turn them into a percentage saving. The honest next step is a joint measurement on a real task from your team.", "The organisation admin pages are built but switched off in production until we turn them on for a pilot team. Be direct about private code: not today. The plan is a second tier on zero-retention providers with a signed agreement.", "Do not state prices on this slide. If asked, say pricing is set after we measure cost per solved task in a joint pilot. The payment integration is built and tested but not yet switched on.", "Close with the ask. Replace the contact placeholder with the real email or number. Keep the pilot small and measurable."];
+const slides=[...document.querySelectorAll('.slide')];let i=0;
+const stage=document.getElementById('stage'),bar=document.getElementById('bar'),nb=document.getElementById('notes');
+function fit(){const s=Math.min(innerWidth/1920,innerHeight/1080);stage.style.transform='translate('+(-960*s)+'px,'+(-540*s)+'px) scale('+s+')'}
+function show(n){i=Math.max(0,Math.min(slides.length-1,n));slides.forEach((e,k)=>e.classList.toggle('on',k===i));bar.style.width=((i+1)/slides.length*100)+'%';nb.textContent=NOTES[i]||'';history.replaceState(null,'','#'+(i+1))}
+addEventListener('resize',fit);
+addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' ','Enter'].includes(e.key))show(i+1);else if(['ArrowLeft','PageUp','Backspace'].includes(e.key))show(i-1);else if(e.key==='Home')show(0);else if(e.key==='End')show(slides.length-1);else if(e.key==='n'||e.key==='N')nb.style.display=nb.style.display==='block'?'none':'block';else if(e.key==='f'||e.key==='F')document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()});
+addEventListener('click',e=>{if(e.clientX>innerWidth/2)show(i+1);else show(i-1)});
+let tx=0;addEventListener('touchstart',e=>{tx=e.touches[0].clientX});addEventListener('touchend',e=>{const d=e.changedTouches[0].clientX-tx;if(Math.abs(d)>40)show(i+(d<0?1:-1))});
+fit();show((parseInt(location.hash.slice(1))||1)-1);
+</script></body></html>

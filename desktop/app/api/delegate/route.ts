@@ -62,15 +62,18 @@ export async function POST(req: Request) {
   if (!text.trim()) return NextResponse.json({ error: "nothing to route" }, { status: 400 })
   const given = body?.models
   const timeoutMs = Number(body?.timeoutMs) || 20_000
+  // Ask mode: search whatever the task sounds like. The judge that keeps ordinary work out of the picker is skipped,
+  // because the person asked for the Ways (2026-11-19).
+  const always = body?.always === true
   const wantsStream = (req.headers.get("accept") || "").includes("text/event-stream")
 
   if (!wantsStream) {
     const models = await ladder(req, given)
-    const key = `${text}\u0000${JSON.stringify(models)}`
+    const key = `${text}\u0000${always ? "always" : "judged"}\u0000${JSON.stringify(models)}`
     const hit = cached(key)
     if (hit) return NextResponse.json({ ...hit.plan, options: hit.options, goals: [] })
     try {
-      const routed = await routeTask(text, timeoutMs)
+      const routed = await routeTask(text, timeoutMs, { always })
       const plan = planFromRoute(text, models, routed)
       if (routed.skip) return NextResponse.json({ ...plan, options: [], goals: [], skip: true })
       if (routed.options.length) remember(key, plan, routed.options)
@@ -89,7 +92,7 @@ export async function POST(req: Request) {
       try {
         status("ladder", "Reading the model ladder…")
         const models = await ladder(req, given)
-        const key = `${text}\u0000${JSON.stringify(models)}`
+        const key = `${text}\u0000${always ? "always" : "judged"}\u0000${JSON.stringify(models)}`
         const hit = cached(key)
         if (hit) {
           status("cached", "Using the plan from a moment ago")
@@ -97,8 +100,8 @@ export async function POST(req: Request) {
           send({ type: "done" })
           return
         }
-        status("routing", "Checking whether this needs a procedure…")
-        const routed = await routeTask(text, timeoutMs)
+        status("routing", always ? "Searching for a procedure…" : "Checking whether this needs a procedure…")
+        const routed = await routeTask(text, timeoutMs, { always })
         if (routed.skip) {
           const plan = planFromRoute(text, models, routed)
           status("skip", "Ordinary work - going straight to the model")

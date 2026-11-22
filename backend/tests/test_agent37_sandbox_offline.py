@@ -24,11 +24,25 @@ def _clean_env(monkeypatch):
     yield
 
 
-def test_modal_wins_when_both_are_configured(monkeypatch):
-    """Modal's default IS gVisor with blocked network; Agent37's is not. So Modal is the fallback."""
+def test_agent37_is_the_default_when_it_is_configured(monkeypatch):
+    """The owner's call (2026-11-22): cheapest first, with egress closed rather than open."""
     monkeypatch.setenv("AGENT37_API_KEY", "sk_live_test")
     monkeypatch.setenv("MODAL_TOKEN_ID", "x")
     monkeypatch.setenv("MODAL_TOKEN_SECRET", "y")
+    assert sandbox.provider() == "agent37"
+
+
+def test_modal_is_used_when_it_is_the_only_option(monkeypatch):
+    monkeypatch.setenv("MODAL_TOKEN_ID", "x")
+    monkeypatch.setenv("MODAL_TOKEN_SECRET", "y")
+    assert sandbox.provider() == "modal"
+
+
+def test_switching_back_to_modal_is_one_variable(monkeypatch):
+    monkeypatch.setenv("AGENT37_API_KEY", "sk_live_test")
+    monkeypatch.setenv("MODAL_TOKEN_ID", "x")
+    monkeypatch.setenv("MODAL_TOKEN_SECRET", "y")
+    monkeypatch.setenv("SUBMISSION_SANDBOX", "modal")
     assert sandbox.provider() == "modal"
 
 

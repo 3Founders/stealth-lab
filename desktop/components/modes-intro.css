@@ -1,0 +1,44 @@
+/* The first-open explanation of the three modes (components/ModesIntro.tsx). Motion follows docs/ios_animation.md:
+   only transform and opacity move, on the --dg-* springs, and everything stops under prefers-reduced-motion. */
+.mi-backdrop {
+  position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 20px;
+  background: rgba(10, 14, 22, .42);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  animation: mi-fade var(--dg-smooth-d, 300ms) var(--dg-smooth, cubic-bezier(.32, .72, 0, 1)) both;
+}
+.mi-card {
+  width: min(520px, 100%); max-height: min(86dvh, 720px); overflow-y: auto; box-sizing: border-box;
+  padding: 22px 22px 18px; border: 1px solid var(--rule-strong, var(--rule)); border-radius: 18px;
+  background: var(--surface, #fff); color: var(--ink, #111);
+  box-shadow: 0 24px 70px rgba(10, 14, 22, .28), 0 2px 10px rgba(10, 14, 22, .12);
+  animation: mi-in var(--dg-smooth-d, 340ms) var(--dg-bouncy, cubic-bezier(.34, 1.2, .64, 1)) both;
+}
+.mi-kicker { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--grey, #6b7280); }
+.mi-card h2 { margin: 0 0 8px; font-size: 19px; line-height: 1.2; }
+.mi-lead { margin: 0 0 16px; font-size: 13.5px; line-height: 1.5; color: var(--text-2, #4b5563); }
+.mi-modes { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mi-mode {
+  display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px; border-radius: 12px;
+  border: 1px solid var(--rule, #e5e7eb); background: color-mix(in oklab, var(--surface, #fff) 88%, rgba(0, 0, 0, .04));
+  transition: transform var(--dg-micro-d, 160ms) var(--dg-micro, ease), border-color var(--dg-micro-d, 160ms) var(--dg-micro, ease);
+}
+.mi-mode:hover { transform: translateY(-1px); border-color: var(--rule-strong, var(--rule)); }
+.mi-dot { flex: none; width: 9px; height: 9px; margin-top: 5px; border-radius: 999px; background: var(--ink, #111); opacity: .28; }
+.mi-mode[data-mode="auto"] .mi-dot { opacity: .55; }
+.mi-mode[data-mode="ask"] .mi-dot { opacity: 1; }
+.mi-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mi-text b { font-size: 13.5px; }
+.mi-line { font-size: 13px; line-height: 1.4; }
+.mi-detail { font-size: 12px; line-height: 1.4; color: var(--text-2, #4b5563); }
+.mi-foot { margin: 0 0 14px; font-size: 12px; color: var(--grey, #6b7280); }
+.mi-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.mi-actions .btn-ink { min-width: 96px; }
+
+@keyframes mi-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes mi-in { from { opacity: 0; transform: translateY(10px) scale(.98) } to { opacity: 1; transform: none } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mi-backdrop, .mi-card { animation: none }
+  .mi-mode { transition: none }
+  .mi-mode:hover { transform: none }
+}

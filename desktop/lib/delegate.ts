@@ -107,9 +107,12 @@ export async function wantsProcedure(task: string, timeoutMs = 4000): Promise<bo
  * knowledge helps and names the best Way; the catalog adds the other Ways that fit, so the picker is a real choice
  * rather than one card. A slow or refused find_ways never hides the catalog, and vice versa.
  */
-export async function routeTask(task: string, timeoutMs = 20_000): Promise<Routed> {
+export async function routeTask(task: string, timeoutMs = 20_000, opts: { always?: boolean } = {}): Promise<Routed> {
   const text = task.trim().slice(0, 4000)
-  if (!(await wantsProcedure(text, Math.min(timeoutMs, 4000)))) {
+  // Ask mode always searches: the person chose "show me the Ways", so the judge is not asked whether the task is
+  // ordinary work. Auto and the one-shot callers keep the judge (a Way applied on its own to ordinary work is a
+  // surprise; a picker that never appears is the worse one, and that is what Ask exists to avoid).
+  if (!opts.always && !(await wantsProcedure(text, Math.min(timeoutMs, 4000)))) {
     return { goal: null, options: [], goals: [], skip: true }
   }
   let firstErr: any = null

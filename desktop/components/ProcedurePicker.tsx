@@ -9,13 +9,13 @@
 // editor is the right panel's Procedure section; the steps are shared with it (2026-11-17).
 import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
-import type { Delegation, DelegationStep, GoalOption, WayOption } from "@/lib/plan"
+import type { Delegation, DelegationStep, GoalOption, Models, WayOption } from "@/lib/plan"
 import type { BarAttachment } from "@/lib/attach"
 import ProcedureEditor from "@/components/ProcedureEditor"
 
 const short = (id?: string) => (id ? id.slice(0, 8) : "")
 
-export default function ProcedurePicker({ goal, options, goals = [], onPick, onSkip, onInspect, stepsFor, onEdit, onAdd, onRemove, catalog = [], onAsk, initialAsk = "", initialFiles = [] }: {
+export default function ProcedurePicker({ goal, options, goals = [], onPick, onSkip, onInspect, stepsFor, onEdit, onAdd, onRemove, catalog = [], models, onSuggest, onAsk, initialAsk = "", initialFiles = [] }: {
   goal: Delegation["goal"]
   options: WayOption[]
   /** The Goals the search matched, shown when none has a written Way: the result is visible before the model runs. */
@@ -31,6 +31,10 @@ export default function ProcedurePicker({ goal, options, goals = [], onPick, onS
   onRemove: (o: WayOption, i: number) => void
   /** This machine's models, searched by a step's model picker. */
   catalog?: string[]
+  /** The cheap and strong rungs: what a step with no model is told kell would pick. */
+  models?: Models
+  /** Fill every step that has no model with kell's recommendation. */
+  onSuggest?: (o: WayOption) => void
   /** Ask kell to rewrite this Way's steps from a sentence and any pictures (the canvas's "Change it"). */
   onAsk?: (o: WayOption, text: string, files?: BarAttachment[], model?: string) => Promise<string | void>
   /** A message and pictures the person typed or dropped into the chat: they belong to this Way's record, so the inline
@@ -138,8 +142,9 @@ export default function ProcedurePicker({ goal, options, goals = [], onPick, onS
               <button type="button" className="dk-proc-x" aria-label="Close" title="Close" onClick={() => openRecord(null)}>×</button>
             </header>
             <div className="dk-proc-body">
-              <ProcedureEditor option={selected} steps={stepsFor(selected)} catalog={catalog}
+              <ProcedureEditor option={selected} steps={stepsFor(selected)} catalog={catalog} models={models}
                 initialAsk={initialAsk} initialFiles={initialFiles}
+                onSuggest={onSuggest ? () => onSuggest(selected) : undefined}
                 onEdit={(i, patch) => onEdit(selected, i, patch)}
                 onAdd={() => onAdd(selected)}
                 onRemove={(i) => onRemove(selected, i)}

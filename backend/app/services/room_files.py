@@ -111,6 +111,35 @@ def _json(row: Any) -> dict[str, Any]:
             "inline": row["mime"] in INLINE}
 
 
+async def adopt_way_outputs(pool: Any, *, room_id: str, uploader: str, run_id: str,
+                            files: list[dict[str, Any]], store: Any) -> list[dict[str, Any]]:
+    """Put a Way run's files into a room, so the room's next turn reads the same object the run produced.
+
+    A Room and a Way run keep files in different places today: a room file's bytes are in Postgres
+    (`room_files.data`, `storage='db'`), a run's are in object storage (docs/procedure_outputs.md). This is the
+    bridge, and it is deliberately one-way and explicit rather than a merge: the run's bytes are read back from the
+    bucket and handed to the room's own upload path, so the room keeps every safety rule it already has — type
+    sniffed from the bytes, programs refused, size capped, expiry set.
+
+    -> the room files created (empty when there was nothing to adopt).
+
+    Never raises for a single bad file: one refused output must not lose the rest, and the caller shows what was
+    skipped.
+    """
+    adopted: list[dict[str, Any]] = []
+    for f in files or []:
+        key = f.get("object_key")
+        name = f.get("name")
+        if not key or not name:
+            continue
+        try:
+            data = await store.get(key)
+            adopted.append(await upload(pool, uploader, room_id, name, data))
+        except Exception as exc:  # noqa: BLE001 -- one refused file, not a failed run
+            adopted.append({"name": name, "skipped": str(exc)[:200]})
+    return adopted
+
+
 async def upload(pool: Any, sub: str, room_id: str, name: str, data: bytes) -> dict[str, Any]:
     room = await _member_room(pool, sub, room_id)
     if not LIMITER.allow(sub):

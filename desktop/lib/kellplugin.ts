@@ -46,11 +46,15 @@ export function hooksDoc(): any {
 }
 
 /** The models the plugin runs, from the gateway's list in MODEL_LADDER order: cheap is the ladder's head; strong (a task the triage cannot
- *  read, or two failed test runs) is DeepSeek V4 Pro when offered, else the last; fallback (a provider that does not answer) is the second.
- *  The Settings pane shows the same (app/api/settings). */
+ *  read, or two failed test runs) is the ladder's SECOND rung, not the most expensive one — an escalation should cost a little more, not
+ *  several times more (owner, 2026-11-19: the main agent was landing on DeepSeek V4 Pro whenever the triage could not read a prompt).
+ *  fallback (a provider that does not answer) is the third, so a dead provider moves to a model that has not been tried yet.
+ *  The Settings pane shows the same (app/api/settings); a person who wants V4 Pro picks it in the composer's model menu. */
 export function modelPlan(models: string[]): { cheap: string; strong: string; fallback: string } {
-  const strong = models.includes("deepseek-v4-pro") ? "deepseek-v4-pro" : models[models.length - 1]
-  return { cheap: models[0], strong, fallback: models[1] || models[0] }
+  const cheap = models[0]
+  const strong = models[1] || cheap
+  const fallback = models[2] || cheap
+  return { cheap, strong, fallback }
 }
 
 /** Writes the hooks file and the plugin's settings (only when they changed); -> the environment the engine needs to find them ({} with

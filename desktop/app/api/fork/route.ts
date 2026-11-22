@@ -39,14 +39,25 @@ export async function POST(req: Request) {
     const after = messages.slice(upTo + 1)
 
     let before: string | undefined
-    const r = after.filter((m) => m.role === "user").length
-    if (r > 0) {
-      const out = await client.message.list({ sessionID: id as any, limit: 200, order: "desc" })
-      const users = (out.data as any[]).filter((m) => (m.type === "user" || (m.type === undefined && typeof m.text === "string")) && String(m.text || "").trim())
-      const cut = users[r - 1]
-      const want = after.find((m) => m.role === "user")
-      if (!cut || !want || String(cut.text).trim().slice(0, 200) !== want.text.trim().slice(0, 200))
-        return Response.json({ error: "kell could not line this point up with the session; fork the whole session instead" }, { status: 409 })
+    const want = after.find((m) => m.role === "user")
+    if (want) {
+      // Find the first user message AFTER the cut, by its text, walking the engine newest-first until it is found.
+      // The old code asked for one page of 200 and then indexed r-1 into it, where r is a count taken from the LOCAL
+      // history: in any chat longer than one page that window does not reach back far enough, so the index landed on the
+      // wrong message (or off the end) and every fork of a long chat failed with "could not line this point up".
+      // Paging to the match makes the answer depend on whether the message is in the session, not on how long it is.
+      const target = want.text.trim().slice(0, 200)
+      let cursor: string | undefined
+      let cut: any = undefined
+      for (let page = 0; page < 50 && !cut; page++) {
+        const out = await client.message.list({ sessionID: id as any, limit: 200, order: "desc", ...(cursor ? { cursor } : {}) })
+        const rows = (out.data as any[]).filter((m) => m.type === "user" || (m.type === undefined && typeof m.text === "string"))
+        cut = rows.find((m) => String(m.text || "").trim().slice(0, 200) === target)
+        cursor = out.cursor?.next ?? undefined
+        if (!cursor) break                                          // the engine has no older messages to give
+      }
+      if (!cut)
+        return Response.json({ error: "that message is no longer in the session; fork the whole session instead" }, { status: 409 })
       before = String(cut.id)
     }
 

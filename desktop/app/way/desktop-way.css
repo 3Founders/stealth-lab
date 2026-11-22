@@ -66,3 +66,38 @@
 .dkw-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dkw-cta { justify-self: start; border: 1px solid var(--ink); border-radius: 999px; padding: 6px 16px; font: inherit; font-size: 14.5px; background: none; color: var(--ink); cursor: pointer; }
 .dkw-cta:hover { background: var(--ink); color: var(--paper); }
+
+/* WayRunCanvas: the run as a column of cards, so a pane reads like a canvas rather than a chat. */
+.dkw-canvas { display: grid; gap: 0; }
+.dkw-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.dkw-turn { display: grid; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--rule); }
+.dkw-turn:last-child { border-bottom: 0; padding-bottom: 0; }
+.dkw-turn[data-who="you"] { justify-items: start; }
+.dkw-you { font-size: 14.5px; line-height: 1.5; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 7px 12px; overflow-wrap: anywhere; }
+.dkw-note { font-size: 14.5px; line-height: 1.6; }
+.dkw-note[data-tone="error"] { border-left: 2px solid var(--rule-strong); padding-left: 9px; }
+.dkw-note[data-tone="done"] { font-weight: 500; }
+.dkw-stepcard { display: grid; gap: 5px; width: 100%; }
+.dkw-stepcard header { display: flex; gap: 8px; align-items: baseline; }
+.dkw-stepn { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--grey); border: 1px solid var(--rule); border-radius: 999px; padding: 0 7px; }
+.dkw-stepcard header b { font-weight: 500; font-size: 14.5px; }
+.dkw-out { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.6; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 9px 11px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; max-height: 22em; overflow: auto; }
+.dkw-tag { justify-self: start; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 7px; }
+.dkw-options { display: grid; gap: 7px; }
+.dkw-option { display: grid; gap: 2px; text-align: left; font: inherit; cursor: pointer; padding: 8px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.dkw-option:hover { border-color: var(--rule-strong); }
+.dkw-option b { font-weight: 500; font-size: 14.5px; }
+.dkw-option span { font-size: 13px; color: var(--grey); }
+.dkw-start { display: flex; gap: 8px; align-items: center; }
+.dkw-start input { flex: 1; font: inherit; font-size: 14.5px; padding: 7px 10px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--surface); color: var(--ink); }
+
+/* The deliverable: what the person paid for, one clickable row per file plus the archive. */
+.dkw-files { display: grid; gap: 9px; width: 100%; }
+.dkw-filelist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dkw-file { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 11px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); text-decoration: none; }
+.dkw-file:hover { border-color: var(--rule-strong); }
+.dkw-fname { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; overflow-wrap: anywhere; }
+.dkw-fsize { font-size: 11.5px; color: var(--grey); flex-shrink: 0; }
+
+/* What a step read and wrote: the wiring, quieter than the output beneath it. */
+.dkw-io { margin: 0; font-size: 11.5px; color: var(--grey); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }

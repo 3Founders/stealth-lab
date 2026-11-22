@@ -21,6 +21,7 @@ describe("looksLikeDesktopCommand", () => {
       "explain the desktop build",
       "write a test for the parser",
       "run the tests",
+      "run the tests in the repo",
       "summarise this article",
       "how do I install kell?",
     ]) {

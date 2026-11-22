@@ -11,16 +11,24 @@
 // its own model and its own list of attachments. Pictures make sense here because a Way is often written from a sketch,
 // a screenshot of the screen the Way is about, or a photo of the form to fill in.
 import { useRef, useState } from "react"
-import type { DelegationStep, WayOption } from "@/lib/plan"
+import type { DelegationStep, Models, WayOption } from "@/lib/plan"
+import { recommendStepModel } from "@/lib/plan"
+
+/** "kell/deepseek-v4.1-flash" -> "deepseek-v4.1-flash": what a step's suggestion chip says. */
+const shortModel = (m: string) => m.split("/").pop() || m
 import { fileToDataUrl, imageDataUrl, isImage, MAX_ATTACHMENTS, MAX_ATTACH_BYTES, type BarAttachment } from "@/lib/attach"
 import AttachStrip from "@/components/AttachStrip"
 import ModelPicker from "@/components/ModelPicker"
 
-export default function ProcedureEditor({ option, steps, catalog = [], onEdit, onAdd, onRemove, onUse, useTitle, onAsk, initialAsk = "", initialFiles = [] }: {
+export default function ProcedureEditor({ option, steps, catalog = [], models, onSuggest, onEdit, onAdd, onRemove, onUse, useTitle, onAsk, initialAsk = "", initialFiles = [] }: {
   option: WayOption
   steps: DelegationStep[]
   /** Every model this machine may run; the per-step picker searches it. Empty means no list yet. */
   catalog?: string[]
+  /** The cheap and strong rungs, so a step with no model can say which one kell would put there. */
+  models?: Models
+  /** Fill every step that has no model with kell's recommendation, in one change. */
+  onSuggest?: () => void
   onEdit: (i: number, patch: Partial<DelegationStep>) => void
   onAdd: () => void
   onRemove: (i: number) => void
@@ -104,6 +112,18 @@ export default function ProcedureEditor({ option, steps, catalog = [], onEdit, o
                 {[s.kind, s.tool].filter(Boolean).join(" · ")}
                 {s.model ? <> · <b className="dk-step-model">{s.model}</b></> : null}
               </span>
+              {!s.model && (() => {
+                // What kell would pick for this step, offered as a click: the strong rung for a step whose words name
+                // expensive work, the cheap rung for the rest. It is a recommendation, never applied by itself.
+                const rec = models ? recommendStepModel(s, models) : null
+                if (!rec) return null
+                return (
+                  <button type="button" className="dk-step-suggest" title={`kell suggests ${rec.model}: ${rec.why}`}
+                    onClick={() => onEdit(i, { model: rec.model })}>
+                    suggests {shortModel(rec.model)}
+                  </button>
+                )
+              })()}
               {pick === i && (
                 // The model catalog for this step, opened by the ... beside it. Nothing chosen means the main agent.
                 <div className="dk-model-pick">
@@ -137,6 +157,11 @@ export default function ProcedureEditor({ option, steps, catalog = [], onEdit, o
       </ol>
 
       <div className="dk-edit-actions">
+        {onSuggest && (
+          <button type="button" className="btn-line dg-mini" disabled={!models}
+            title={models ? "Fill each step that has no model with the one kell would pick" : "No model list on this machine yet"}
+            onClick={onSuggest}>Suggest models</button>
+        )}
         <button type="button" className="btn-line dg-mini" onClick={onAdd}>+ Add step</button>
         <button type="button" className="dk-proc-use" disabled={!onUse}
           title={onUse ? (useTitle || "Run this Way with the steps as edited") : "Pick a task first: the Way runs with it"}

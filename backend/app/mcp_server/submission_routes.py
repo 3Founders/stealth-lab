@@ -16,6 +16,8 @@
     GET  /v1/goals/runs/{run_id}
     POST /v1/goals/runs/{run_id}/done           {note}  -> the person did the step the run waits on; it continues
     POST /v1/goals/runs/{run_id}/cancel         -> stop the run
+    GET  /v1/goals/runs/{run_id}/artifacts/{name}  -> one file this run produced, as a download
+    GET  /v1/goals/runs/{run_id}/artifacts.zip     -> all of them, as one archive
 
 All the work is in app/submissions/api.py, shared with the MCP tools and the CLI.
 """
@@ -255,6 +257,21 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
         if early is not None:
             return early
         return await _answer(request, api.get_run(pool, subject, request.path_params["run_id"]))
+
+    @server.custom_route("/v1/goals/runs/{run_id}/artifacts/{name}", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def artifact_one(request: Request) -> Response:
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        return await api.download_artifact(pool, subject, request.path_params["run_id"],
+                                           request.path_params["name"], request)
+
+    @server.custom_route("/v1/goals/runs/{run_id}/artifacts.zip", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def artifact_all(request: Request) -> Response:
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        return await api.download_artifacts_zip(pool, subject, request.path_params["run_id"], request)
 
     @server.custom_route("/v1/goals/runs/{run_id}/done", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def run_done(request: Request) -> Response:

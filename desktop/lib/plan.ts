@@ -25,6 +25,9 @@ export type Delegation = {
   model: DelegationModel | null
   rung: "strong" | "cheap" | null
   why: string
+  /** A stronger model the task looks like it deserves, offered rather than applied (2026-11-19). The person can take
+   *  it from the model menu; nothing is spent on it by itself. */
+  suggest: { model: DelegationModel; why: string } | null
   brief: string
 }
 
@@ -34,22 +37,42 @@ export type Models = { cheap?: string | null; strong?: string | null; fallback?:
 const NEEDS_STRONG = /security|vulnerab|\bcve\b|exploit|threat|malware|incident|penetrat|audit|review|analy[sz]e|architect|migrat|refactor|debug|root cause|regulat|compliance|legal|medical|financ/i
 const PROVEN = new Set(["verified", "approved", "ai_approved"])
 
-/** Which model runs this turn, and the one sentence that says why. `null` model = the engine's own default. */
+/** The model kell would put on one step, offered in the editor and never applied by itself (2026-11-19). A person's step
+ *  and a tool step take none: those are not the agent's work to hand to a model. A step whose words name an expensive
+ *  kind of work gets the strong rung; every other step the cheap one. */
+export function recommendStepModel(step: DelegationStep, models: Models): { model: string; why: string } | null {
+  if (step.kind === "human" || step.kind === "tool") return null
+  const strong = models.strong
+  const cheap = models.cheap || models.fallback || strong
+  if (!strong && !cheap) return null
+  const word = `${step.title} ${step.note || ""}`.match(NEEDS_STRONG)?.[0]?.toLowerCase()
+  if (strong && cheap && strong !== cheap && word) return { model: strong, why: `the step says "${word}"` }
+  return cheap ? { model: cheap, why: "a routine step" } : null
+}
+
+/** Which model runs this turn, and the one sentence that says why. `null` model = the engine's own default.
+ *
+ *  The cheap rung is the default even for a task whose words look expensive: the strong rung costs several times more,
+ *  and "review" or "analyse" appear in plenty of ordinary asks. A task that names one of those words, or a Way that is
+ *  not proven yet, gets a SUGGESTION instead (plan.suggest) — the person takes it from the model menu when they agree.
+ *  Owner's call, 2026-11-19: v4.1-flash can do it; do not delegate to v4-pro on our own. */
 export function chooseModel(task: string, models: Models, way: { approval: string } | null) {
   const strong = models.strong || models.fallback || models.cheap || null
   const cheap = models.cheap || models.fallback || strong
-  if (!strong && !cheap) return { model: null, rung: null, why: "no model list on this machine yet: the engine's default runs the turn" }
+  if (!strong && !cheap) return { model: null, rung: null, why: "no model list on this machine yet: the engine's default runs the turn", suggest: null }
   // The word that asked for the strong rung, named as it is: "review the literature" said "a security/analysis task"
   // (2026-11-15), which was wrong about the task even though the rung was right.
   const word = task.match(NEEDS_STRONG)?.[0]?.toLowerCase()
   const unproven = !!way && !PROVEN.has(way.approval)
-  if (strong && (word || unproven)) {
-    const why = word ? `the task says "${word}", where a wrong answer costs more: the strong rung`
-      : `the Way is "${way?.approval}" (not verified yet): the strong rung`
-    return { model: { providerID: "kell", id: strong }, rung: "strong" as const, why }
-  }
+  const suggest = strong && strong !== cheap && (word || unproven)
+    ? {
+        model: { providerID: "kell", id: strong },
+        why: word ? `the task says "${word}", where a wrong answer costs more` : `the Way is "${way?.approval}" (not verified yet)`,
+      }
+    : null
   return { model: cheap ? { providerID: "kell", id: cheap } : null, rung: cheap ? "cheap" as const : null,
-           why: way ? `the Way is "${way.approval}": the cheap rung is enough` : "an ordinary task: the cheap rung" }
+           why: way ? `the Way is "${way.approval}": the cheap rung is enough` : "an ordinary task: the cheap rung",
+           suggest }
 }
 
 /** The brief a delegated worker may see. No project path, no files, no history -- only what the task needs. */
@@ -149,6 +172,7 @@ export function planFromOption(task: string, models: Models, goal: Delegation["g
     model: picked.model,
     rung: picked.rung,
     why: picked.why,
+    suggest: picked.suggest,
     brief: "",
   }
   plan.brief = briefOf(text, plan)

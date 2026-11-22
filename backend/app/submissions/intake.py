@@ -37,10 +37,11 @@ class Step:
     description: str = ""
     prompt: str = ""
     locator: Optional[dict] = None              # {type, value}
+    produces: Optional[list[str]] = None        # the file(s) this step hands back (db/222_step_produces.sql)
 
     def as_dict(self) -> dict:
         return {"order": self.order, "kind": self.kind, "title": self.title, "description": self.description,
-                "prompt": self.prompt, "locator": self.locator}
+                "prompt": self.prompt, "locator": self.locator, "produces": self.produces}
 
 
 @dataclass
@@ -72,6 +73,39 @@ def _text(value: Any, where: str, limit: int = MAX_TEXT) -> str:
     if len(text) > limit:
         raise SubmissionError(f"{where} is longer than {limit} characters")
     return text
+
+
+def classify_produces(raw: Any, where: str) -> Optional[list[str]]:
+    """The file(s) a step hands back, as sanitised names. None when the step produces no file.
+
+    A name reaches a `Content-Disposition` header and a download path, so it is cleaned at intake rather than trusted
+    later (`artifacts.safe_name`). Rejecting a traversal instead of silently rewriting it keeps a submitted Way
+    honest: the author sees what kell stored.
+    """
+    from app.submissions.artifacts import safe_name
+
+    if raw is None or raw == "":
+        return None
+    names: list[str] = []
+    if isinstance(raw, str):
+        names = [raw]
+    elif isinstance(raw, dict):
+        only = raw.get("name")
+        if isinstance(only, str):
+            names = [only]
+    elif isinstance(raw, list):
+        names = [n for n in raw if isinstance(n, str)]
+    if not names:
+        raise SubmissionError(f"{where}: give a filename, or a list of filenames")
+    cleaned: list[str] = []
+    for n in names:
+        if "/" in n or "\\" in n or n.strip() in (".", ".."):
+            raise SubmissionError(f"{where}: {n!r} must be a plain filename, not a path")
+        safe = safe_name(n)
+        if not safe:
+            raise SubmissionError(f"{where}: {n!r} is not a usable filename")
+        cleaned.append(safe)
+    return list(dict.fromkeys(cleaned))[:10]
 
 
 def classify_locator(raw: Any, where: str) -> Optional[dict]:
@@ -153,7 +187,8 @@ def parse(payload: Any) -> Submission:
             raise SubmissionError(f"{where} has only a locator: give it a title that says what it achieves "
                                   "(e.g. \"Count the words in the text\"), which becomes the step's own goal")
         title = title or _title(description_i or prompt)
-        steps.append(Step(i, kind, title, description_i, prompt, locator))
+        steps.append(Step(i, kind, title, description_i, prompt, locator, classify_produces(raw.get("produces"),
+                                                                                           f"{where} produces")))
     return Submission(goal, description, steps)
 
 

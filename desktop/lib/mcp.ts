@@ -89,6 +89,28 @@ export async function callWebRoute(path: string, body: unknown, timeoutMs = 8000
   return rest(url, path, body, timeoutMs, method, token, SIGN_IN_TO_WEBSITE)
 }
 
+/**
+ * A binary GET (a Way's output file): the same bearer as `callWebRoute`, but the raw Response is returned.
+ *
+ * Kept apart from `rest` because that parses JSON, and a PDF is not JSON. The caller decides what to do with a
+ * refusal, so this throws only when kell itself cannot be reached.
+ */
+export async function callWebRouteBinary(path: string, timeoutMs = 60_000): Promise<Response> {
+  const { url } = config()
+  if (!url) throw Object.assign(new Error(SIGN_IN_TO_WEBSITE), { status: 401 })
+  const token = await webToken()
+  if (!token) throw Object.assign(new Error(SIGN_IN_TO_WEBSITE), { status: 401 })
+  const base = String(url).replace(/\/mcp\/?$/, "").replace(/\/+$/, "")
+  try {
+    return await fetch(`${base}${path}`, {
+      method: "GET", signal: AbortSignal.timeout(timeoutMs),
+      headers: { authorization: `Bearer ${token}` },
+    })
+  } catch {
+    throw Object.assign(new Error("kell's server could not be reached"), { status: 502 })
+  }
+}
+
 /** One REST call to the kell host: the MCP endpoint's origin, the route's path, a bearer, and JSON in and out. */
 async function rest(url: string, path: string, body: unknown, timeoutMs: number, method: string,
                     token: string | undefined, unauthorized: string): Promise<any> {

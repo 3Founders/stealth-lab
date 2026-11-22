@@ -234,6 +234,28 @@ async def release_run(pool: Any, run_id: str) -> None:
         "WHERE used_by_run_id = $1::uuid AND consumed_at IS NULL", str(run_id))
 
 
+async def may_download(pool: Any, *, procedure_row_id: Any, buyer_user_id: Optional[str],
+                       run_id: str) -> bool:
+    """Can this person download a finished run's files?
+
+    Deliberately NOT `check_entitlement`: that gate wants an *unconsumed* purchase, and by the time a buyer
+    downloads, the run has consumed it. The rule here is the inverse — a purchase this person paid for, whose
+    output was produced by *this* run. A free Way (NULL or 0) is open to anyone, same as its page.
+    """
+    row = await pool.fetchrow(
+        "SELECT price_paise FROM procedures WHERE id::text = $1 AND t_invalid IS NULL", str(procedure_row_id))
+    if row is None or row["price_paise"] is None or int(row["price_paise"]) <= 0:
+        return True
+    buyer = _uuid(buyer_user_id)
+    row_id = _uuid(procedure_row_id)
+    if buyer is None or row_id is None:
+        return False
+    return bool(await pool.fetchval(
+        "SELECT 1 FROM procedure_purchases WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid "
+        "AND status = 'paid' AND consumed_at IS NOT NULL AND used_by_run_id = $3::uuid LIMIT 1",
+        row_id, buyer, str(run_id)))
+
+
 # ------------------------------------------------------------------ gateway
 
 async def create_payment_link(*, amount_paise: int, description: str, reference_id: str,

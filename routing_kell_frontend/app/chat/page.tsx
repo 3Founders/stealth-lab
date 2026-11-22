@@ -3,7 +3,9 @@ import Wordmark from "@/components/Wordmark";
 import BackButton from "@/components/BackButton";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import RoomView from "@/components/chat/RoomView";
+import RoomView from "@/components/chat/RoomView"
+import ModesIntro from "@/components/chat/ModesIntro"
+import { markModesSeen, modesSeen } from "@/lib/chat/modes-intro";
 import { springVars } from "@/lib/chat/spring";
 import { getSession, onSessionChange, type Session } from "@/lib/session";
 import "./chat.css";
@@ -26,6 +28,12 @@ export default function ChatPage() {
     return () => { live = false; off(); };
   }, []);
 
+  // The first open explains Direct / Auto / Ask, once per browser. The switch is a three-word control above the
+  // message box, and the difference between the modes is the difference between kell doing nothing and doing the work.
+  const [modesIntro, setModesIntro] = useState(false);
+  useEffect(() => { if (!modesSeen()) setModesIntro(true); }, []);
+  const closeModesIntro = () => { markModesSeen(); setModesIntro(false); };
+
   return (
     <>
       <section className="frame dg-page" style={springVars() as React.CSSProperties}>
@@ -39,6 +47,7 @@ export default function ChatPage() {
         {session && (
           <RoomView subject={session.subject} back={<BackButton inline />} brand={<Link href="/?home=1" aria-label="keळ, back to the site"><Wordmark priority style={{ height: 38, width: "auto" }} /></Link>} />
         )}
+        {session && modesIntro && <ModesIntro onClose={closeModesIntro} />}
       </section>
     </>
   );

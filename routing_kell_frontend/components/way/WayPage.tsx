@@ -26,8 +26,9 @@ import Link from "next/link";
 import { getAccessToken } from "@/lib/session";
 import { MCP_ORIGIN } from "@/lib/connector";
 import { rateFor, priceLabel } from "@/lib/way-rate";
-import { InputsForm, QuestionCard, type WayInputDef, type WayQuestion } from "@/components/way/WayRunPanel";
+import { WayChat, type Artifact, type CostEstimate, type Turn, type WayInputDef, type WayQuestion } from "@/components/way/WayChat";
 import "@/app/way/way.css";
+import "@/app/way/chat.css";
 import "@/app/way/run-panel.css";
 
 type Step = {
@@ -68,6 +69,8 @@ export type Submission = {
   run_cost_paise?: number | null;
   /** What this Way takes before it can start. Absent = it needs nothing, which is the normal case. */
   inputs?: WayInputDef[];
+  /** The pre-run cost RANGE (docs/pricingestimation.md). Absent once a run has measured the real figure. */
+  cost_estimate?: CostEstimate | null;
   /** The artefact this version produces (docs/procedure_outputs.md). The bytes live in object storage; this is a
    *  locator plus metadata. Absent = nothing published yet, which the page says rather than hiding the section. */
   output?: WayOutput | null;
@@ -837,38 +840,98 @@ function Reviews({ submissionId }: { submissionId: string }) {
 }
 
 /**
- * The run: declared inputs -> start -> answer questions the steps raise -> done.
+ * The run, as a conversation. Only five things can appear in it (see components/way/WayChat.tsx): kell asking a
+ * question, a step's output, a wait on a person, what the person sent, and a refusal. Nothing else is accepted.
  *
- * Two states, because they are two different moments. Before the run it asks for what the Way declares (and most
- * Ways declare nothing, so the button is the whole interaction). During the run it shows whichever question the
- * paused step is waiting on — one at a time, per app/submissions/way_inputs.py.
- *
- * Every failure is stated plainly and never as a spinner that never resolves.
+ * The transcript is built from the run reply itself — every step's `output` becomes a turn, so a person watching
+ * the run sees it move rather than a single opaque "done".
  */
 function WayRun({ way }: { way: Submission }) {
   const inputs = way.inputs ?? [];
-  const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [run, setRun] = useState<RunState | null>(null);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [started, setStarted] = useState(false);
+  const [asked, setAsked] = useState<Set<string>>(new Set());
+
+  /** Fold a run reply into the transcript, adding only turns it has not already shown. */
+  function absorb(body: RunState) {
+    setRun(body);
+    setTurns((prev) => {
+      const next = [...prev];
+      const shown = new Set(next.filter((t) => t.kind === "step").map((t) => (t as { order: number }).order));
+      for (const o of body.outputs ?? []) {
+        if (!shown.has(o.order)) {
+          const step = (body.steps ?? []).find((s) => s.n === o.order);
+          next.push({
+            kind: "step",
+            order: o.order,
+            title: o.title,
+            output: o.output,
+            reads: step?.imports ?? undefined,
+            writes: step?.produces ? (Array.isArray(step.produces) ? step.produces : [step.produces]) : undefined,
+          });
+        }
+      }
+      if (body.status === "done") {
+        // The files come before "Done.": they are what the person paid for, and a bare "Done." on top of an
+        // empty page is what the bug report looked like.
+        if (body.artifacts?.length) {
+          next.push({ kind: "files", files: body.artifacts, zip: body.download_all });
+        }
+        const last = next[next.length - 1];
+        if (!(last?.kind === "kell" && last.tone === "done")) {
+          next.push({ kind: "kell", tone: "done", text: "Done." });
+        }
+      }
+      if (body.artifacts_refused?.length) {
+        // Say it: a step finished but its file could not be trusted. Silence here would look like a missing file.
+        for (const r of body.artifacts_refused) {
+          next.push({ kind: "kell", tone: "note", text: `${r.name} was not kept: ${r.why}` });
+        }
+      }
+      return next;
+    });
+    if (body.question) {
+      setAsked((prev) => {
+        if (prev.has(body.question!.key)) return prev;
+        return new Set(prev).add(body.question!.key);
+      });
+    }
+  }
 
   async function start(values: Record<string, string>) {
     setBusy(true);
     setError(null);
+    const said = Object.entries(values)
+      .filter(([, v]) => v && v.trim())
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\n");
+    if (said) setTurns((t) => [...t, { kind: "you", text: said }]);
     try {
       const token = await getAccessToken();
-      if (!token) return setError("Sign in to run this Way.");
+      if (!token) {
+        setError("Sign in to run this Way.");
+        return;
+      }
       const res = await fetch(`${MCP_ORIGIN}/v1/goals/submissions/${encodeURIComponent(way.id)}/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ input: Object.values(values).filter(Boolean).join("\n") || "" }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) return setError(String(body?.error || `The server answered ${res.status}.`));
-      setRun(body);
-      setRunning(true);
+      if (!res.ok) {
+        const why = String(body?.error || `The server answered ${res.status}.`);
+        setError(why);
+        setTurns((t) => [...t, { kind: "kell", tone: "error", text: why }]);
+        return;
+      }
+      setStarted(true);
+      absorb(body);
     } catch {
       setError("Could not reach the server.");
+      setTurns((t) => [...t, { kind: "kell", tone: "error", text: "Could not reach the server." }]);
     } finally {
       setBusy(false);
     }
@@ -876,6 +939,8 @@ function WayRun({ way }: { way: Submission }) {
 
   async function answer(value: string | string[]) {
     if (!run?.id) return;
+    const said = Array.isArray(value) ? value.join(", ") : value;
+    setTurns((t) => [...t, { kind: "you", text: said }]);
     setBusy(true);
     setError(null);
     try {
@@ -883,59 +948,41 @@ function WayRun({ way }: { way: Submission }) {
       const res = await fetch(`${MCP_ORIGIN}/v1/goals/runs/${encodeURIComponent(run.id)}/done`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ note: Array.isArray(value) ? value.join(", ") : value }),
+        body: JSON.stringify({ note: said }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) return setError(String(body?.error || `The server answered ${res.status}.`));
-      setRun(body);
+      if (!res.ok) {
+        const why = String(body?.error || `The server answered ${res.status}.`);
+        setError(why);
+        setTurns((t) => [...t, { kind: "kell", tone: "error", text: why }]);
+        return;
+      }
+      absorb(body);
     } catch {
       setError("Could not reach the server.");
+      setTurns((t) => [...t, { kind: "kell", tone: "error", text: "Could not reach the server." }]);
     } finally {
       setBusy(false);
     }
   }
 
-  if (!running) {
-    return (
-      <>
-        <InputsForm inputs={inputs} onStart={start} busy={busy} error={error} />
-        <p className="kwm-small kwm-muted">
-          Runs on kell&apos;s own models. Every step sees the run&apos;s input and the output of the steps before it.
-        </p>
-      </>
-    );
-  }
+  // A question is shown only while it is unanswered; once answered the run moves on and it drops out.
+  const openQuestion = run?.question && !run.question.answered && !asked.has(`${run.question.key}:done`)
+    ? run.question
+    : null;
 
-  if (run?.status === "done") {
-    return (
-      <p>
-        Done.{" "}
-        {run.outputs?.length
-          ? `It produced ${run.outputs.length} output${run.outputs.length === 1 ? "" : "s"}.`
-          : ""}
-      </p>
-    );
-  }
-
-  if (run?.question) {
-    return <QuestionCard question={run.question} busy={busy} error={error} onAnswer={answer} />;
-  }
-
-  if (run?.waiting_on) {
-    return (
-      <p className="kwm-small kwm-muted">
-        Waiting on step {run.waiting_on.order}: {run.waiting_on.title}
-        {run.waiting_on.link ? (
-          <>
-            {" "}
-            · <a href={run.waiting_on.link}>open it</a>
-          </>
-        ) : null}
-      </p>
-    );
-  }
-
-  return <p className="kwm-small kwm-muted">Running…</p>;
+  return (
+    <WayChat
+      inputs={inputs}
+      turns={turns}
+      question={started ? openQuestion : null}
+      busy={busy}
+      onStart={start}
+      onAnswer={answer}
+      started={started}
+      estimate={way.cost_estimate ?? null}
+    />
+  );
 }
 
 /** The slice of a run reply this panel reads. Unknown fields are ignored, never guessed at. */
@@ -944,5 +991,12 @@ type RunState = {
   status?: "running" | "waiting_human" | "waiting_session" | "done" | "failed" | "cancelled";
   waiting_on?: { order: number; title: string; link?: string } | null;
   outputs?: { order: number; title: string; output: string }[];
-  question?: WayQuestion | null;
+  /** The plan, with what each step reads and writes (docs/steps_sandboxes_filesystems.md). */
+  steps?: { n: number; title: string; by?: string; produces?: string[] | string; imports?: string[] }[];
+  /** The files this run produced (docs/procedure_outputs.md); `url` is licence-gated. */
+  artifacts?: Artifact[];
+  download_all?: string;
+  /** Files the run could not keep, and why. Shown, never silently dropped. */
+  artifacts_refused?: { name: string; why: string }[];
+  question?: (WayQuestion & { answered?: boolean }) | null;
 };

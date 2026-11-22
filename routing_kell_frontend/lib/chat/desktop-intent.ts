@@ -10,9 +10,9 @@
  */
 const DESKTOP_INTENT: RegExp[] = [
   /\b(?:my|our)\s+(?:desktop|laptop|machine|computer|pc|workstation)\b/i,
-  /\b(?:on|from|in)\s+(?:my|our|the|this|that)\s+(?:desktop|laptop|machine|computer|pc|workstation)\b/i,
+  /\b(?:on|from|in)\s+(?:my|our|this|that)\s+(?:desktop|laptop|machine|computer|pc|workstation)\b/i,
   /\b(?:continue|resume|pick\s+up|carry\s+on)\b[^.!?\n]{0,40}\b(?:session|chat|work|task|where)\b/i,
-  /\b(?:run|execute)\b[^.!?\n]{0,30}\b(?:tests?|build|command|script)\b[^.!?\n]{0,30}\b(?:desktop|laptop|machine|computer|pc|repo|project)\b/i,
+  /\b(?:run|execute)\b[^.!?\n]{0,30}\b(?:tests?|build|command|script)\b[^.!?\n]{0,30}\b(?:desktop|laptop|machine|computer|pc|workstation)\b/i,
 ];
 
 /** True when the text clearly asks for work on a desktop session. */

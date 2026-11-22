@@ -1,4 +1,4 @@
-"""Running a submitted script, isolated: a Modal Sandbox (gVisor), never this server.
+"""Running a submitted script, isolated: Agent37 (default) or a Modal Sandbox (gVisor) — never this server.
 
 app/services/sandbox_executor.py's subprocess executor says it is not a security sandbox, and the hosted server has no
 Docker, so a stranger's script runs only here:
@@ -12,12 +12,20 @@ Docker, so a stranger's script runs only here:
 Languages by the file's extension: Python, shell (bash/sh), JavaScript (node). Anything else is refused.
 Credentials: MODAL_TOKEN_ID + MODAL_TOKEN_SECRET (the Modal SDK reads them); without them a script step fails with a
 sentence saying so -- it is never run anywhere else instead.
+
+Files a script produces (`produces=`) are read back from /out before the sandbox is deleted: exec returns only
+stdout, and the instance is terminated in a `finally`, so a file asked for afterwards would never arrive.
+
+Provider: Agent37 by default; `SUBMISSION_SANDBOX=modal` switches back (docs/sandboxing.md).
 """
 from __future__ import annotations
 
 import os
+import posixpath
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Iterable, Mapping, Optional
+
+from app.submissions.artifacts import OUT_DIR
 
 APP_NAME = os.environ.get("SUBMISSION_SANDBOX_APP", "kell-way-scripts")
 SCRIPT_TIMEOUT_S = int(os.environ.get("SUBMISSION_SCRIPT_TIMEOUT_S", "120"))
@@ -45,20 +53,22 @@ def _agent37_key() -> str:
 def provider() -> str:
     """Which sandbox actually runs a script: "agent37", "modal", or "" (none configured).
 
-    SUBMISSION_SANDBOX picks one explicitly. Otherwise MODAL wins whenever it is configured, because its default
-    instance IS gVisor and its network is blocked per sandbox — and our script steps run code written by strangers.
-    Agent37 is ~36x cheaper sustained but ships a container with open egress by default
-    (docs/pricing_and_sandbox_per_way.md 4.1), so it is opt-in, not the fallback.
+    DEFAULT IS AGENT37 (owner's call, 2026-11-22): it is ~36x cheaper sustained and wakes 13x faster, and the
+    reason it was previously opt-in — its default instance is a container with open egress — is handled here
+    rather than avoided: _run_on_agent37 asks for `deny-all` egress unless AGENT37_NETWORK=open, so the cheap
+    provider is also the closed one.
+
+    SUBMISSION_SANDBOX overrides the choice, including `modal`, so switching back is one variable and no code.
     """
     chosen = (os.environ.get("SUBMISSION_SANDBOX") or "").strip().lower()
-    if chosen == "agent37":
-        return "agent37" if _agent37_key() else ""
     if chosen == "modal":
         return "modal" if configured() else ""
-    if configured():
-        return "modal"
+    if chosen == "agent37":
+        return "agent37" if _agent37_key() else ""
     if _agent37_key():
         return "agent37"
+    if configured():
+        return "modal"
     return ""
 
 
@@ -73,7 +83,8 @@ def runtime_for(name: str) -> Optional[tuple[str, ...]]:
     return next((cmd for ext, cmd in RUNTIMES.items() if path.endswith(ext)), None)
 
 
-async def _run_on_agent37(cmd: tuple[str, ...], code: str, stdin: str) -> ScriptResult:
+async def _run_on_agent37(cmd: tuple[str, ...], code: str, stdin: str,
+                          imports: Optional[Mapping[str, str]] = None) -> ScriptResult:
     """One script on a throwaway Agent37 instance: create, exec, delete.
 
     A fresh instance per script, so two callers can never see each other's files — the same guarantee the Modal
@@ -121,8 +132,12 @@ async def _run_on_agent37(cmd: tuple[str, ...], code: str, stdin: str) -> Script
             import shlex
 
             argv = " ".join(shlex.quote(part) for part in cmd)
-            command = f"printf '%s' {shlex.quote(stdin[:200_000])} | {argv} {shlex.quote(code)}" if stdin else \
-                      f"{argv} {shlex.quote(code)}"
+            run_it = f"printf '%s' {shlex.quote(stdin[:200_000])} | {argv} {shlex.quote(code)}" if stdin else \
+                f"{argv} {shlex.quote(code)}"
+            # The step's imported files are written first, in the same exec, so they are on disk when the script
+            # starts — this is what lets a step read an earlier step's file (steps_sandboxes_filesystems.md §4).
+            writing = _materialise_agent37_command(imports or {})
+            command = f"{writing} && cd {OUT_DIR} && {run_it}" if writing else run_it
             ran = await client.post(
                 f"{sandbox_host}/v1/instances/{iid}/exec",
                 headers={"X-Agent37-Key": key, "Content-Type": "application/json"},
@@ -141,8 +156,70 @@ async def _run_on_agent37(cmd: tuple[str, ...], code: str, stdin: str) -> Script
                 pass
 
 
-async def run_script(code: str, name: str, stdin: str = "") -> ScriptResult:
-    """Run `code` (from the file `name`, which picks the language) in a fresh isolated sandbox."""
+def _capture_script_js(produced: Iterable[str]) -> str:
+    """The Node tail that emits a script's files as one base64 JSON line, matching `artifacts.parse_captured`."""
+    return "\n".join([
+        "const fs = require('fs'), path = require('path');",
+        "const out = [];",
+        f"for (const rel of {list(map(str, produced))!r}) {{",
+        f"  const p = path.join({OUT_DIR!r}, rel);",
+        "  if (fs.existsSync(p) && fs.statSync(p).isFile())",
+        "    out.push({ name: path.basename(p), b64: fs.readFileSync(p).toString('base64') });",
+        "}",
+        "console.log('\\nKELL_ARTIFACTS:' + JSON.stringify(out));",
+    ])
+
+
+async def _materialise_modal(sb: Any, imports: Mapping[str, str]) -> None:
+    """Write the step's imported files into the sandbox before its script runs (Modal)."""
+    for rel, body in imports.items():
+        safe = _safe_relpath(rel)
+        await sb.mkdir.aio(posixpath.dirname(f"{OUT_DIR}/{safe}") or OUT_DIR, parents=True)
+        await sb.filesystem.write_text.aio(body, f"{OUT_DIR}/{safe}")
+
+
+def _safe_relpath(name: str) -> str:
+    """A path inside the sandbox's /out. A name is stranger-supplied, so it may not walk out of the directory."""
+    clean = posixpath.normpath("/" + str(name).replace("\\", "/")).lstrip("/")
+    if not clean or clean.startswith(".."):
+        raise SandboxUnavailable(f"{name!r} is not a usable filename")
+    return clean
+
+
+def _materialise_agent37_command(imports: Mapping[str, str]) -> str:
+    """A shell command that writes the imports into /out on an Agent37 instance.
+
+    Agent37's base template has no `/v1/files` endpoints, so bytes go through `exec`, whose request body is capped at
+    1 MB. Each file is therefore written in chunks under that cap, base64'd so a binary input survives, and the whole
+    command stays one exec so the files land before the step's own command runs.
+    """
+    import base64
+
+    if not imports:
+        return ""
+    parts = [f"mkdir -p {OUT_DIR}"]
+    limit = 600_000                      # comfortably under the 1 MB request cap once the command text is added
+    for rel, body in imports.items():
+        safe = _safe_relpath(rel)
+        parent = posixpath.dirname(safe)
+        if parent:
+            parts.append(f"mkdir -p {OUT_DIR}/{parent}")
+        data = base64.b64encode(body.encode("utf-8")).decode()
+        parts.append(f": > {OUT_DIR}/{safe}")
+        for i in range(0, max(1, len(data)), limit):
+            parts.append(f"printf '%s' '{data[i:i + limit]}' | base64 -d >> {OUT_DIR}/{safe}")
+    return " && ".join(parts)
+
+
+async def run_script(code: str, name: str, stdin: str = "",
+                     produces: Optional[Iterable[str]] = None,
+                     imports: Optional[Mapping[str, str]] = None) -> ScriptResult:
+    """Run `code` (from the file `name`, which picks the language) in a fresh isolated sandbox.
+
+    `produces` names files the script writes into `/out`. They are read back over the same channel *before* the
+    instance is deleted — the deletion is in a `finally`, so a file requested afterwards would never arrive. With
+    no `produces`, nothing is captured and a script step behaves exactly as it did before artifacts existed.
+    """
     cmd = runtime_for(name)
     if cmd is None:
         raise SandboxUnavailable(f"{name} is not a Python, shell or JavaScript file")
@@ -152,8 +229,21 @@ async def run_script(code: str, name: str, stdin: str = "") -> ScriptResult:
     if not which:
         raise SandboxUnavailable("scripts run in an isolated sandbox this server is not connected to yet "
                                  "(set AGENT37_API_KEY, or MODAL_TOKEN_ID / MODAL_TOKEN_SECRET)")
+    wanted = [w for w in (produces or []) if isinstance(w, str) and w.strip()]
+    if wanted:
+        from app.submissions.artifacts import OUT_DIR, capture_script
+
+        if name.lower().endswith(".py"):
+            code = code + "\n\n" + capture_script(produced=wanted, order=0)
+        elif name.lower().endswith((".js", ".mjs")):
+            # Node gets a real script; the tail writes the files as base64 JSON on stdout.
+            code = code + "\n\n" + _capture_script_js(wanted)
+        else:
+            # Shell: tar the drop zone, base64'd, on stdout. No python assumed to exist in the image.
+            code = (f"mkdir -p {OUT_DIR}; ( {code} ); "
+                    f"cd {OUT_DIR} && tar cf - . 2>/dev/null | base64")
     if which == "agent37":
-        return await _run_on_agent37(cmd, code, stdin)
+        return await _run_on_agent37(cmd, code, stdin, imports=imports or {})
 
     import modal
 
@@ -162,6 +252,10 @@ async def run_script(code: str, name: str, stdin: str = "") -> ScriptResult:
     sb = await modal.Sandbox.create.aio(app=app, image=image, timeout=SCRIPT_TIMEOUT_S + 30, cpu=1.0, memory=1024,
                                         block_network=True)
     try:
+        if imports:
+            # Modal has a real filesystem API, so the inputs are simply written before the script runs. This is the
+            # case that makes "read literature.md, write main.tex" work (docs/steps_sandboxes_filesystems.md §4).
+            await _materialise_modal(sb, imports)
         proc = await sb.exec.aio(*cmd, code, timeout=SCRIPT_TIMEOUT_S)
         if stdin:
             proc.stdin.write(stdin.encode("utf-8")[:200_000])

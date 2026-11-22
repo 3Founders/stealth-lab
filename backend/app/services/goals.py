@@ -503,10 +503,14 @@ async def find_or_create_goal(
             RETURNING id, canonical_name, home_shard_id
             """,
             str(goal_id), canonical_name, description, objective,
-            constraints if constraints is not None else [],
-            goal_metadata,
-            expected_outcome if expected_outcome is not None else {},
-            verification_requirement if verification_requirement is not None else {},
+            # These four columns are cast with ::jsonb, and asyncpg will not encode a Python list or dict for such a
+            # cast: it wants JSON text. Passing the objects straight through made EVERY goal insert fail
+            # ("invalid input for query argument $5: [] (expected str, got list)"), which took the whole Submit a Way
+            # path down (found 2026-11-18). json.dumps is the encoding the cast is asking for.
+            json.dumps(constraints if constraints is not None else []),
+            json.dumps(goal_metadata),
+            json.dumps(expected_outcome if expected_outcome is not None else {}),
+            json.dumps(verification_requirement if verification_requirement is not None else {}),
             status, provenance, created_from, owner_id, visibility,
             aliases or [], created_by, resolved_scope_type, resolved_scope_entity_id,
             to_pgvector(embedding_vec) if embedding_vec is not None else None,

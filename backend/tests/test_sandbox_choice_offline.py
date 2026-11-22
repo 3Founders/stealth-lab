@@ -27,16 +27,17 @@ def test_nothing_configured_says_so_and_names_the_variables_to_set():
     assert "MODAL_TOKEN_ID" in d["unchosen_reason"]
 
 
-def test_modal_is_the_fallback_when_both_are_available(monkeypatch):
+def test_agent37_is_the_default_when_both_are_available(monkeypatch):
     monkeypatch.setenv("AGENT37_API_KEY", "k")
     monkeypatch.setenv("MODAL_TOKEN_ID", "a")
     monkeypatch.setenv("MODAL_TOKEN_SECRET", "b")
-    assert sandbox_choice.describe()["active"] == "modal"
-
-
-def test_agent37_is_used_when_it_is_the_only_configured_option(monkeypatch):
-    monkeypatch.setenv("AGENT37_API_KEY", "k")
     assert sandbox_choice.describe()["active"] == "agent37"
+
+
+def test_modal_is_used_when_it_is_the_only_configured_option(monkeypatch):
+    monkeypatch.setenv("MODAL_TOKEN_ID", "a")
+    monkeypatch.setenv("MODAL_TOKEN_SECRET", "b")
+    assert sandbox_choice.describe()["active"] == "modal"
 
 
 def test_agent37_is_asked_for_deny_all_unless_told_otherwise(monkeypatch):
@@ -55,11 +56,13 @@ def test_every_option_states_its_isolation_and_cost():
         assert o["cost_note"], o["id"]
 
 
-def test_the_cheaper_option_is_named_but_not_defaulted(monkeypatch):
+def test_the_cheaper_option_is_now_also_the_default(monkeypatch):
+    """Cost and safety no longer point in opposite directions: Agent37 wins on price AND asks for deny-all."""
     monkeypatch.setenv("AGENT37_API_KEY", "k")
     monkeypatch.setenv("MODAL_TOKEN_ID", "a")
     monkeypatch.setenv("MODAL_TOKEN_SECRET", "b")
     d = sandbox_choice.describe()
     cheap = min(d["options"], key=lambda o: o["cost_per_2min_run_usd"])
     assert cheap["id"] == "agent37"
-    assert d["active"] == "modal", "cost must not decide the default; isolation does"
+    assert d["active"] == "agent37"
+    assert d["deny_egress_on_agent37"] is True, "the cheap default must still close egress"
