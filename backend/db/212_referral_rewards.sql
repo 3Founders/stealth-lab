@@ -25,12 +25,9 @@
 --                      redelivery must find the row already there rather than pay twice.
 --
 --                      status walks one way:
---                        released   the reward was added to the referrer's wallet, in the SAME transaction that wrote
---                                   this row (org_wallet_credits, source 'referral_reward', payment_ref
---                                   'referral:<id>'). Release is automatic: paid in, paid out, one commit.
---                        pending    only ever seen on a row written by an older deployment or left by a crash; the
---                                   repair run (services/referral_rewards.release_pending) finishes it. New referrals
---                                   never stop here.
+--                        pending    the referred person has paid, the reward is not spendable yet
+--                        released   the reward was added to the referrer's wallet (org_wallet_credits, source
+--                                   'referral_reward', payment_ref 'referral:<id>')
 --                        void       refused: self-referral, a founder/issued code, or the 30-a-year allowance of
 --                                   that referrer was already full
 --                        reversed   a refund or chargeback took the payment back (the credit row is closed by a
@@ -38,7 +35,7 @@
 --                      A row is never deleted and never rewritten back down the scale.
 --
 -- Additive and idempotent. Nothing existing changes behaviour: an order without a code writes no row here, and the
--- reward is off only if KEL_REFERRAL_REWARD_INR is set to 0. The default is on, at Rs 100.
+-- reward is off unless KEL_REFERRAL_REWARD_USD is above zero (services/referral_rewards.py).
 
 CREATE TABLE IF NOT EXISTS referral_rewards (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -48,8 +45,7 @@ CREATE TABLE IF NOT EXISTS referral_rewards (
     order_id          TEXT NOT NULL,
     payment_id        TEXT NOT NULL,
     amount_paise      BIGINT NOT NULL CHECK (amount_paise > 0),  -- what the referred person actually paid
-    reward_inr        BIGINT NOT NULL CHECK (reward_inr > 0),    -- the reward promised, in whole rupees (what was promised)
-    reward_usd        NUMERIC(14, 6) NOT NULL CHECK (reward_usd > 0),  -- those rupees at the rate the day it was earned
+    reward_usd        NUMERIC(14, 6) NOT NULL CHECK (reward_usd > 0),
     status            TEXT NOT NULL DEFAULT 'pending'
                       CHECK (status IN ('pending', 'released', 'void', 'reversed')),
     reason            TEXT,                             -- why a void/reversed row is what it is, in words
@@ -71,10 +67,6 @@ CREATE INDEX IF NOT EXISTS idx_referral_reward_referrer ON referral_rewards (ref
 -- The 30-per-account allowance, counted on released (paid) referrals only.
 CREATE INDEX IF NOT EXISTS idx_referral_reward_released ON referral_rewards (referrer_user_id)
     WHERE status = 'released';
-
--- The repair run (release_pending) looks for pending rows, and for released rows with no wallet credit; this index
--- keeps both cheap as the table grows.
-CREATE INDEX IF NOT EXISTS idx_referral_reward_status ON referral_rewards (status, created_at);
 
 -- The wallet credit a referral pays is a source of its own, so a balance history says where the money came from.
 -- (The constraint was last replaced in db/164; repeat its full list with the new member added.)
