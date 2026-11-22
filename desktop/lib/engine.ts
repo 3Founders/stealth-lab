@@ -17,7 +17,9 @@ export type { Client }
 export type Engine = { baseUrl: string; password: string; directory: string }
 
 // How long a starting engine may take to report its port (see engineStart).
-export const ENGINE_START_MS = 180_000
+// 10 minutes: a project on OneDrive with a few GB of files can spend several minutes in the
+// engine's first scan before it prints its port (2026-11-22: a 6 GB CS6101 folder missed 3 min).
+export const ENGINE_START_MS = 600_000
 
 // The platform package inside the app (electron-builder unpacks these binaries beside app.asar) and the binary's name.
 const platformBin = () => (process.platform === "win32" ? "opencode.exe" : "opencode")

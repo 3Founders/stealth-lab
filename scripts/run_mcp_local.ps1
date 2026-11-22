@@ -17,6 +17,14 @@
 param([int]$Port = 8765)
 
 $ErrorActionPreference = "Stop"
+
+# Idempotent for a logon task: a second copy must not fight the first for the port.
+$already = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+if ($already) {
+  Write-Host "kell MCP server is already listening on $Port"
+  exit 0
+}
+
 $backend = Join-Path (Split-Path -Parent $PSScriptRoot) "backend"
 Set-Location $backend
 
