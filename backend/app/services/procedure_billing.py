@@ -105,9 +105,15 @@ def _callback(url: Optional[str]) -> str:
 
 
 async def procedure_row(pool: Any, ref: str) -> Optional[dict[str, Any]]:
-    """One active procedure version by row id, stable procedure_id, or a goal submission id."""
+    """One active procedure version by row id, stable procedure_id, or a goal submission id.
+
+    When the ref is a submission, the submission id is carried on the answer so the purchase can
+    return the buyer to that Way's own page rather than to whatever page the browser came from.
+    """
     text = str(ref or "")
-    sub = await pool.fetchrow("SELECT parent_procedure_id::text AS parent FROM goal_submissions WHERE id::text = $1", text)
+    sub = await pool.fetchrow(
+        "SELECT id::text AS submission_id, parent_procedure_id::text AS parent "
+        "FROM goal_submissions WHERE id::text = $1", text)
     if sub is not None and sub.get("parent"):
         text = str(sub["parent"])
     row = await pool.fetchrow(
@@ -117,7 +123,19 @@ async def procedure_row(pool: Any, ref: str) -> Optional[dict[str, Any]]:
            FROM procedures
            WHERE (id::text = $1 OR procedure_id::text = $1) AND t_invalid IS NULL AND availability = 'active'
            ORDER BY (id::text = $1) DESC, version DESC LIMIT 1""", text)
-    return dict(row) if row else None
+    if row is None:
+        return None
+    out = dict(row)
+    out["submission_id"] = (sub or {}).get("submission_id")
+    if out["submission_id"] is None:
+        # Bought by procedure row rather than by Way: return the newest published Way of this version,
+        # so the buyer still lands on a paid page instead of the bare site.
+        latest = await pool.fetchrow(
+            "SELECT id::text AS submission_id FROM goal_submissions "
+            "WHERE parent_procedure_id = $1::uuid AND status IN ('approved', 'ai_approved') "
+            "ORDER BY created_at DESC LIMIT 1", out["id"])
+        out["submission_id"] = latest["submission_id"] if latest else None
+    return out
 
 
 async def purchase_status(pool: Any, *, procedure_row_id: Any, buyer_user_id: Optional[str]) -> str:
@@ -279,7 +297,15 @@ async def create_purchase(pool: Any, *, procedure_row_id: str, buyer_user_id: st
     buyer = _uuid(buyer_user_id)
     if buyer is None:
         raise PurchaseError("sign in with a kell account to buy", 401)
-    callback = _callback(callback_url)
+    # The return page is explicit, never the Referer: a purchase made from /route used to send the
+    # buyer back to /route. The Way's paid page offers the two ways to produce the output.
+    submission_id = row.get("submission_id")
+    if callback_url:
+        callback = _callback(callback_url)
+    elif submission_id:
+        callback = f"https://www.kell.org.in/way/{submission_id}/paid"
+    else:
+        callback = DEFAULT_CALLBACK
     currency = row["price_currency"] or "INR"
 
     active = await pool.fetchrow(
@@ -327,10 +353,12 @@ async def create_purchase(pool: Any, *, procedure_row_id: str, buyer_user_id: st
         try:
             purchase_id = await pool.fetchval(
                 """INSERT INTO procedure_purchases
-                       (procedure_id, procedure_row_id, procedure_version, buyer_user_id, amount_paise, currency)
-                   VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, $6)
+                       (procedure_id, procedure_row_id, procedure_version, buyer_user_id, amount_paise, currency,
+                        submission_id)
+                   VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, $6, $7::uuid)
                    RETURNING id::text""",
-                row["procedure_id"], row["id"], int(row["version"]), buyer, int(price), currency)
+                row["procedure_id"], row["id"], int(row["version"]), buyer, int(price), currency,
+                submission_id)
         except asyncpg.UniqueViolationError:
             # Another request opened the active purchase between the read and the insert.
             active = await pool.fetchrow(

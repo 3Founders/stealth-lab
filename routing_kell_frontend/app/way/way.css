@@ -62,7 +62,6 @@
 .kwm-rail-link { display: grid; grid-template-columns: 96px 1fr; gap: 10px; text-decoration: none; color: var(--ink); align-items: start; }
 .kwm-rail-thumb { display: block; width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--surface); }
 .kwm-rail-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.kwm-rail-blabel { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 18px; font-weight: 500; color: var(--grey); letter-spacing: .04em; }
 .kwm-rail-body { display: grid; gap: 3px; min-width: 0; }
 .kwm-rail-body b { font-size: 14px; font-weight: 500; line-height: 1.3; }
 .kwm-rail-link:hover b { text-decoration: underline; text-underline-offset: 3px; }
@@ -134,16 +133,13 @@
   .kwm-evidence { padding: 16px; }
 }
 
-/* 2c. No sample output — the Way as a short text post. Same information a social post carries:
-   who it is, what it does, what it costs; no invented thumbnail. */
-.kwm-post-card { display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: start; }
-.kwm-post-avatar { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--soft); border: 1px solid var(--rule); font-size: 15px; font-weight: 500; color: var(--ink); letter-spacing: .02em; }
-.kwm-post-body { display: grid; gap: 6px; min-width: 0; }
-.kwm-post-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
-.kwm-post-head b { font-size: 17px; font-weight: 500; }
-.kwm-post-text { font-size: 16.5px; line-height: 1.6; color: var(--text-2); max-width: 46em; }
-.kwm-post-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; color: var(--grey); }
+/* A related Way with no thumbnail is text only: no avatar, no logo-like tile. */
+.kwm-rail-link[data-text="true"] { grid-template-columns: 1fr; }
+.kwm-rail-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13.5px; line-height: 1.45; color: var(--text-2); }
 
-/* A related Way with no thumbnail reads as text with an avatar, not a two-letter tile. */
-.kwm-rail-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--soft); border: 1px solid var(--rule); font-size: 13px; font-weight: 500; color: var(--ink); }
-.kwm-rail-link[data-text="true"] { grid-template-columns: 36px 1fr; }
+/* The page after payment: two choices, nothing else competing with them. */
+.kwm-paid { padding-top: clamp(120px, 14vw, 180px); }
+.kwm-paid-options { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; max-width: 62em; }
+.kwm-paid-card { border: 1px solid var(--rule-strong); border-radius: 10px; padding: 26px; display: grid; gap: 12px; align-content: start; background: var(--surface); }
+.kwm-paid-card h2 { font-size: clamp(20px, 2vw, 26px); font-weight: 500; }
+.kwm-paid-card p { max-width: 34em; line-height: 1.6; color: var(--text-2); }

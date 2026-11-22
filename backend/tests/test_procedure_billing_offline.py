@@ -27,11 +27,11 @@ def procedure(price=15000, currency="INR"):
             "availability": "active", "visibility": "public", "owner_id": "author"}
 
 
-def pool_for(*, price_row, purchase=None, active=None, used=None, inserted="purchase-1", rows=()):
+def pool_for(*, price_row, purchase=None, active=None, used=None, inserted="purchase-1", rows=(), submission_id=None):
     pool = AsyncMock()
     async def fetchrow(sql, *args):
         if "FROM goal_submissions" in sql:
-            return None
+            return {"submission_id": submission_id, "parent": ROW} if submission_id else None
         if "FROM procedures" in sql:
             return price_row
         if "FROM procedure_purchases" in sql:
@@ -189,6 +189,30 @@ async def test_a_new_link_is_remembered_on_the_purchase(monkeypatch):
     update = pool.execute.await_args.args
     assert "checkout_url = $4" in update[0]
     assert update[4] == "https://rzp.io/i/ghi"
+
+
+@pytest.mark.asyncio
+async def test_a_submission_purchase_returns_to_its_paid_page(monkeypatch):
+    # The callback is derived from the purchase, never from the browser's Referer: paying from /route
+    # used to return the buyer to /route.
+    submission = str(uuid4())
+    pool = pool_for(price_row=procedure(), active=None, inserted=PURCHASE, submission_id=submission)
+    link = AsyncMock(return_value={"id": "plink_5", "short_url": "https://rzp.io/i/paid"})
+    monkeypatch.setattr(pb, "create_payment_link", link)
+    await pb.create_purchase(pool, procedure_row_id=ROW, buyer_user_id=BUYER)
+    assert link.await_args.kwargs["callback_url"] == f"https://www.kell.org.in/way/{submission}/paid"
+
+
+@pytest.mark.asyncio
+async def test_the_submission_id_is_stored_on_the_purchase(monkeypatch):
+    submission = str(uuid4())
+    pool = pool_for(price_row=procedure(), active=None, inserted=PURCHASE, submission_id=submission)
+    monkeypatch.setattr(pb, "create_payment_link",
+                        AsyncMock(return_value={"id": "plink_6", "short_url": "https://rzp.io/i/sub"}))
+    await pb.create_purchase(pool, procedure_row_id=ROW, buyer_user_id=BUYER)
+    insert = pool.fetchval.await_args.args
+    assert "submission_id" in insert[0]
+    assert submission in insert[1:]
 
 
 # ------------------------------------------------------------------ bind / consume / refund

@@ -1,4 +1,4 @@
-"""The purchase endpoint for per-procedure licences (docs/procedure_billing.md §7.1).
+"""The purchase endpoint for per-procedure one-run purchases (docs/procedure_billing.md §7.1).
 
   POST /v1/procedures/{procedure_id}/purchase  {"procedure_row_id": "<version row or submission id>"}
        -> {"checkout_url": "<Razorpay Payment Link>"}   (the Way page redirects there)
@@ -7,19 +7,19 @@
 The path id is the `parent_procedure_id` the Way page already has (a procedures row id or the
 stable procedure_id); the body is the submission id the page has as `way.id`. Both are resolved
 to the exact version row before anything is priced or charged.
+
+The return page is derived from the purchase's submission (`/way/{id}/paid`), never from the
+Referer: a purchase made from /route used to return the buyer to /route.
 """
 from __future__ import annotations
 
 from typing import Any, Callable
-from urllib.parse import urlparse
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.mcp_server.chat_routes import BY_ADDRESS, client_address, cors_headers as _cors, resolve_identity
 from app.services import procedure_billing
-
-_ALLOWED_CALLBACK_HOSTS = {"kell.org.in", "www.kell.org.in", "localhost", "127.0.0.1"}
 
 
 def _cors_headers(request: Request) -> dict[str, str]:
@@ -35,23 +35,6 @@ def _json(request: Request, body: Any, status: int = 200) -> JSONResponse:
 
 def _err(request: Request, status: int, message: str) -> JSONResponse:
     return _json(request, {"error": {"message": message}}, status)
-
-
-def _callback(request: Request, fallback_path: str) -> str:
-    """The page to return the buyer to. Only kell hosts, so a forged Referer cannot redirect."""
-    for raw in (request.headers.get("referer"), request.headers.get("origin")):
-        if not raw:
-            continue
-        try:
-            u = urlparse(raw)
-        except ValueError:
-            continue
-        if u.scheme not in ("http", "https") or (u.hostname or "").lower() not in _ALLOWED_CALLBACK_HOSTS:
-            continue
-        if request.headers.get("referer") == raw:
-            return raw.split("#", 1)[0]
-        return f"{u.scheme}://{u.netloc}{fallback_path}"
-    return f"https://www.kell.org.in{fallback_path}"
 
 
 def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_local: Callable[[Request], bool]) -> None:
@@ -82,12 +65,12 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         ref = body.get("procedure_row_id") or request.path_params.get("procedure_id")
         if not isinstance(ref, str) or not ref.strip():
             return _err(request, 400, "give the procedure version to buy")
-        # The page is /way/{submission_id}; the referer is exact, the fallback is a best guess.
-        callback = _callback(request, f"/way/{request.path_params.get('procedure_id') or ref}")
         try:
+            # No callback from the request: create_purchase sends the buyer to the Way's own paid page
+            # (derived from the submission), never to whatever page the browser came from.
             result = await procedure_billing.create_purchase(
                 pool_getter(), procedure_row_id=ref.strip(),
-                buyer_user_id=str(who.actor_id), callback_url=callback)
+                buyer_user_id=str(who.actor_id))
         except procedure_billing.ProcedureBillingError as exc:
             return _err(request, exc.status_code, str(exc))
         return _json(request, result)

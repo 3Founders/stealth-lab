@@ -90,6 +90,8 @@ export type WayOutput = {
 export type WaySibling = {
   id: string;
   goal_name: string;
+  /** A line of the Way's own description, so a thumbnail-less tile still says what it does. */
+  description?: string;
   thumb_url?: string | null;
   /** Why it is here: "same Goal", "same publisher", "same output kind". Shown, not guessed. */
   relation?: string;
@@ -114,17 +116,6 @@ const STATUS_COPY: Record<string, { label: string; tone: string }> = {
 
 /** The short id a reader can quote in a bug report, without the whole uuid. */
 const short = (id: string) => id.slice(0, 8);
-
-/** One or two initials, for the round avatar on a text-only card. Never a photo we do not have. */
-const initials = (name: string) => {
-  const letters = String(name || "")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((word) => word.charAt(0).toUpperCase())
-    .join("");
-  return letters || "K";
-};
 
 /**
  * A rate with its interval. Renders nothing numeric without `n` and a bound: this is the component that
@@ -257,7 +248,7 @@ export default function WayPage({ id }: { id: string }) {
         // own goal, then — when that goal is unique — other published Ways. Every tile names its
         // relation, and a failure here must never take the Way page down.
         if (!way.similar?.length) {
-          type CatalogueRow = { id?: string; goal_name?: string; price_paise?: number | null; price_currency?: string | null };
+          type CatalogueRow = { id?: string; goal_name?: string; description?: string; price_paise?: number | null; price_currency?: string | null };
           const pick = (rows: CatalogueRow[], relation: string): WaySibling[] =>
             rows
               .filter((r) => r?.id && r.id !== way.id)
@@ -265,6 +256,7 @@ export default function WayPage({ id }: { id: string }) {
               .map((r) => ({
                 id: String(r.id),
                 goal_name: r.goal_name || "Untitled Way",
+                description: r.description || "",
                 relation,
                 thumb_url: null,
                 price_paise: r.price_paise ?? null,
@@ -491,10 +483,9 @@ export function WayCard({ way }: { way: Submission }) {
 
       <div className="kwm-cols">
         <div className="kwm-main">
-          {/* 2. Output — the artefact when there is one. With no artefact the Way reads as a short
-              text post instead of an empty slot: who it is for, what it does, what it costs. The bytes
-              never live in Postgres (docs/procedure_outputs.md). */}
-          {output ? (
+          {/* 2. Output — shown only when there is one. The bytes never live in Postgres
+              (docs/procedure_outputs.md). */}
+          {output && (
             <section className="kwm-card kwm-output" aria-labelledby="kwm-output-h">
               <h2 id="kwm-output-h">Output</h2>
               <div className="kwm-output-body">
@@ -524,28 +515,6 @@ export function WayCard({ way }: { way: Submission }) {
                   </p>
                 </div>
               </div>
-            </section>
-          ) : (
-            <section className="kwm-card kwm-post" aria-labelledby="kwm-output-h">
-              <h2 id="kwm-output-h">Output</h2>
-              <article className="kwm-post-card">
-                <span className="kwm-post-avatar" aria-hidden="true">{initials(way.goal_name)}</span>
-                <div className="kwm-post-body">
-                  <div className="kwm-post-head">
-                    <b>{way.goal_name}</b>
-                    <span className="kwm-small kwm-muted">{version || "this version"} · {status.label}</span>
-                  </div>
-                  <p className="kwm-post-text">{way.description || way.goal_name}</p>
-                  <div className="kwm-post-meta">
-                    <span>{steps.length} step{steps.length === 1 ? "" : "s"}</span>
-                    <span>{automated} automated · {human} human</span>
-                    {price && <span>{price} for one output</span>}
-                  </div>
-                </div>
-              </article>
-              <p className="kwm-small kwm-muted">
-                No sample output is published for this version yet. The decomposition below is what it will do.
-              </p>
             </section>
           )}
 
@@ -721,15 +690,14 @@ function WayRail({ items, goal }: { items: WaySibling[]; goal: string }) {
                     className="kwm-rail-link"
                     data-text={s.thumb_url ? undefined : "true"}
                   >
-                    {s.thumb_url ? (
+                    {s.thumb_url && (
                       <span className="kwm-rail-thumb">
                         <img src={s.thumb_url} alt="" loading="lazy" width={120} height={68} />
                       </span>
-                    ) : (
-                      <span className="kwm-rail-avatar" aria-hidden="true">{initials(s.goal_name)}</span>
                     )}
                     <span className="kwm-rail-body">
                       <b>{s.goal_name}</b>
+                      {s.description && <span className="kwm-rail-desc">{s.description}</span>}
                       <span className="kwm-small kwm-muted">
                         {p ?? "Free"}
                         {s.relation ? ` · ${s.relation}` : ""}
