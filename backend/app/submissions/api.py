@@ -11,7 +11,7 @@ import asyncio
 import logging
 from typing import Any, Optional
 
-from app.submissions import intake, review, runs, store
+from app.submissions import intake, public_catalog, review, runs, store
 
 log = logging.getLogger(__name__)
 REVIEW_WAIT = 90.0
@@ -240,6 +240,19 @@ async def get_public(pool: Any, viewer_id: Optional[str], submission_id: str) ->
 
 async def mine(pool: Any, owner_id: str) -> list[dict]:
     return await store.list_for_owner(pool, owner_id)
+
+
+async def list_public(pool: Any, *, q: str = "", limit: int = 12) -> list[dict]:
+    """The published-Ways catalogue: the same projection as one Way page, without per-caller licence state."""
+    rows = await public_catalog.list_public(pool, q=q, limit=limit)
+    out: list[dict] = []
+    for row in rows:
+        row = dict(row)
+        row["mode_label"] = intake.MODE_LABEL.get(row.get("mode"), row.get("mode") or "")
+        row["price_currency"] = row.get("price_currency") or "INR"
+        row["step_count"] = int(row.get("steps") or 0)
+        out.append(row)
+    return out
 
 
 async def start_run(pool: Any, owner_id: str, submission_id: str, input: str = "", mode: str = "headless",

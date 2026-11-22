@@ -25,6 +25,7 @@ import Link from "next/link";
 import { getAccessToken } from "@/lib/session";
 import { MCP_ORIGIN } from "@/lib/connector";
 import { rateFor, priceLabel } from "@/lib/way-rate";
+import TryPanel from "@/components/way/TryPanel";
 import "@/app/way/way.css";
 
 type Step = {
@@ -463,7 +464,12 @@ export function WayCard({ way }: { way: Submission }) {
         <PriceBlock way={way} price={price} runCost={runCost} onBuy={() => setBuying(true)} busy={buying} error={buyError} />
       )}
 
-      {/* 3. Description — what this Way does, in the author's words. */}
+      {/* 2c. Try it. A free or already-licensed Way can be run from this page; the panel shows each
+          step's output. A priced Way the reader has not bought never gets this panel (the price block
+          above is the only action), so the page never promises a run the backend would refuse. */}
+      {runnable && !needsLicence && <TryPanel wayId={way.id} goalName={way.goal_name} />}
+
+      {/* 3. Description - what this Way does, in the author's words. */}
       <section className="kwm-card" aria-labelledby="kwm-what-h">
         <h2 id="kwm-what-h">Description</h2>
         <p>{way.description || way.goal_name}</p>
@@ -567,9 +573,9 @@ export function WayCard({ way }: { way: Submission }) {
             </p>
           ) : (
             <p>
-              <Link className="kwm-cta" href={`/submit?id=${encodeURIComponent(way.id)}`}>
-                Run this Way
-              </Link>
+              <a className="kwm-cta" href="#kwm-try-h">
+                Try this Way
+              </a>
             </p>
           )
         ) : (

@@ -86,6 +86,25 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
             return _json(request, {"submissions": await api.mine(pool, subject)})
         return await _answer(request, api.submit(pool, subject, await _body(request)))
 
+    @server.custom_route("/v1/goals/submissions/public", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def submissions_public(request: Request) -> Response:
+        """The published-Ways catalogue. PUBLIC: the homepage and task search read it without an account.
+
+        Registered BEFORE `/{submission_id}` or "public" would be read as an id. Only approved Ways;
+        the owner, the reviewer and the internal goal ids are never in the projection.
+        """
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        q = str(request.query_params.get("q") or "")[:200]
+        try:
+            limit = int(request.query_params.get("limit") or 12)
+        except ValueError:
+            limit = 12
+        return _json(request, {"ways": await api.list_public(pool, q=q, limit=max(1, min(limit, 50)))})
+
     @server.custom_route("/v1/goals/submissions/{submission_id}", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def submission_get(request: Request) -> Response:
         # PUBLIC. A Way page is a sales page, so this endpoint is readable without an account (docs/procedure_outputs.md).

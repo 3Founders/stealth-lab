@@ -14,7 +14,7 @@ import { PROJECT_SYNC_ENABLED } from "@/lib/features";
 const links = [
   { href: "/", label: "Home" },
   { href: "/docs", label: "Docs" },
-  { href: "/route", label: "Route" },
+  { href: "/task", label: "Tasks" },
   { href: "/desktop", label: "Download" },
   { href: "/connect", label: "Connect" },
   { href: "/pricing", label: "Pricing" },
@@ -128,7 +128,7 @@ export default function Header() {
     <div className="nav-wrap">
       <div className="frame">
         <header className="nav">
-          <Link href="/?home=1" className="logo" aria-label="keळ, home" onClick={() => setOpen(false)}>
+          <Link href="/" className="logo" aria-label="keळ, home" onClick={() => setOpen(false)}>
             <Wordmark priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{navLinks.map(item)}</nav>
