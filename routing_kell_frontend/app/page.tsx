@@ -42,7 +42,7 @@ export default function Home() {
         <h1 id="h-home" className="display">What do you want to get done?</h1>
         <p className="lead small">
           Find a Way: a reviewed, reusable procedure with its steps, its evidence and a sample output.
-          Read it free. Try it when you sign in.
+          Read it free. Buy a licence to run it.
         </p>
 
         <form className="ask" role="search" onSubmit={(e) => { e.preventDefault(); go(query); }}>

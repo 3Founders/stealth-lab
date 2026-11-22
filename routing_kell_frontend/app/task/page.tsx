@@ -189,8 +189,8 @@ export default function TaskPage() {
         <h1 className="display"><AnimatedHeading>Find a Way to get it done.</AnimatedHeading></h1>
         <p className="lead small">
           Search published Ways by what you want to accomplish, or route a task to a Goal. A Way is a
-          reviewed procedure with its steps, evidence and a sample output: open one to read it, or sign
-          in to try it and see the result.
+          reviewed procedure with its steps, evidence and a sample output: open one to read it, or buy
+          a licence to run it.
         </p>
       </section>
 
