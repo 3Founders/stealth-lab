@@ -58,12 +58,12 @@
 .kwm-main { display: grid; gap: 20px; min-width: 0; }
 .kwm-rail { display: grid; gap: 18px; position: sticky; top: 96px; align-content: start; }
 .kwm-rail-card { max-width: none; }
-.kwm-rail-list { list-style: none; display: grid; gap: 12px; margin: 0; padding: 0; }
+.kwm-rail-list { list-style: none; display: grid; gap: 22px; margin: 0; padding: 0; }
 .kwm-rail-link { display: grid; grid-template-columns: 96px 1fr; gap: 10px; text-decoration: none; color: var(--ink); align-items: start; }
 .kwm-rail-thumb { display: block; width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--surface); }
 .kwm-rail-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .kwm-rail-body { display: grid; gap: 3px; min-width: 0; }
-.kwm-rail-body b { font-size: 14px; font-weight: 500; line-height: 1.3; }
+.kwm-rail-body b { font-size: 16.5px; font-weight: 500; line-height: 1.35; }
 .kwm-rail-link:hover b { text-decoration: underline; text-underline-offset: 3px; }
 
 /* 6. Run this --------------------------------------------------------------- */
@@ -147,11 +147,11 @@
 
 /* A related Way with no thumbnail is text only: no avatar, no logo-like tile. */
 .kwm-rail-link[data-text="true"] { grid-template-columns: 1fr; }
-.kwm-rail-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13.5px; line-height: 1.45; color: var(--text-2); }
+.kwm-rail-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 14.5px; line-height: 1.5; color: var(--text-2); }
 
 /* The page after payment: two choices, nothing else competing with them. */
 .kwm-paid { padding-top: clamp(120px, 14vw, 180px); }
-.kwm-paid-options { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; max-width: 62em; }
+.kwm-paid-options { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; max-width: 62em; }
 .kwm-paid-card { border: 1px solid var(--rule-strong); border-radius: 10px; padding: 26px; display: grid; gap: 12px; align-content: start; background: var(--surface); }
 .kwm-paid-card h2 { font-size: clamp(20px, 2vw, 26px); font-weight: 500; }
 .kwm-paid-card p { max-width: 34em; line-height: 1.6; color: var(--text-2); }
