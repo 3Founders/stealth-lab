@@ -8,6 +8,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { freshSignIn } from "./signin"
+import { webToken } from "./websession"
 
 const config = () => {
   const home = process.env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab")
@@ -52,40 +53,67 @@ function payload(reply: Rpc): any {
 }
 
 /** A kell REST route (not an MCP tool): `/procedure`, `/triage`. The configured `url` is the MCP endpoint
- *  (`https://…/mcp`); these routes live at the host root. Same sign-in and bearer as a tool call. */
-export async function callKellRoute(path: string, body: unknown, timeoutMs = 8000): Promise<any> {
-  try { return await routeOnce(path, body, timeoutMs) } catch (err: any) {
+ *  (`https://…/mcp`); these routes live at the host root. Same sign-in and bearer as a tool call.
+ *  `method` is POST unless the route is a read: `callKellRoute(path, undefined, t, "GET")` sends no body and no
+ *  content-type, which is what the submission routes' GET handlers expect. */
+export async function callKellRoute(path: string, body: unknown, timeoutMs = 8000, method: "GET" | "POST" | "DELETE" = "POST"): Promise<any> {
+  try { return await routeOnce(path, body, timeoutMs, method) } catch (err: any) {
     if (err?.status !== 401) throw err
     // A 401 with a saved refresh token is a token that went stale, not a person who signed out: refresh it and ask once more.
     await freshSignIn(process.env, fetch, true)
-    return await routeOnce(path, body, timeoutMs)
+    return await routeOnce(path, body, timeoutMs, method)
   }
 }
 
-async function routeOnce(path: string, body: unknown, timeoutMs: number): Promise<any> {
+async function routeOnce(path: string, body: unknown, timeoutMs: number, method: "GET" | "POST" | "DELETE" = "POST"): Promise<any> {
   await freshSignIn()
   const { url, token } = config()
   if (!url) throw Object.assign(new Error("kell is not signed in on this machine"), { status: 401 })
+  return rest(url, path, body, timeoutMs, method, token, "kell's sign-in expired; sign in again")
+}
+
+/** The message a website-API call without a Rooms session gets. The sign-in lives in the Rooms pane, not in Settings. */
+export const SIGN_IN_TO_WEBSITE = "Sign in to kell (Rooms) to use your submissions."
+
+/**
+ * A kell route on the WEBSITE API (`/v1/goals/...`: submissions and runs). It takes the person's website session, not
+ * the coding sign-in: the MCP-app token is refused there on purpose ("this token was issued to a connected MCP app"),
+ * which is what made "My submissions" answer 401 and the panel report a broken sign-in (2026-11-19). The website
+ * session is the Rooms sign-in, read from the app's own loopback (lib/websession.ts); it is never written to disk.
+ */
+export async function callWebRoute(path: string, body: unknown, timeoutMs = 8000, method: "GET" | "POST" | "DELETE" = "POST"): Promise<any> {
+  const { url } = config()
+  if (!url) throw Object.assign(new Error(SIGN_IN_TO_WEBSITE), { status: 401 })
+  const token = await webToken()
+  if (!token) throw Object.assign(new Error(SIGN_IN_TO_WEBSITE), { status: 401 })
+  return rest(url, path, body, timeoutMs, method, token, SIGN_IN_TO_WEBSITE)
+}
+
+/** One REST call to the kell host: the MCP endpoint's origin, the route's path, a bearer, and JSON in and out. */
+async function rest(url: string, path: string, body: unknown, timeoutMs: number, method: string,
+                    token: string | undefined, unauthorized: string): Promise<any> {
   const base = String(url).replace(/\/mcp\/?$/, "").replace(/\/+$/, "")
+  const sendBody = method !== "GET" && body !== undefined
   let r: Response
   try {
     r = await fetch(`${base}${path}`, {
-      method: "POST", signal: AbortSignal.timeout(timeoutMs),
+      method, signal: AbortSignal.timeout(timeoutMs),
       headers: {
-        "content-type": "application/json", accept: "application/json",
+        accept: "application/json",
+        ...(sendBody ? { "content-type": "application/json" } : {}),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify(body),
+      ...(sendBody ? { body: JSON.stringify(body) } : {}),
     })
   } catch {
     throw Object.assign(new Error("kell's server could not be reached"), { status: 502 })
   }
-  if (r.status === 401) throw Object.assign(new Error("kell's sign-in expired; sign in again"), { status: 401 })
+  if (r.status === 401) throw Object.assign(new Error(unauthorized), { status: 401 })
   const text = await r.text()
   let json: any = null
   try { json = JSON.parse(text) } catch { /* not JSON */ }
   if (r.status >= 400) {
-    throw Object.assign(new Error(String(json?.error || `kell's server answered ${r.status}`)), { status: 502 })
+    throw Object.assign(new Error(String(json?.error || `kell's server answered ${r.status}`)), { status: r.status })
   }
   return json ?? text
 }

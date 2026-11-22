@@ -67,6 +67,16 @@ from typing import Any, Callable, Optional
 # without ever hanging the runner.
 _BEHAVIORAL_CHECK_TIMEOUT_SECONDS = 60
 
+# The only environment variables a generated module's subprocess receives (docs/sandboxing.md §1). Deliberately
+# minimal: a Python interpreter needs a PATH and, on Windows, SYSTEMROOT or it cannot even start. Anything else --
+# DATABASE_URL, gateway secrets, provider keys -- stays in the parent process. Add to this list only when the
+# driver genuinely cannot run without it, and never by widening to os.environ.
+_SUBPROCESS_ENV_ALLOWLIST = frozenset({
+    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC",
+    "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE",
+    "LANG", "LC_ALL", "PYTHONIOENCODING", "PYTHONUTF8", "PYTHONHASHSEED",
+})
+
 # Keys whose presence in a DEFAULT tool listing means the full JSON schema
 # leaked -- exactly the defect this capability kind exists to prevent.
 _DEFAULT_SCHEMA_LEAK_KEYS = [
@@ -213,7 +223,12 @@ def _verify_lazy_tool_schema(repo_root: str, contract: dict) -> BehavioralValida
 
     # Repo root on PYTHONPATH so the produced module's own imports resolve
     # exactly as they would in the real target repo.
-    env = dict(os.environ)
+    #
+    # The environment is ALLOWLISTED, not inherited. This driver exec_module()s a GENERATED module, so it is
+    # untrusted code by construction: inheriting os.environ handed it DATABASE_URL, the payment-gateway secrets
+    # and every provider key the backend holds (docs/sandboxing.md §1). The driver itself needs nothing beyond
+    # the stdlib and PYTHONPATH, so only the variables a Python subprocess genuinely requires are passed.
+    env = {k: v for k, v in os.environ.items() if k in _SUBPROCESS_ENV_ALLOWLIST}
     env["PYTHONPATH"] = os.pathsep.join(
         p for p in (repo_root, env.get("PYTHONPATH")) if p
     )

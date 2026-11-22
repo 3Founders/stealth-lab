@@ -18,7 +18,9 @@ const links = [
   { href: "/desktop", label: "Download" },
   { href: "/connect", label: "Connect" },
   { href: "/pricing", label: "Pricing" },
-  { href: "/#about", label: "About" },
+  // "Submit" replaces "About": a Way is the thing a visitor comes to contribute, and the About section is still
+  // reachable by scrolling the home page. The `#about` scroll-highlight effect below stays as a no-op, guarded.
+  { href: "/submit", label: "Submit" },
 ];
 
 const Arrow = () => (
@@ -91,16 +93,6 @@ export default function Header() {
     };
   }, [pathname]);
 
-  // On the homepage, About glides in place; elsewhere the default navigation to /#about runs and SmoothScroll resolves it.
-  const onAbout = (e: React.MouseEvent) => {
-    setOpen(false);
-    if (pathname === "/" && window.__kelScrollTo) {
-      e.preventDefault();
-      window.history.pushState(null, "", "/#about");
-      window.__kelScrollTo("#about");
-    }
-  };
-
   // Same idea as the logo: on the homepage, glide back to the top instead of a full
   // reload; elsewhere, the default Link navigation to "/" just lands there normally.
   const onHome = (e: React.MouseEvent) => {
@@ -117,18 +109,15 @@ export default function Header() {
 
   const item = (l: (typeof links)[number]) => {
     const isHome = l.href === "/";
-    const isAbout = l.href === "/#about";
-    const active = isAbout
-      ? pathname === "/" && aboutInView
-      : isHome
-        ? pathname === "/" && !aboutInView
-        : pathname === l.href;
+    // No "About" entry in the nav any more (Submit took its slot), so the About scroll-highlight no longer has a
+    // target to light up. Home keeps its own rule: active on the homepage until the About section is scrolled to.
+    const active = isHome ? pathname === "/" && !aboutInView : pathname === l.href;
     return (
       <Link
         key={l.href}
         href={l.href}
         aria-current={active ? "page" : undefined}
-        onClick={l.label === "About" ? onAbout : l.label === "Home" ? onHome : () => setOpen(false)}
+        onClick={l.label === "Home" ? onHome : () => setOpen(false)}
       >
         {l.label}
       </Link>

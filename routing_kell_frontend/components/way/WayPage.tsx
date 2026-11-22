@@ -58,6 +58,9 @@ export type Submission = {
   price_currency?: string | null;
   /** Whether THIS person already holds a licence for THIS version. */
   licence_status?: "none" | "purchased" | "refunded" | null;
+  /** The typical cost of ONE run, in paise — the models and tools the steps call, not the licence. Absent when the
+   *  Way has no measured runs yet, which the price block says rather than showing a made-up figure. */
+  run_cost_paise?: number | null;
   /** The artefact this version produces (docs/procedure_outputs.md). The bytes live in object storage; this is a
    *  locator plus metadata. Absent = nothing published yet, which the page says rather than hiding the section. */
   output?: WayOutput | null;
@@ -135,9 +138,10 @@ function Rate({ successes, total }: { successes: number | null; total: number | 
  *  - It does not claim the purchase is complete until the gateway confirms. While the request is in flight the
  *    button says so; a failure states that nothing was charged, because that is true.
  */
-function PriceBlock({ way, price, onBuy, busy, error }: {
+function PriceBlock({ way, price, runCost, onBuy, busy, error }: {
   way: Submission;
   price: string;
+  runCost: string | null;
   onBuy: () => void;
   busy: boolean;
   error: string | null;
@@ -159,6 +163,14 @@ function PriceBlock({ way, price, onBuy, busy, error }: {
           <p className="kwm-price-figure">
             <b>{price}</b>
             <span className="kwm-muted"> once</span>
+          </p>
+          {/* The licence price is one number; what a RUN costs is another, and the two are often confused. Show
+              both, and say plainly that the run's model spend is not part of the licence. */}
+          <p className="kwm-small kwm-muted">
+            <span className="kwm-k">Run cost</span>
+            {runCost
+              ? `${runCost} per run, for the models and tools the steps call — separate from the licence.`
+              : "The models and tools a run calls are billed separately at cost; this Way has not recorded a typical run cost yet."}
           </p>
           <p>
             Buys the right to run <b>this version</b>
@@ -225,6 +237,32 @@ export default function WayPage({ id }: { id: string }) {
         const way: Submission | undefined = body?.submission ?? (body?.id ? body : undefined);
         if (!way?.id) return setLoad({ kind: "missing" });
         setLoad({ kind: "ok", way });
+        // "More like this" (docs/procedure_outputs.md §6). The backend does not fill `similar` yet, so when it is
+        // absent the page derives it from the reader's own approved Ways: same publisher is the honest signal the
+        // public endpoint actually gives, and every tile names why it is there. A failure here must never take the
+        // Way page down — the rail is an addition, so it degrades to invisible.
+        if (!way.similar?.length && token) {
+          try {
+            const listRes = await fetch(`${MCP_ORIGIN}/v1/goals/submissions`, {
+              headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+            });
+            if (listRes.ok && live) {
+              const rows = (await listRes.json())?.submissions;
+              if (Array.isArray(rows)) {
+                const siblings = rows
+                  .filter((r: { id?: string; status?: string }) => r?.id && r.id !== way.id && (r.status === "approved" || r.status === "ai_approved"))
+                  .slice(0, 8)
+                  .map((r: { id: string; goal_name?: string }) => ({
+                    id: r.id,
+                    goal_name: r.goal_name || "Untitled Way",
+                    relation: "your published Ways",
+                    thumb_url: null,
+                  }));
+                if (siblings.length) setLoad({ kind: "ok", way: { ...way, similar: siblings } });
+              }
+            }
+          } catch { /* the rail simply does not appear */ }
+        }
       } catch {
         if (live) setLoad({ kind: "error", message: "Could not reach the server." });
       }
@@ -294,6 +332,7 @@ export function WayCard({ way }: { way: Submission }) {
   const [buying, setBuying] = useState(false);
   const [buyError, setBuyError] = useState<string | null>(null);
   const price = priceLabel(way.price_paise, way.price_currency ?? "INR");
+  const runCost = priceLabel(way.run_cost_paise, way.price_currency ?? "INR");
   const output = way.output ?? null;
 
   // The purchase itself (docs/procedure_billing.md §3). The backend endpoint lands with the gate; until it does,
@@ -359,9 +398,6 @@ export function WayCard({ way }: { way: Submission }) {
           {way.goal_name}
           {version && <span className="kwm-version">{version}</span>}
         </h1>
-        <p className="kwm-goal">
-          <span className="kwm-k">Goal</span> {way.goal_name}
-        </p>
         <div className="kwm-meta">
           <span className="kwm-badge" data-tone={status.tone}>
             {status.label}
@@ -384,10 +420,12 @@ export function WayCard({ way }: { way: Submission }) {
       {/* 2. Output — the artefact the Way produces, ABOVE the description. What a Way makes is the thing a
           reader wants to see first: a report or a deck says more about whether you want it than any step list.
           The bytes do NOT live in Postgres: Neon holds a locator, sha256 and size, and the file itself lives in
-          object storage (docs/procedure_outputs.md). */}
-      <section className="kwm-card kwm-output" aria-labelledby="kwm-output-h">
-        <h2 id="kwm-output-h">Output</h2>
-        {output ? (
+      {/* 2. Output — shown ONLY when there is one. An empty "no output yet" card is a hole in the page: it takes
+          the most prominent slot and tells the reader nothing. Absent = the section is not rendered at all, and the
+          reader simply sees the description first. The bytes never live in Postgres (docs/procedure_outputs.md). */}
+      {output && (
+        <section className="kwm-card kwm-output" aria-labelledby="kwm-output-h">
+          <h2 id="kwm-output-h">Output</h2>
           <div className="kwm-output-body">
             <a className="kwm-output-preview" href={output.url} target="_blank" rel="noopener noreferrer">
               {output.thumb_url ? (
@@ -415,29 +453,20 @@ export function WayCard({ way }: { way: Submission }) {
               </p>
             </div>
           </div>
-        ) : (
-          <p className="kwm-muted">
-            No output recorded for this version yet. When this Way runs, the artefact it produces is published
-            here, so the next person can judge the result before they pay for it.
-          </p>
-        )}
-      </section>
+        </section>
+      )}
 
       {/* 2b. Price and licence (docs/procedure_billing.md §7). Absent price = free = no block at all. It sits
           after Output because the price is only meaningful once the reader knows what it produces, and
           before the description because nobody parts with money before they know what they are buying. */}
-      {price && <PriceBlock way={way} price={price} onBuy={() => setBuying(true)} busy={buying} error={buyError} />}
+      {price && (
+        <PriceBlock way={way} price={price} runCost={runCost} onBuy={() => setBuying(true)} busy={buying} error={buyError} />
+      )}
 
-      {/* 3. What it does, and when it applies. */}
+      {/* 3. Description — what this Way does, in the author's words. */}
       <section className="kwm-card" aria-labelledby="kwm-what-h">
-        <h2 id="kwm-what-h">What it does</h2>
+        <h2 id="kwm-what-h">Description</h2>
         <p>{way.description || way.goal_name}</p>
-        {steps.length > 0 && (
-          <p className="kwm-small kwm-muted">
-            Applies when the {steps.length}-step sequence below can start: every human step has someone to do
-            it, and every automated step names something that exists.
-          </p>
-        )}
       </section>
 
       {/* 4. The decomposition — versions on the nodes, one atom per step. */}
