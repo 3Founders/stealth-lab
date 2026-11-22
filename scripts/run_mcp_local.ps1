@@ -14,7 +14,7 @@
 # and press Retry in the app, or restart kell.
 
 [CmdletBinding()]
-param([int]$Port = 8765)
+param([int]$Port = 8765, [string]$ConnectionsFile = "")
 
 $ErrorActionPreference = "Stop"
 
@@ -50,15 +50,16 @@ Get-Content .env | ForEach-Object {
 if (-not $env:DATABASE_URL) { throw "DATABASE_URL is not set in backend/.env" }
 
 # The provider connections file (deploy/provider_connections.json) is what makes
-# /v1/models non-empty. The hosted service sets this to /repo/backend/deploy/...;
-# locally the path is the checkout's, and without it the app says "No models are
-# available to this account yet."
-if (-not $env:STEALTH_PROVIDER_CONNECTIONS_FILE) {
-  $env:STEALTH_PROVIDER_CONNECTIONS_FILE = (Join-Path $backend "deploy\provider_connections.json")
-}
-if (-not (Test-Path $env:STEALTH_PROVIDER_CONNECTIONS_FILE)) {
-  throw "provider connections file not found: $env:STEALTH_PROVIDER_CONNECTIONS_FILE"
+# /v1/models non-empty. ALWAYS point at this checkout's file: a stale
+# STEALTH_PROVIDER_CONNECTIONS_FILE (for example the hosted /repo/backend/... path)
+# otherwise loads nothing and the app says "No models are available to this account yet."
+# Pass -ConnectionsFile only when deliberately testing another file.
+$connections = if ($ConnectionsFile) { $ConnectionsFile } else { Join-Path $backend "deploy\provider_connections.json" }
+$env:STEALTH_PROVIDER_CONNECTIONS_FILE = $connections
+if (-not (Test-Path $connections)) {
+  throw "provider connections file not found: $connections"
 }
 
 Write-Host "kell MCP server on http://127.0.0.1:$Port (db: $(([uri]$env:DATABASE_URL).Host))"
+Write-Host "provider connections: $connections"
 python -m uvicorn app.mcp_server.server:app --host 127.0.0.1 --port $Port --workers 1 --log-level info
