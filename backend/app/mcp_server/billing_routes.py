@@ -41,7 +41,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.mcp_server.chat_routes import BY_ADDRESS, Window, client_address, cors_headers as _chat_cors, resolve_identity
-from app.services import accounts, free_credits, packs, plans, referral_rewards, referrals, subscriptions, wallet
+from app.services import (accounts, free_credits, packs, plans, procedure_billing, referral_rewards, referrals,
+                          subscriptions, wallet, wallet_refunds)
 
 log = logging.getLogger(__name__)
 RAZORPAY_ORDERS = "https://api.razorpay.com/v1/orders"
@@ -355,6 +356,27 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         event = body.get("event") if isinstance(body, dict) else None
         if not isinstance(body, dict):
             return Response(status_code=200)                       # not an object: nothing to act on
+        if isinstance(event, str) and event.startswith("payment_link."):
+            # A per-procedure licence is a Razorpay Payment Link (docs/procedure_billing.md §2.2).
+            # Only the signed webhook grants it; the browser returning from checkout grants nothing.
+            link = (((body.get("payload") or {}).get("payment_link") or {}).get("entity")) or {}
+            pay = (((body.get("payload") or {}).get("payment") or {}).get("entity")) or {}
+            try:
+                if (event == "payment_link.paid" and link.get("id") and pay.get("id")
+                        and pay.get("amount") is not None):
+                    await procedure_billing.activate_by_link(
+                        pool, payment_link_id=str(link["id"]), payment_id=str(pay["id"]),
+                        amount_paise=int(pay["amount"]),
+                        licence_id=(str(link["reference_id"]) if link.get("reference_id") else None))
+                elif event in ("payment_link.cancelled", "payment_link.expired") and link.get("id"):
+                    await procedure_billing.close_link(
+                        pool, payment_link_id=str(link["id"]),
+                        status="expired" if event.endswith("expired") else "failed")
+                await wallet.mark_event(pool, event_id)
+            except Exception:  # noqa: BLE001 - tell Razorpay to retry rather than lose a paid licence
+                log.exception("billing webhook: payment-link event %s failed", event)
+                return Response(status_code=500)
+            return Response(status_code=200)
         if isinstance(event, str) and event.startswith("subscription."):
             try:
                 await subscriptions.on_event(pool, event, body)
@@ -363,9 +385,32 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
                 log.exception("billing webhook: subscription event %s failed", event)
                 return Response(status_code=500)
             return Response(status_code=200)
+        if isinstance(event, str) and event.startswith("refund."):
+            refund = wallet_refunds.refund_from_event(body)
+            if refund is None:
+                return Response(status_code=200)                   # failed, a speed change, or an auto-refund: no money moved
+            try:
+                await wallet_refunds.apply_refund(pool, **refund)
+                # A refunded Way licence stops running (docs/procedure_billing.md §4); the row stays.
+                await procedure_billing.refund_by_payment(pool, payment_id=refund["payment_id"])
+                await wallet.mark_event(pool, event_id)
+            except Exception:  # noqa: BLE001 - tell Razorpay to retry rather than lose a refund
+                log.exception("billing webhook: refund event %s failed", event)
+                return Response(status_code=500)
+            return Response(status_code=200)
         pay = payment_from_event(body)
         if pay is None:
             return Response(status_code=200)                       # an event we do not act on
+        # A Payment Link's order can also arrive as payment.captured. If it belongs to a licence,
+        # grant it here; there is no billing_orders row to find, so the wallet path would drop it.
+        try:
+            if await procedure_billing.activate_by_order(
+                    pool, order_id=pay["order_id"], payment_id=pay["payment_id"], amount_paise=pay["amount"]):
+                await wallet.mark_event(pool, event_id)
+                return Response(status_code=200)
+        except Exception:  # noqa: BLE001 - tell Razorpay to retry rather than lose a paid licence
+            log.exception("billing webhook: procedure licence payment %s failed", pay["payment_id"])
+            return Response(status_code=500)
         order = await wallet.find_order(pool, pay["order_id"])
         if order is None or int(order["amount_paise"]) != pay["amount"]:
             log.warning("billing webhook: payment %s does not match a known order", pay["payment_id"])

@@ -139,7 +139,8 @@ async def _way(pool: Any, way_id: str, owner_id: str, *, version: Optional[int] 
     """The active Way the person may run: public, or their own. `way_id` is a procedures row id or a stable
     procedure_id (the newest active version, or `version`)."""
     row = await pool.fetchrow(
-        """SELECT id::text AS id, procedure_id::text AS procedure_id, name, goal, steps FROM procedures
+        """SELECT id::text AS id, procedure_id::text AS procedure_id, name, goal, steps,
+                  version, price_paise, price_currency FROM procedures
            WHERE (id::text = $1 OR procedure_id::text = $1) AND t_invalid IS NULL AND availability = 'active'
              AND (visibility = 'public' OR owner_id = $2) AND ($3::int IS NULL OR version = $3)
            ORDER BY (id::text = $1) DESC, version DESC LIMIT 1""", way_id, owner_id, version)
@@ -466,6 +467,12 @@ async def start(pool: Any, way_id: str, *, owner_id: str, input: str = "", mode:
     if mode not in ("session", "headless"):
         raise RunError("mode is session or headless")
     way = await _way(pool, way_id, owner_id)
+    # The licence gate, in the one path every run goes through: the website's start_run, the
+    # MCP run_way tool, and a sub-Way executed by the executor. A free version never queries a
+    # licence; a priced one refuses with a named error before any step runs (docs/procedure_billing.md §3).
+    from app.services import procedure_billing
+    await procedure_billing.check_entitlement(
+        pool, procedure_row_id=way["id"], buyer_user_id=owner_id)
     plan = await expand(pool, way, owner_id)
     if not plan:
         raise RunError("this Way has no steps")

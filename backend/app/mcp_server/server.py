@@ -1051,6 +1051,10 @@ from app.mcp_server import billing_routes as _billing_routes  # noqa: E402 -- bu
 
 _billing_routes.register(server, _TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request)
 
+from app.mcp_server import procedure_billing_routes as _procedure_billing_routes  # noqa: E402 -- one-off Way licences
+
+_procedure_billing_routes.register(server, _TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request)
+
 from app.mcp_server import room_routes as _room_routes  # noqa: E402 -- rooms that follow a person across devices (db/157_rooms.sql)
 
 _room_routes.register(

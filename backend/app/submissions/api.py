@@ -166,6 +166,33 @@ async def get(pool: Any, owner_id: str, submission_id: str) -> dict:
 _PUBLIC_STEP_FIELDS = ("order", "kind", "title", "description", "prompt", "locator", "status")
 
 
+async def _price_and_licence(pool: Any, row: dict, viewer_id: Optional[str]) -> dict:
+    """The version's price and THIS caller's licence (docs/procedure_billing.md §7.1).
+
+    `price_paise` null/absent means free; `licence_status` is about the caller, so a signed-out
+    reader is always "none". The price is read from the exact parent procedure row, never from
+    the submission, so a later version cannot inherit an older price.
+    """
+    from app.services import procedure_billing
+
+    parent = row.get("parent_procedure_id")
+    if not parent or pool is None or not hasattr(pool, "fetchrow"):
+        # The projection tests drive get_public with no database; a page with no pool is a page with no price.
+        return {"price_paise": None, "price_currency": "INR", "licence_status": "none"}
+    proc = await pool.fetchrow(
+        "SELECT price_paise, price_currency FROM procedures WHERE id::text = $1 AND t_invalid IS NULL",
+        str(parent))
+    if proc is None:
+        return {"price_paise": None, "price_currency": "INR", "licence_status": "none"}
+    price = proc["price_paise"]
+    currency = proc["price_currency"] or "INR"
+    status = "none"
+    if price is not None and int(price) > 0 and viewer_id:
+        status = await procedure_billing.licence_status(
+            pool, procedure_row_id=parent, buyer_user_id=viewer_id)
+    return {"price_paise": price, "price_currency": currency, "licence_status": status}
+
+
 async def get_public(pool: Any, viewer_id: Optional[str], submission_id: str) -> Optional[dict]:
     """The Way as a buyer sees it (docs/procedure_outputs.md, docs/procedure_billing.md).
 
@@ -180,6 +207,8 @@ async def get_public(pool: Any, viewer_id: Optional[str], submission_id: str) ->
     if viewer_id:
         owned = await store.get(pool, submission_id, owner_id=viewer_id)
         if owned is not None:
+            owned = dict(owned)
+            owned.update(await _price_and_licence(pool, owned, viewer_id))
             return owned
 
     row = await store.get(pool, submission_id, owner_id=None)
@@ -202,11 +231,9 @@ async def get_public(pool: Any, viewer_id: Optional[str], submission_id: str) ->
             {k: s.get(k) for k in _PUBLIC_STEP_FIELDS if k in s}
             for s in (row.get("steps") or [])
         ],
-        # The licence state is about the caller, so a stranger is always "none" — the page still needs the field
-        # to decide whether to draw the buy button.
-        "licence_status": "none",
-        # price/output/similar are filled by the billing and outputs work; absent means "not yet published",
-        # which the page already renders honestly.
+        # Price and licence are about this caller and this exact version (docs/procedure_billing.md §7.1).
+        # `price_paise` null/absent means free; a signed-out reader is always "none".
+        **await _price_and_licence(pool, row, viewer_id),
     }
     return public
 
@@ -261,4 +288,6 @@ async def cancel_run(pool: Any, owner_id: str, run_id: str) -> dict:
     return await way_runs.report(pool, run_id, owner_id=owner_id, cancel=True)
 
 
-ERRORS = (intake.SubmissionError, runs.RunError, LookupError)
+from app.services.procedure_billing import ProcedureNotPurchased  # the paid-Way gate's named refusal
+
+ERRORS = (intake.SubmissionError, runs.RunError, LookupError, ProcedureNotPurchased)
