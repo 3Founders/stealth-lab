@@ -367,7 +367,7 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
                     await procedure_billing.activate_by_link(
                         pool, payment_link_id=str(link["id"]), payment_id=str(pay["id"]),
                         amount_paise=int(pay["amount"]),
-                        licence_id=(str(link["reference_id"]) if link.get("reference_id") else None))
+                        purchase_id=(str(link["reference_id"]) if link.get("reference_id") else None))
                 elif event in ("payment_link.cancelled", "payment_link.expired") and link.get("id"):
                     await procedure_billing.close_link(
                         pool, payment_link_id=str(link["id"]),

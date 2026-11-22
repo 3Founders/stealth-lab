@@ -190,7 +190,7 @@ export default function TaskPage() {
         <p className="lead small">
           Search published Ways by what you want to accomplish, or route a task to a Goal. A Way is a
           reviewed procedure with its steps, evidence and a sample output: open one to read it, or buy
-          a licence to run it.
+          one output to run it.
         </p>
       </section>
 

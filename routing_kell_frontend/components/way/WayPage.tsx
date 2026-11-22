@@ -56,9 +56,11 @@ export type Submission = {
    *  because free is the default state of the world and a "₹0" badge would invent a price where none exists. */
   price_paise?: number | null;
   price_currency?: string | null;
-  /** Whether THIS person already holds a licence for THIS version. */
+  /** One-run purchase state for THIS person and THIS version: paid = an output is bought and not produced. */
+  purchase_status?: "none" | "paid" | "used" | "refunded" | null;
+  /** The old field, kept for clients that have not moved: paid reads as purchased, used reads as none. */
   licence_status?: "none" | "purchased" | "refunded" | null;
-  /** The typical cost of ONE run, in paise — the models and tools the steps call, not the licence. Absent when the
+  /** The typical cost of ONE run, in paise - the models and tools the steps call, not the price. Absent when the
    *  Way has no measured runs yet, which the price block says rather than showing a made-up figure. */
   run_cost_paise?: number | null;
   /** The artefact this version produces (docs/procedure_outputs.md). The bytes live in object storage; this is a
@@ -146,37 +148,42 @@ function PriceBlock({ way, price, runCost, onBuy, busy, error }: {
   busy: boolean;
   error: string | null;
 }) {
-  const licensed = way.licence_status === "purchased";
-  const refunded = way.licence_status === "refunded";
+  const purchased = way.purchase_status === "paid" || way.licence_status === "purchased";
+  const used = way.purchase_status === "used";
+  const refunded = way.purchase_status === "refunded" || way.licence_status === "refunded";
   const version = way.parent_procedure_id ? short(way.parent_procedure_id) : null;
 
   return (
     <section className="kwm-card kwm-price" aria-labelledby="kwm-price-h">
-      <h2 id="kwm-price-h">{licensed ? "Licensed" : "Price"}</h2>
-      {licensed ? (
+      <h2 id="kwm-price-h">{purchased ? "Purchased" : used ? "Output delivered" : "Buy one output"}</h2>
+      {purchased ? (
         <p>
-          You have a licence for this version. It runs as often as you need, and a later revision never replaces
-          what you bought.
+          You paid for <b>one run</b> of this version. Start it in kell desktop; the output is yours. This is
+          not a subscription, and a later revision is a separate purchase.
         </p>
       ) : (
         <>
           <p className="kwm-price-figure">
             <b>{price}</b>
-            <span className="kwm-muted"> once</span>
+            <span className="kwm-muted"> for one output</span>
           </p>
-          {/* The licence price is one number; what a RUN costs is another, and the two are often confused. Show
-              both, and say plainly that the run's model spend is not part of the licence. */}
+          {/* The price buys one output; what a RUN costs is another number, and the two are often confused. */}
           <p className="kwm-small kwm-muted">
             <span className="kwm-k">Run cost</span>
             {runCost
-              ? `${runCost} per run, for the models and tools the steps call — separate from the licence.`
+              ? `${runCost} per run, for the models and tools the steps call - separate from the price.`
               : "The models and tools a run calls are billed separately at cost; this Way has not recorded a typical run cost yet."}
           </p>
           <p>
-            Buys the right to run <b>this version</b>
-            {version ? <span className="kwm-mono"> @{version}</span> : null} as often as you need. Not a
-            subscription, and a later revision is a separate Way.
+            Buys <b>one run</b> of <b>this version</b>
+            {version ? <span className="kwm-mono"> @{version}</span> : null} and its output. Not a
+            subscription; another output is another purchase.
           </p>
+          {used && (
+            <p className="kwm-small kwm-muted">
+              You already received this Way&apos;s output. Buy another output to produce it again.
+            </p>
+          )}
           {refunded && (
             <p className="kwm-small kwm-muted">
               A previous purchase of this version was refunded, so it needs buying again to run.
@@ -184,7 +191,7 @@ function PriceBlock({ way, price, runCost, onBuy, busy, error }: {
           )}
           <p>
             <button type="button" className="kwm-cta" onClick={onBuy} disabled={busy} aria-busy={busy || undefined}>
-              {busy ? "Opening payment…" : `Buy for ${price}`}
+              {busy ? "Opening payment…" : used || refunded ? `Buy another output for ${price}` : `Buy one output for ${price}`}
             </button>
           </p>
           {error && (
@@ -218,7 +225,7 @@ export default function WayPage({ id }: { id: string }) {
     (async () => {
       // PUBLIC BY DEFAULT. A Way page is a sales page: a reader must be able to see the artefact and the price
       // before deciding to sign in. So this always fetches, and sends the token only when there is one — the token
-      // upgrades the answer (adding `licence_status` for this person) rather than being the price of admission.
+      // upgrades the answer (adding `purchase_status` for this person) rather than being the price of admission.
       const token = await getAccessToken();
       try {
         const res = await fetch(`${MCP_ORIGIN}/v1/goals/submissions/${encodeURIComponent(id)}`, {
@@ -336,7 +343,7 @@ export function WayCard({ way }: { way: Submission }) {
   const output = way.output ?? null;
 
   // The purchase itself (docs/procedure_billing.md §3). The backend endpoint lands with the gate; until it does,
-  // this reports what actually happened rather than flipping to "Licensed" on a 404 — a page that shows a
+  // this reports what actually happened rather than flipping to "Purchased" on a 404 - a page that shows a
   // purchase for money nobody took is the worst possible lie on a page about evidence.
   async function buy() {
     setBuying(true);
@@ -364,7 +371,7 @@ export function WayCard({ way }: { way: Submission }) {
         return;
       }
       // The gateway hands back a redirect or a hosted-checkout URL; send the person there rather than
-      // pretending the licence exists before it is paid for.
+      // pretending the purchase exists before it is paid for.
       const url = body?.checkout_url || body?.redirect_url;
       if (typeof url === "string" && url) {
         window.location.assign(url);
@@ -384,7 +391,7 @@ export function WayCard({ way }: { way: Submission }) {
   const human = steps.length - automated;
   const runnable = way.status === "approved" || way.status === "ai_approved";
   // A priced Way the reader has not bought: the page must not offer a run it cannot deliver.
-  const needsLicence = !!price && way.licence_status !== "purchased";
+  const needsPurchase = !!price && !(way.purchase_status === "paid" || way.licence_status === "purchased");
   const version = way.parent_procedure_id ? `@${short(way.parent_procedure_id)}` : "";
 
   return (
@@ -456,7 +463,7 @@ export function WayCard({ way }: { way: Submission }) {
         </section>
       )}
 
-      {/* 2b. Price and licence (docs/procedure_billing.md §7). Absent price = free = no block at all. It sits
+      {/* 2b. Price and one-run purchase (docs/procedure_billing.md §7). Absent price = free = no block at all. It sits
           after Output because the price is only meaningful once the reader knows what it produces, and
           before the description because nobody parts with money before they know what they are buying. */}
       {price && (
@@ -557,7 +564,7 @@ export function WayCard({ way }: { way: Submission }) {
           <code>{`curl -s ${MCP_ORIGIN}/v1/goals/submissions/${short(way.id)} \\\n  -H "authorization: Bearer $KELL_TOKEN"`}</code>
         </pre>
         {runnable ? (
-          needsLicence ? (
+          needsPurchase ? (
             // A published, priced Way that the reader has not bought. Saying "Run this Way" here would promise
             // a run the backend must refuse; the honest action is to point at the price.
             <p>

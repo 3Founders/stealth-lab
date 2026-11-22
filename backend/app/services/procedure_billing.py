@@ -45,14 +45,33 @@ class ProcedureBillingError(Exception):
 
 
 class ProcedureNotPurchased(ProcedureBillingError):
-    """A paid Way was run without a live licence. The named refusal the gate raises."""
+    """A paid Way was run without a purchase. The named refusal the gate raises."""
     status_code = 402
 
     def __init__(self, price_paise: int, currency: str = "INR"):
         self.price_paise = int(price_paise)
         self.currency = currency or "INR"
         amount = f"{self.price_paise / 100:.2f}"
-        super().__init__(f"this Way costs {self.currency} {amount}; buy a licence before running it")
+        super().__init__(f"this Way costs {self.currency} {amount} for one output; buy it before running it")
+
+
+class ProcedureAlreadyUsed(ProcedureBillingError):
+    """The buyer already received this Way's output; another output is another purchase."""
+    status_code = 402
+
+    def __init__(self, price_paise: int, currency: str = "INR"):
+        self.price_paise = int(price_paise)
+        self.currency = currency or "INR"
+        amount = f"{self.price_paise / 100:.2f}"
+        super().__init__(f"you already received this Way's output; buy another output for {self.currency} {amount}")
+
+
+class ProcedureInUse(ProcedureBillingError):
+    """A purchase is already bound to a run that is producing the output."""
+    status_code = 409
+
+    def __init__(self, message: str = "this purchase is already producing an output; wait for that run or cancel it"):
+        super().__init__(message)
 
 
 class PurchaseError(ProcedureBillingError):
@@ -101,42 +120,100 @@ async def procedure_row(pool: Any, ref: str) -> Optional[dict[str, Any]]:
     return dict(row) if row else None
 
 
-async def licence_status(pool: Any, *, procedure_row_id: Any, buyer_user_id: Optional[str]) -> str:
-    """'none' | 'purchased' | 'refunded' for this buyer and this exact version."""
+async def purchase_status(pool: Any, *, procedure_row_id: Any, buyer_user_id: Optional[str]) -> str:
+    """'none' | 'paid' | 'used' | 'refunded' for this buyer and this exact version.
+
+    'paid' means one output is bought and not yet produced. 'used' means the output was already
+    produced; producing another one needs another purchase.
+    """
     buyer = _uuid(buyer_user_id)
     row_id = _uuid(procedure_row_id)
     if buyer is None or row_id is None:
         return "none"
     rows = await pool.fetch(
-        "SELECT status, expires_at FROM procedure_licences "
+        "SELECT status, consumed_at, expires_at FROM procedure_purchases "
         "WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid ORDER BY created_at DESC",
         row_id, buyer)
     now = datetime.now(timezone.utc)
     for r in rows:
-        if r["status"] == "paid" and (r["expires_at"] is None or r["expires_at"] > now):
-            return "purchased"
+        if r["status"] == "paid":
+            if r["consumed_at"] is not None:
+                return "used"
+            if r["expires_at"] is None or r["expires_at"] > now:
+                return "paid"
         if r["status"] == "refunded":
             return "refunded"
     return "none"
 
 
-async def check_entitlement(pool: Any, *, procedure_row_id: Any, buyer_user_id: Optional[str]) -> None:
-    """Raise ProcedureNotPurchased when the version is priced and this buyer has no live licence.
+async def licence_status(pool: Any, *, procedure_row_id: Any, buyer_user_id: Optional[str]) -> str:
+    """Compatibility for the old field: a paid, unconsumed purchase reads as 'purchased'."""
+    status = await purchase_status(pool, procedure_row_id=procedure_row_id, buyer_user_id=buyer_user_id)
+    return "purchased" if status == "paid" else ("refunded" if status == "refunded" else "none")
 
-    A free version (price NULL or 0) never queries a licence. The refusal is named, not a silent
-    fallback, so the website and the MCP tool can say the same sentence.
+
+async def check_entitlement(pool: Any, *, procedure_row_id: Any,
+                            buyer_user_id: Optional[str]) -> Optional[dict[str, Any]]:
+    """The gate: return the paid, unconsumed purchase for this version, or raise the named refusal.
+
+    A free version (price NULL or 0) returns None and never queries a purchase. A paid version with
+    no purchase raises ProcedureNotPurchased; a purchase already used raises ProcedureAlreadyUsed;
+    one already bound to a running output raises ProcedureInUse. The returned row is what
+    `way_runs.start` binds to the run so one purchase produces exactly one output.
     """
     row = await pool.fetchrow(
         "SELECT price_paise, price_currency FROM procedures WHERE id::text = $1 AND t_invalid IS NULL",
         str(procedure_row_id))
     if row is None:
-        return                                  # the caller's own loader owns "no such Way"
+        return None                             # the caller's own loader owns "no such Way"
     price = row["price_paise"]
     if price is None or int(price) <= 0:
-        return
-    status = await licence_status(pool, procedure_row_id=procedure_row_id, buyer_user_id=buyer_user_id)
-    if status != "purchased":
-        raise ProcedureNotPurchased(int(price), row["price_currency"] or "INR")
+        return None
+    currency = row["price_currency"] or "INR"
+    buyer = _uuid(buyer_user_id)
+    row_id = _uuid(procedure_row_id)
+    if buyer is None or row_id is None:
+        raise ProcedureNotPurchased(int(price), currency)
+    purchase = await pool.fetchrow(
+        "SELECT id::text AS id, status, consumed_at, used_by_run_id FROM procedure_purchases "
+        "WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid AND status = 'paid' "
+        "AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > now()) "
+        "ORDER BY created_at DESC LIMIT 1", row_id, buyer)
+    if purchase is None:
+        used = await pool.fetchval(
+            "SELECT 1 FROM procedure_purchases WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid "
+            "AND status = 'paid' AND consumed_at IS NOT NULL LIMIT 1", row_id, buyer)
+        if used:
+            raise ProcedureAlreadyUsed(int(price), currency)
+        raise ProcedureNotPurchased(int(price), currency)
+    if purchase["used_by_run_id"] is not None:
+        raise ProcedureInUse()
+    return dict(purchase)
+
+
+async def bind_purchase(pool: Any, *, purchase_id: str, run_id: str) -> None:
+    """Bind one purchase to the run that will produce its output; a second run is refused."""
+    done = await pool.fetchval(
+        "UPDATE procedure_purchases SET used_by_run_id = $2::uuid "
+        "WHERE id = $1::uuid AND status = 'paid' AND consumed_at IS NULL "
+        "AND (used_by_run_id IS NULL OR used_by_run_id = $2::uuid) RETURNING 1",
+        str(purchase_id), str(run_id))
+    if not done:
+        raise ProcedureInUse()
+
+
+async def consume_run(pool: Any, run_id: str) -> None:
+    """The run reached done: its output was produced, so the purchase is spent."""
+    await pool.execute(
+        "UPDATE procedure_purchases SET consumed_at = now() "
+        "WHERE used_by_run_id = $1::uuid AND consumed_at IS NULL", str(run_id))
+
+
+async def release_run(pool: Any, run_id: str) -> None:
+    """The run failed or was cancelled: release the purchase so the person can try again."""
+    await pool.execute(
+        "UPDATE procedure_purchases SET used_by_run_id = NULL "
+        "WHERE used_by_run_id = $1::uuid AND consumed_at IS NULL", str(run_id))
 
 
 # ------------------------------------------------------------------ gateway
@@ -187,7 +264,12 @@ async def fetch_payment_link(payment_link_id: str) -> Optional[dict[str, Any]]:
 
 async def create_purchase(pool: Any, *, procedure_row_id: str, buyer_user_id: str,
                           callback_url: Optional[str] = None) -> dict[str, Any]:
-    """Open (or reuse) a hosted checkout for one version. Returns `checkout_url` for the page."""
+    """Open (or reuse) a hosted checkout for ONE output of one version.
+
+    One active purchase at a time (the partial unique index). A paid, unconsumed purchase is already
+    the output the buyer asked for; a used or refunded purchase does not block buying another output
+    later, which is why this inserts a new row instead of reusing the old one.
+    """
     row = await procedure_row(pool, procedure_row_id)
     if row is None:
         raise PurchaseError("no such Way", 404)
@@ -200,100 +282,117 @@ async def create_purchase(pool: Any, *, procedure_row_id: str, buyer_user_id: st
     callback = _callback(callback_url)
     currency = row["price_currency"] or "INR"
 
-    existing = await pool.fetchrow(
+    active = await pool.fetchrow(
         "SELECT id::text AS id, status, payment_link_id, amount_paise, procedure_version "
-        "FROM procedure_licences WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid",
-        row["id"], buyer)
-    if existing is not None:
-        if existing["status"] == "paid":
-            # Already owned: send the page back to itself, where it will render "Licensed".
-            return {"checkout_url": callback, "already": True, "licence_status": "purchased",
-                    "price_paise": int(existing["amount_paise"] or price), "currency": currency,
-                    "version": int(existing["procedure_version"] or row["version"])}
-        if existing["status"] == "pending" and existing.get("payment_link_id"):
-            link = await fetch_payment_link(str(existing["payment_link_id"]))
+        "FROM procedure_purchases WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid "
+        "AND status IN ('pending', 'paid') AND consumed_at IS NULL "
+        "ORDER BY created_at DESC LIMIT 1", row["id"], buyer)
+    purchase_id: Optional[str] = None
+    if active is not None:
+        if active["status"] == "paid":
+            return {"checkout_url": callback, "already": True, "purchase_status": "paid",
+                    "licence_status": "purchased", "purchase_id": active["id"],
+                    "price_paise": int(active["amount_paise"] or price), "currency": currency,
+                    "version": int(active["procedure_version"] or row["version"])}
+        purchase_id = active["id"]
+        if active.get("payment_link_id"):
+            link = await fetch_payment_link(str(active["payment_link_id"]))
             if link is not None:
                 if link.get("status") in ("created", "partially_paid") and link.get("short_url"):
-                    return {"checkout_url": link["short_url"], "licence_id": existing["id"],
-                            "price_paise": int(price), "currency": currency, "version": int(row["version"])}
+                    return {"checkout_url": link["short_url"], "purchase_id": active["id"],
+                            "purchase_status": "pending", "price_paise": int(price),
+                            "currency": currency, "version": int(row["version"])}
                 if link.get("status") == "paid":
                     paid = next((p for p in (link.get("payments") or []) if p.get("status") == "captured"), None)
                     if paid is not None:
                         await activate_by_link(pool, payment_link_id=str(link.get("id") or ""),
                                                payment_id=str(paid.get("payment_id") or ""),
-                                               amount_paise=int(paid.get("amount") or 0))
-                        return {"checkout_url": callback, "already": True, "licence_status": "purchased",
-                                "price_paise": int(price), "currency": currency, "version": int(row["version"])}
+                                               amount_paise=int(paid.get("amount") or 0),
+                                               purchase_id=active["id"])
+                        return {"checkout_url": callback, "already": True, "purchase_status": "paid",
+                                "licence_status": "purchased", "purchase_id": active["id"],
+                                "price_paise": int(price), "currency": currency,
+                                "version": int(row["version"])}
 
-    licence_id = await pool.fetchval(
-        """INSERT INTO procedure_licences
-               (procedure_id, procedure_row_id, procedure_version, buyer_user_id, amount_paise, currency)
-           VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, $6)
-           ON CONFLICT (procedure_row_id, buyer_user_id) DO UPDATE
-             SET status = 'pending', amount_paise = EXCLUDED.amount_paise, currency = EXCLUDED.currency,
-                 payment_ref = NULL, order_id = NULL, payment_link_id = NULL,
-                 granted_at = NULL, refunded_at = NULL
-             WHERE procedure_licences.status <> 'paid'
-           RETURNING id::text""",
-        row["procedure_id"], row["id"], int(row["version"]), buyer, int(price), currency)
-    if licence_id is None:
-        # The conflict hit a paid row between the read and the upsert: it is already owned.
-        return {"checkout_url": callback, "already": True, "licence_status": "purchased",
-                "price_paise": int(price), "currency": currency, "version": int(row["version"])}
+    if purchase_id is None:
+        try:
+            purchase_id = await pool.fetchval(
+                """INSERT INTO procedure_purchases
+                       (procedure_id, procedure_row_id, procedure_version, buyer_user_id, amount_paise, currency)
+                   VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, $6)
+                   RETURNING id::text""",
+                row["procedure_id"], row["id"], int(row["version"]), buyer, int(price), currency)
+        except asyncpg.UniqueViolationError:
+            # Another request opened the active purchase between the read and the insert.
+            active = await pool.fetchrow(
+                "SELECT id::text AS id, status, payment_link_id, amount_paise, procedure_version "
+                "FROM procedure_purchases WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid "
+                "AND status IN ('pending', 'paid') AND consumed_at IS NULL "
+                "ORDER BY created_at DESC LIMIT 1", row["id"], buyer)
+            if active is not None and active["status"] == "paid":
+                return {"checkout_url": callback, "already": True, "purchase_status": "paid",
+                        "licence_status": "purchased", "purchase_id": active["id"],
+                        "price_paise": int(active["amount_paise"] or price), "currency": currency,
+                        "version": int(active["procedure_version"] or row["version"])}
+            raise PurchaseError("a purchase is already open for this output; try again", 409)
 
     link = await create_payment_link(
-        amount_paise=int(price), description=f"{row['name']} (v{row['version']})",
-        reference_id=licence_id, callback_url=callback,
-        notes={"licence_id": licence_id, "procedure_row_id": row["id"], "buyer_user_id": buyer})
+        amount_paise=int(price), description=f"{row['name']} (v{row['version']}) - one output",
+        reference_id=purchase_id, callback_url=callback,
+        notes={"purchase_id": purchase_id, "procedure_row_id": row["id"], "buyer_user_id": buyer})
     await pool.execute(
-        "UPDATE procedure_licences SET payment_link_id = $2, order_id = $3 WHERE id = $1::uuid",
-        licence_id, str(link["id"]), (str(link["order_id"]) if link.get("order_id") else None))
-    return {"checkout_url": link["short_url"], "licence_id": licence_id, "price_paise": int(price),
-            "currency": currency, "version": int(row["version"])}
+        "UPDATE procedure_purchases SET payment_link_id = $2, order_id = $3 WHERE id = $1::uuid",
+        purchase_id, str(link["id"]), (str(link["order_id"]) if link.get("order_id") else None))
+    return {"checkout_url": link["short_url"], "purchase_id": purchase_id, "purchase_status": "pending",
+            "price_paise": int(price), "currency": currency, "version": int(row["version"])}
 
 
 # ------------------------------------------------------------------ activation / refund
 
 async def activate_by_link(pool: Any, *, payment_link_id: str, payment_id: str, amount_paise: int,
-                           licence_id: Optional[str] = None) -> bool:
-    """A verified `payment_link.paid`. Idempotent on the payment id; the amount must match."""
-    if not payment_link_id and not licence_id:
+                           purchase_id: Optional[str] = None) -> bool:
+    """A verified `payment_link.paid`. Idempotent on the payment id; the amount must match.
+
+    Only a PENDING purchase becomes paid. A used or refunded one is never reactivated by a late
+    payment on an old link.
+    """
+    if not payment_link_id and not purchase_id:
         return False
     row = None
     if payment_link_id:
         row = await pool.fetchrow(
-            "SELECT id::text AS id, amount_paise, status FROM procedure_licences WHERE payment_link_id = $1",
+            "SELECT id::text AS id, amount_paise, status FROM procedure_purchases WHERE payment_link_id = $1",
             str(payment_link_id))
-    if row is None and licence_id:
+    if row is None and purchase_id:
         row = await pool.fetchrow(
-            "SELECT id::text AS id, amount_paise, status FROM procedure_licences WHERE id = $1::uuid",
-            str(licence_id))
+            "SELECT id::text AS id, amount_paise, status FROM procedure_purchases WHERE id = $1::uuid",
+            str(purchase_id))
     if row is None:
         return False
     if int(row["amount_paise"]) != int(amount_paise):
-        log.error("procedure licence %s: paid %s paise, expected %s; left pending",
+        log.error("procedure purchase %s: paid %s paise, expected %s; left pending",
                   row["id"], amount_paise, row["amount_paise"])
         return False
-    if row["status"] == "paid":
+    if row["status"] != "pending":
         return False
     try:
         done = await pool.fetchval(
-            "UPDATE procedure_licences SET status = 'paid', payment_ref = $2, granted_at = now(), "
-            "expires_at = NULL, refunded_at = NULL WHERE id = $1::uuid AND status <> 'paid' RETURNING 1",
+            "UPDATE procedure_purchases SET status = 'paid', payment_ref = $2, granted_at = now(), "
+            "expires_at = NULL, refunded_at = NULL WHERE id = $1::uuid AND status = 'pending' RETURNING 1",
             row["id"], str(payment_id))
     except asyncpg.UniqueViolationError:
-        return False                                  # the same payment id already granted a licence
+        return False                                  # the same payment id already paid a purchase
     return bool(done)
 
 
 async def activate_by_order(pool: Any, *, order_id: str, payment_id: str, amount_paise: int) -> bool:
-    """A `payment.captured` whose order belongs to a licence (when the gateway gives us the order id)."""
+    """A `payment.captured` whose order belongs to a purchase (when the gateway gives us the order id)."""
     row = await pool.fetchrow(
-        "SELECT id::text AS id, amount_paise, status FROM procedure_licences WHERE order_id = $1", str(order_id))
+        "SELECT id::text AS id, amount_paise, status FROM procedure_purchases WHERE order_id = $1", str(order_id))
     if row is None:
         return False
     return await activate_by_link(pool, payment_link_id="", payment_id=payment_id,
-                                  amount_paise=amount_paise, licence_id=row["id"])
+                                  amount_paise=amount_paise, purchase_id=row["id"])
 
 
 async def close_link(pool: Any, *, payment_link_id: str, status: str) -> None:
@@ -301,14 +400,14 @@ async def close_link(pool: Any, *, payment_link_id: str, status: str) -> None:
     if status not in ("expired", "failed"):
         return
     await pool.execute(
-        "UPDATE procedure_licences SET status = $2 WHERE payment_link_id = $1 AND status = 'pending'",
+        "UPDATE procedure_purchases SET status = $2 WHERE payment_link_id = $1 AND status = 'pending'",
         str(payment_link_id), status)
 
 
 async def refund_by_payment(pool: Any, *, payment_id: str) -> Optional[str]:
     """A verified refund: the licence becomes refunded and the gate refuses future runs."""
     return await pool.fetchval(
-        "UPDATE procedure_licences SET status = 'refunded', refunded_at = now() "
+        "UPDATE procedure_purchases SET status = 'refunded', refunded_at = now() "
         "WHERE payment_ref = $1 AND status = 'paid' RETURNING id::text", str(payment_id))
 
 
@@ -340,7 +439,7 @@ async def set_price(pool: Any, *, procedure_row_id: str, price_paise: Optional[i
 async def reconcile_link(pool: Any, *, licence_id: str) -> dict[str, Any]:
     """Ask the gateway about one pending licence. The fallback for a webhook that never arrived."""
     row = await pool.fetchrow(
-        "SELECT id::text AS id, payment_link_id, amount_paise, status FROM procedure_licences WHERE id = $1::uuid",
+        "SELECT id::text AS id, payment_link_id, amount_paise, status FROM procedure_purchases WHERE id = $1::uuid",
         str(licence_id))
     if row is None:
         raise PurchaseError("no such licence", 404)

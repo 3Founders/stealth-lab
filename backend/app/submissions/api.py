@@ -178,7 +178,8 @@ async def _price_and_licence(pool: Any, row: dict, viewer_id: Optional[str]) -> 
     parent = row.get("parent_procedure_id")
     if not parent or pool is None or not hasattr(pool, "fetchrow"):
         # The projection tests drive get_public with no database; a page with no pool is a page with no price.
-        return {"price_paise": None, "price_currency": "INR", "licence_status": "none"}
+        return {"price_paise": None, "price_currency": "INR",
+                "purchase_status": "none", "licence_status": "none"}
     proc = await pool.fetchrow(
         "SELECT price_paise, price_currency FROM procedures WHERE id::text = $1 AND t_invalid IS NULL",
         str(parent))
@@ -186,11 +187,15 @@ async def _price_and_licence(pool: Any, row: dict, viewer_id: Optional[str]) -> 
         return {"price_paise": None, "price_currency": "INR", "licence_status": "none"}
     price = proc["price_paise"]
     currency = proc["price_currency"] or "INR"
-    status = "none"
+    purchase = "none"
     if price is not None and int(price) > 0 and viewer_id:
-        status = await procedure_billing.licence_status(
+        purchase = await procedure_billing.purchase_status(
             pool, procedure_row_id=parent, buyer_user_id=viewer_id)
-    return {"price_paise": price, "price_currency": currency, "licence_status": status}
+    # The old field stays for clients that have not moved yet; "used" means the output was already
+    # produced, so a new output needs a new purchase and the old field reads as "none".
+    legacy = "purchased" if purchase == "paid" else ("refunded" if purchase == "refunded" else "none")
+    return {"price_paise": price, "price_currency": currency,
+            "purchase_status": purchase, "licence_status": legacy}
 
 
 async def get_public(pool: Any, viewer_id: Optional[str], submission_id: str) -> Optional[dict]:

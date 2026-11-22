@@ -1,5 +1,15 @@
 # Per-procedure billing
 
+> **Revision 2026-11-22 — one output, one purchase.**
+>
+> The product is a **one-run purchase**, not a licence and not a subscription: a person buys **one
+> output** from one procedure version, runs it once, gets the output and moves on. Migration 217
+> renames `procedure_licences` to `procedure_purchases` and adds `consumed_at` and `used_by_run_id`.
+> A purchase is consumed when the run reaches `done`; a failed or cancelled run releases it, so a
+> failed attempt is never charged. A used or refunded purchase does not block buying another output
+> later. The mechanics below (Razorpay Payment Link, payment-id idempotency, refund reversal) still
+> hold; the "licence to run this version unlimited" wording in §0–§9 is superseded by this note.
+
 **A person pays ₹100–200 (or $1–2) to use one specific Way.** 2026-11-22. Written for the agent that
 implements the backend; the frontend is implemented in the same change (see §7).
 

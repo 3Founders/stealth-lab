@@ -471,7 +471,7 @@ async def start(pool: Any, way_id: str, *, owner_id: str, input: str = "", mode:
     # MCP run_way tool, and a sub-Way executed by the executor. A free version never queries a
     # licence; a priced one refuses with a named error before any step runs (docs/procedure_billing.md §3).
     from app.services import procedure_billing
-    await procedure_billing.check_entitlement(
+    purchase = await procedure_billing.check_entitlement(
         pool, procedure_row_id=way["id"], buyer_user_id=owner_id)
     plan = await expand(pool, way, owner_id)
     if not plan:
@@ -511,7 +511,26 @@ async def start(pool: Any, way_id: str, *, owner_id: str, input: str = "", mode:
     rid = await pool.fetchval(
         """INSERT INTO way_runs (procedure_row_id, owner_id, input, mode, plan) VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
            RETURNING id::text""", way["id"], owner_id, input or "", mode, json.dumps(plan))
-    return await advance(pool, await _load(pool, rid, owner_id), finder, on_progress)
+    if purchase:
+        # Bind the one-run purchase to THIS run before any step executes. A second concurrent run
+        # cannot spend the same purchase; a failed/cancelled run releases it again.
+        try:
+            await procedure_billing.bind_purchase(pool, purchase_id=purchase["id"], run_id=rid)
+        except Exception:
+            await pool.execute("DELETE FROM way_runs WHERE id = $1::uuid", rid)
+            raise
+    result = await advance(pool, await _load(pool, rid, owner_id), finder, on_progress)
+    await _settle_purchase(pool, result)
+    return result
+
+
+async def _settle_purchase(pool: Any, run: dict) -> None:
+    """A produced output spends the purchase; a failed/cancelled run gives it back."""
+    from app.services import procedure_billing
+    if run.get("status") == "done":
+        await procedure_billing.consume_run(pool, run["id"])
+    elif run.get("status") in ("failed", "cancelled"):
+        await procedure_billing.release_run(pool, run["id"])
 
 
 async def report(pool: Any, run_id: str, *, owner_id: str, output: Any = None, failed: str = "",
@@ -558,8 +577,11 @@ async def report(pool: Any, run_id: str, *, owner_id: str, output: Any = None, f
         await _save(pool, run)
         if run["status"] == "failed":
             await record_outcome(pool, run)
+        await _settle_purchase(pool, run)
         return view(run)
-    return await advance(pool, run, finder)
+    result = await advance(pool, run, finder)
+    await _settle_purchase(pool, result)
+    return result
 
 
 async def _asked(pool: Any, run: dict, step: dict, query: str, finder: Optional[_lk.Lookup]) -> dict:
@@ -575,7 +597,9 @@ async def _asked(pool: Any, run: dict, step: dict, query: str, finder: Optional[
         raise RunError("that is what this run already does: do the step with what your_turn gives you")
     if await _look_up(pool, run, f"asked: {query}", finder, query) == "spliced":
         run["status"], run["waiting"] = "running", None
-        return await advance(pool, run, finder)
+        result = await advance(pool, run, finder)
+        await _settle_purchase(pool, result)
+        return result
     run["waiting"] = await your_turn(run["plan"][run["next_step"] - 1], run)
     await _save(pool, run)
     return view(run)
