@@ -22,6 +22,21 @@ const config = {
   // server then lands in .next/standalone/desktop/server.js instead of .next/standalone/server.js, and the installer packs the
   // wrong tree (found 2026-11-08 while building 0.1.9).
   outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
+  // instrumentation.ts runs under BOTH the node and the edge runtime, so webpack resolves its import graph twice.
+  // The edge pass cannot resolve a `node:` built-in and fails with UnhandledSchemeError, which took the whole dev
+  // server down: every route answered 500, including /quick (found 2026-11-21 while adding /way). instrumentation.ts
+  // already returns early unless NEXT_RUNTIME is "nodejs", but static analysis does not care about that guard.
+  // Node built-ins are runtime modules, never bundled, so every `node:*` request is left external. This is scoped to
+  // the edge pass only, so the node build keeps resolving them normally.
+  webpack: (cfg, { isServer, nextRuntime }) => {
+    if (!isServer || nextRuntime !== "edge") return cfg
+    cfg.externals = [
+      ...(Array.isArray(cfg.externals) ? cfg.externals : []),
+      ({ request }, callback) =>
+        request?.startsWith("node:") ? callback(undefined, `commonjs ${request}`) : callback(),
+    ]
+    return cfg
+  },
 }
 
 export default config

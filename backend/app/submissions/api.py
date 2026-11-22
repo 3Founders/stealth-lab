@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from app.submissions import intake, review, runs, store
 
@@ -159,6 +159,56 @@ async def get(pool: Any, owner_id: str, submission_id: str) -> dict:
     if out is None:
         raise LookupError("no submission of yours with that id")
     return out
+
+
+# Fields a stranger may see. Everything else in the row is either internal (ids that leak volume), the owner's
+# identity, or review machinery that only makes sense to the person fixing it.
+_PUBLIC_STEP_FIELDS = ("order", "kind", "title", "description", "prompt", "locator", "status")
+
+
+async def get_public(pool: Any, viewer_id: Optional[str], submission_id: str) -> Optional[dict]:
+    """The Way as a buyer sees it (docs/procedure_outputs.md, docs/procedure_billing.md).
+
+    A Way page is a sales page: it has to be readable by someone with no account, or nobody can decide to buy.
+    So this returns a projection for a stranger — the goal, the description, the steps, the status — and NEVER
+    the owner's id, the internal goal/procedure ids, or a rejected step's reason (which is feedback for the
+    author, not information for the public).
+
+    The owner still gets the full record: pass their subject as `viewer_id` and an owned submission is returned
+    unprojected, so the author's own view is unchanged.
+    """
+    if viewer_id:
+        owned = await store.get(pool, submission_id, owner_id=viewer_id)
+        if owned is not None:
+            return owned
+
+    row = await store.get(pool, submission_id, owner_id=None)
+    if row is None:
+        return None
+    # Only a published Way is public. A draft, a withdrawn one, or one still in review is the author's business.
+    if row.get("status") not in ("approved", "ai_approved"):
+        return None
+
+    public = {
+        "id": row["id"],
+        "goal_name": row.get("goal_name"),
+        "description": row.get("description") or "",
+        "mode": row.get("mode"),
+        "mode_label": row.get("mode_label"),
+        "status": row.get("status"),
+        "created_at": row.get("created_at"),
+        "parent_procedure_id": row.get("parent_procedure_id"),
+        "steps": [
+            {k: s.get(k) for k in _PUBLIC_STEP_FIELDS if k in s}
+            for s in (row.get("steps") or [])
+        ],
+        # The licence state is about the caller, so a stranger is always "none" — the page still needs the field
+        # to decide whether to draw the buy button.
+        "licence_status": "none",
+        # price/output/similar are filled by the billing and outputs work; absent means "not yet published",
+        # which the page already renders honestly.
+    }
+    return public
 
 
 async def mine(pool: Any, owner_id: str) -> list[dict]:

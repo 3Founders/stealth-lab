@@ -1,0 +1,68 @@
+/* The desktop's Way screen (/way?id=…). Scoped under .dkw — the same separation .dk-proc keeps from the chat
+   shell. Only tokens present in BOTH the light and dark theme blocks of desktop/app/globals.css are used, so a
+   theme switch cannot leave an element unreadable. Cards on one rail, no graph library (see ProcedureGraph). */
+
+.dkw { display: grid; gap: 16px; align-content: start; padding: 22px clamp(16px, 4vw, 40px) 48px; max-width: 60em; }
+.dkw-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dkw-bar-label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); font-weight: 500; }
+.dkw-back { background: none; border: 1px solid var(--rule); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13.5px; color: var(--ink); cursor: pointer; }
+.dkw-back:hover { border-color: var(--rule-strong); }
+
+/* 1. Identity */
+.dkw-id h1 { font-size: clamp(22px, 2.6vw, 32px); font-weight: 500; line-height: 1.2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px; }
+.dkw-version { font-size: 14px; font-weight: 400; color: var(--grey); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dkw-goal { margin-top: 8px; color: var(--text-2); font-size: 15.5px; line-height: 1.55; }
+.dkw-k { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); font-weight: 500; margin-right: 8px; }
+.dkw-meta { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-top: 12px; }
+.dkw-chip, .dkw-badge { border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; font-size: 13px; line-height: 1.5; }
+.dkw-chip { color: var(--text-2); background: none; font: inherit; }
+.dkw-run { cursor: pointer; }
+.dkw-run:hover { border-color: var(--rule-strong); }
+.dkw-badge { border-color: var(--rule-strong); font-weight: 500; color: var(--ink); }
+.dkw-badge[data-tone="good"] { background: var(--yellow); border-color: var(--yellow); color: #171717; }
+.dkw-badge[data-tone="warn"] { background: var(--soft); border-color: var(--rule-strong); }
+.dkw-badge[data-tone="bad"] { border-width: 2px; border-color: var(--ink); }
+.dkw-badge[data-tone="quiet"] { color: var(--grey); }
+
+/* Cards */
+.dkw-card { border-top: 1px solid var(--rule-strong); padding-top: 14px; display: grid; gap: 10px; }
+.dkw-card h2 { font-size: 17px; font-weight: 500; }
+.dkw-card p { max-width: 48em; line-height: 1.6; font-size: 15px; }
+.dkw-small { font-size: 13.5px; line-height: 1.55; }
+.dkw-muted { color: var(--grey); }
+.dkw-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+
+/* 2. Evidence — above the description, on purpose */
+.dkw-evidence { background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 8px; padding: 14px 16px; }
+.dkw-grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px 22px; }
+.dkw-grid3 > div { display: grid; gap: 5px; align-content: start; }
+.dkw-rate b { font-size: 19px; font-weight: 500; }
+.dkw-rate .dkw-muted { font-size: 13.5px; }
+
+/* 4. Decomposition */
+.dkw-steps { list-style: none; display: grid; gap: 0; }
+.dkw-step { position: relative; display: grid; grid-template-columns: 24px 1fr; gap: 10px; padding-bottom: 14px; }
+.dkw-step::before { content: ""; position: absolute; left: 11px; top: 20px; bottom: 0; width: 1px; background: var(--rule); }
+.dkw-step:last-child { padding-bottom: 0; }
+.dkw-step:last-child::before { display: none; }
+.dkw-dot { width: 9px; height: 9px; border-radius: 50%; margin: 6px 0 0 7px; background: var(--ink); border: 1.5px solid var(--ink); z-index: 1; }
+.dkw-step[data-kind="human"] .dkw-dot { background: var(--surface); }
+.dkw-step[data-status="rejected"] .dkw-dot { background: var(--surface); box-shadow: 0 0 0 3px var(--soft); }
+.dkw-step-body { display: grid; gap: 4px; min-width: 0; }
+.dkw-step-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.dkw-order { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--grey); min-width: 1.3em; }
+.dkw-step-head b { font-weight: 500; font-size: 15.5px; }
+.dkw-kind { font-style: normal; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 7px; }
+.dkw-step-body p { font-size: 14.5px; line-height: 1.55; color: var(--text-2); }
+.dkw-prompt, .dkw-loc, .dkw-reject { border-left: 2px solid var(--rule); padding-left: 9px; overflow-wrap: anywhere; }
+.dkw-reject { border-left-color: var(--rule-strong); color: var(--ink); }
+
+/* 5. History */
+.dkw-hist { list-style: none; display: grid; gap: 6px; }
+.dkw-hist li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 14.5px; }
+
+/* 7. Provenance */
+.dkw-code { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 12px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+.dkw-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dkw-cta { justify-self: start; border: 1px solid var(--ink); border-radius: 999px; padding: 6px 16px; font: inherit; font-size: 14.5px; background: none; color: var(--ink); cursor: pointer; }
+.dkw-cta:hover { background: var(--ink); color: var(--paper); }

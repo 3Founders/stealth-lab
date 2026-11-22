@@ -462,6 +462,11 @@ function One({ api, id, onOpen }: { api: SubmissionsApi; id: string; onOpen: (id
         <h3>{sub.goal_name}</h3>
         <span className="sw-pill" data-status={sub.status} key={sub.status}>{STATUS_LABEL[sub.status]}</span>
         <span className="sw-dim">{sub.mode_label}</span>
+        {/* The full Way page: evidence above the description, the decomposition, and how to re-run it. The
+            panel stays the place a Way is edited; the page is the place it is read and judged. */}
+        <a className="sw-dim sw-fullpage" href={`/way?id=${encodeURIComponent(sub.id)}`} target="_blank" rel="noopener">
+          Full page ↗
+        </a>
       </div>
       {sub.description && <p className="sw-dim">{sub.description}</p>}
       <ol className="sw-steps">

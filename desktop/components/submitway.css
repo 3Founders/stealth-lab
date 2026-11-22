@@ -70,6 +70,8 @@
 .sw-pill[data-status="reviewing"] { background: var(--soft); }
 .sw-one-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .sw-one-head h3 { margin: 0; font-size: 1.15em; }
+/* The link out to the full Way page: quiet, right-aligned on the head row, so it never competes with the title. */
+.sw-fullpage { margin-left: auto; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
 .sw-fix { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
 .sw-run { border-top: 1px solid var(--rule-strong); padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 .sw-run h4 { margin: 0; }

@@ -1,0 +1,106 @@
+/* The Way page (/way/[id]). Every rule is scoped under .kwm so it cannot touch the rest of the site; the shared
+   look (tokens, .frame, .grid, .display, .marker, buttons) comes from globals.css. Only tokens defined in BOTH
+   the light and dark theme blocks are used here, so a theme switch cannot leave an unreadable element. */
+
+.kwm { padding-top: clamp(96px, 11vw, 150px); padding-bottom: 96px; display: grid; gap: 20px; }
+
+/* 1. Identity ---------------------------------------------------------------- */
+.kwm-id { grid-column: 1 / -1; }
+.kwm-id h1 { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 14px; }
+/* The version sits beside the name at all times — a label alone can lie about what it points at. */
+.kwm-version { font-size: clamp(14px, 1.4vw, 18px); font-weight: 400; color: var(--grey); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.kwm-goal { margin-top: 12px; max-width: 46em; font-size: clamp(17px, 1.6vw, 20px); color: var(--text-2); }
+.kwm-k { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); margin-right: 8px; font-weight: 500; }
+.kwm-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 18px; }
+
+.kwm-badge, .kwm-chip { border: 1px solid var(--rule); border-radius: 999px; padding: 3px 11px; font-size: 13.5px; line-height: 1.5; }
+.kwm-chip { color: var(--text-2); }
+.kwm-badge { border-color: var(--rule-strong); font-weight: 500; color: var(--ink); }
+.kwm-badge[data-tone="good"] { background: var(--yellow); border-color: var(--yellow); color: #171717; }
+.kwm-badge[data-tone="warn"] { background: var(--soft); border-color: var(--rule-strong); }
+.kwm-badge[data-tone="bad"] { background: var(--surface); border-color: var(--ink); border-width: 2px; color: var(--ink); }
+.kwm-badge[data-tone="quiet"] { color: var(--grey); }
+
+/* Cards --------------------------------------------------------------------- */
+.kwm-card { grid-column: 1 / -1; border-top: 1px solid var(--rule-strong); padding-top: 18px; display: grid; gap: 12px; max-width: 62em; }
+.kwm-card > h2 { font-size: clamp(19px, 1.9vw, 24px); font-weight: 500; }
+.kwm-card p { max-width: 46em; line-height: 1.6; }
+.kwm-small { font-size: 14px; line-height: 1.55; }
+.kwm-muted { color: var(--grey); }
+.kwm-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+
+/* 2. Evidence — the panel that sits above the description --------------------------------- */
+.kwm-evidence { background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 8px; padding: 20px 22px; }
+.kwm-evidence-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px 26px; }
+.kwm-evidence-grid > div { display: grid; gap: 6px; align-content: start; }
+.kwm-rate b { font-size: 22px; font-weight: 500; }
+.kwm-rate .kwm-muted { font-size: 14px; }
+
+/* 2b. Price — present only when a Way is not free. Kept visually quieter than Evidence: the evidence is what
+   decides whether a reader wants it, and a loud price above that would invert the page's argument. */
+.kwm-price { background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 8px; padding: 18px 22px; }
+.kwm-price .kwm-price-figure { display: flex; align-items: baseline; gap: 8px; }
+.kwm-price .kwm-price-figure b { font-size: clamp(28px, 3vw, 36px); font-weight: 500; letter-spacing: -0.01em; }
+.kwm-price .kwm-cta { cursor: pointer; }
+.kwm-price .kwm-cta:disabled { opacity: .6; cursor: progress; }
+
+/* 2. Output — the artefact the Way produces, above the description. Thumbnail plus metadata, side by side.
+   The bytes live in object storage; this only positions the preview link and its picture. */
+.kwm-output-body { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
+.kwm-output-preview { display: block; width: 100%; aspect-ratio: 4 / 3; border: 1px solid var(--rule-strong); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.kwm-output-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kwm-output-fallback { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 13px; letter-spacing: .1em; color: var(--grey); }
+.kwm-output-meta { display: grid; gap: 8px; }
+
+/* 9. More like this — the thumbnail rail at the foot of the page. Fixed-ratio tiles so a missing picture still
+   leaves a tidy grid rather than a ragged one. */
+.kwm-similar-rail { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.kwm-similar-tile { display: grid; gap: 6px; align-content: start; }
+.kwm-similar-link { text-decoration: none; color: var(--ink); display: grid; gap: 6px; }
+.kwm-similar-thumb { display: block; width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.kwm-similar-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kwm-similar-blabel { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 22px; font-weight: 500; color: var(--grey); letter-spacing: .04em; }
+.kwm-similar-title { font-size: 15px; font-weight: 500; line-height: 1.35; }
+.kwm-similar-link:hover .kwm-similar-title { text-decoration: underline; text-underline-offset: 3px; }
+
+/* 4. Decomposition ---------------------------------------------------------- */
+.kwm-steps { list-style: none; display: grid; gap: 0; margin-top: 4px; }
+.kwm-step { position: relative; display: grid; grid-template-columns: 26px 1fr; gap: 12px; padding: 0 0 18px; }
+/* The rail: one line joining the dots, drawn by each item for the one below it. */
+.kwm-step::before { content: ""; position: absolute; left: 12px; top: 22px; bottom: 0; width: 1px; background: var(--rule); }
+.kwm-step:last-child { padding-bottom: 0; }
+.kwm-step:last-child::before { display: none; }
+.kwm-dot { width: 9px; height: 9px; border-radius: 50%; margin: 7px 0 0 8px; background: var(--ink); border: 1.5px solid var(--ink); z-index: 1; }
+.kwm-step[data-kind="human"] .kwm-dot { background: var(--surface); }
+.kwm-step[data-status="rejected"] .kwm-dot { background: var(--surface); border-color: var(--ink); box-shadow: 0 0 0 3px var(--soft); }
+.kwm-step-body { display: grid; gap: 5px; min-width: 0; }
+.kwm-step-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.kwm-order { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--grey); min-width: 1.4em; }
+.kwm-step-head b { font-weight: 500; font-size: 17px; }
+.kwm-kind { font-style: normal; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; }
+.kwm-step-body p { font-size: 15.5px; line-height: 1.55; color: var(--text-2); }
+.kwm-prompt, .kwm-loc { border-left: 2px solid var(--rule); padding-left: 10px; overflow-wrap: anywhere; }
+.kwm-reject { border-left: 2px solid var(--rule-strong); padding-left: 10px; color: var(--ink); }
+
+/* 5. History --------------------------------------------------------------- */
+.kwm-hist { list-style: none; display: grid; gap: 8px; }
+.kwm-hist li { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; font-size: 15.5px; }
+
+/* 7. Provenance ------------------------------------------------------------ */
+.kwm-code { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font-size: 13.5px; line-height: 1.6; }
+.kwm-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.kwm-cta { display: inline-block; border: 1px solid var(--ink); border-radius: 999px; padding: 7px 18px; font-size: 15px; text-decoration: none; color: var(--ink); }
+.kwm-cta:hover { background: var(--ink); color: var(--paper); }
+
+/* 8. Sideways navigation --------------------------------------------------- */
+.kwm-next { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 18px; border-top: 1px solid var(--rule); padding-top: 16px; font-size: 15px; }
+.kwm-next a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+
+.kwm-notice { grid-column: 1 / -1; border: 1px solid var(--rule-strong); border-radius: 8px; padding: 16px 18px; display: grid; gap: 8px; max-width: 46em; }
+.kwm-notice[data-tone="bad"] { background: var(--surface); }
+.kwm-notice a { text-decoration: underline; }
+
+@media (max-width: 700px) {
+  .kwm { padding-top: 92px; padding-bottom: 64px; }
+  .kwm-evidence { padding: 16px; }
+}

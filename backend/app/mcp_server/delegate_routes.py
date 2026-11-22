@@ -99,6 +99,19 @@ class Gate:
                 return None, ("could not verify your account right now", 503)
         return actor.subject, None
 
+    async def optional_subject(self, request: Request) -> tuple[Optional[str], Optional[tuple[str, int]]]:
+        """Like `subject`, but a MISSING token is an answer, not a refusal (None, None).
+
+        For routes that serve a public view (the Way page: docs/procedure_outputs.md). A present-but-invalid token
+        is still refused — an expired session must not silently read as an anonymous visitor — but no token at all
+        means "this person is browsing", which every sales page has to support.
+        """
+        if request.method == "OPTIONS":
+            return None, None
+        if _bearer(request) is None:
+            return None, None
+        return await self.subject(request)
+
 
 def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
     """Attach the routes to the MCP server's custom-route table."""

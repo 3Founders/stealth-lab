@@ -88,10 +88,27 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
 
     @server.custom_route("/v1/goals/submissions/{submission_id}", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def submission_get(request: Request) -> Response:
-        subject, pool, early = await _begin(request)
-        if early is not None:
-            return early
-        return await _answer(request, api.get(pool, subject, request.path_params["submission_id"]))
+        # PUBLIC. A Way page is a sales page, so this endpoint is readable without an account (docs/procedure_outputs.md).
+        # A token, when present, is an upgrade: the owner gets their full record, anyone else gets the public view.
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        viewer, refusal = await gate.optional_subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        submission_id = request.path_params["submission_id"]
+        try:
+            found = await api.get_public(pool, viewer, submission_id)
+        except LookupError:
+            found = None
+        except ValueError:
+            # A malformed id is a 404 to a reader, not a 500: there is no such Way, whoever asked.
+            found = None
+        if found is None:
+            return _error(request, "no such Way", 404)
+        return _json(request, found)
 
     @server.custom_route("/v1/goals/submissions/{submission_id}/steps/{order:int}", methods=["POST", "DELETE", "OPTIONS"],
                          include_in_schema=False)
