@@ -260,6 +260,11 @@ def view(run: dict) -> dict:
         out["your_turn"] = run["waiting"]
     elif run["status"] == "waiting_human":
         out["waiting_on"] = run["waiting"]
+        # A human step may carry a structured question rather than a todo (app/submissions/way_inputs.py). The page
+        # renders it as options; when there is none, `waiting_on` alone is the whole instruction.
+        question = run["waiting"].get("question") if isinstance(run["waiting"], dict) else None
+        if question:
+            out["question"] = question
     elif run["status"] == "failed":
         out["next"] = ("Tell the person why it failed. Ask before trying the next Way find_ways listed for this goal; "
                        "do not do the failed step another way on your own.")
