@@ -1,0 +1,46 @@
+/* Inputs and per-step questions for a Way run. Scoped under .wi / .wq so they cannot touch the rest of the site.
+   Only tokens defined in both the light and dark blocks are used (see app/way/way.css's own note). */
+
+.wi { display: grid; gap: 14px; max-width: 46em; }
+.wi-note { font-size: 14px; color: var(--grey); }
+.wi-field { display: grid; gap: 5px; }
+.wi-label { font-size: 14px; font-weight: 500; color: var(--ink); }
+.wi-req { color: var(--ink); font-weight: 600; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.wi-opt { color: var(--grey); font-style: normal; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.wi-desc { font-size: 13.5px; color: var(--grey); }
+.wi input, .wi select {
+  font: inherit; font-size: 15px; padding: 8px 10px; border: 1px solid var(--rule-strong);
+  border-radius: 6px; background: var(--surface); color: var(--ink); width: 100%;
+}
+.wi input:focus-visible, .wi select:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.wi-actions { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.wi-error { font-size: 14px; color: var(--ink); border-left: 2px solid var(--rule-strong); padding-left: 10px; }
+
+/* A question mid-run: the run is paused, so this is the only thing to act on. */
+.wq {
+  border: 1px solid var(--rule-strong); border-radius: 8px; padding: 18px 20px;
+  background: var(--surface); display: grid; gap: 14px; max-width: 46em;
+}
+.wq-head { display: grid; gap: 6px; }
+.wq-tag {
+  justify-self: start; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--grey); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px;
+}
+.wq-head h3 { font-size: 18px; font-weight: 500; line-height: 1.35; }
+.wq-options { list-style: none; display: grid; gap: 8px; }
+.wq-option {
+  display: grid; gap: 3px; width: 100%; text-align: left; font: inherit; cursor: pointer;
+  padding: 10px 14px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink);
+}
+.wq-option:hover { border-color: var(--rule-strong); }
+.wq-option[data-picked] { border-color: var(--ink); border-width: 2px; }
+.wq-option b { font-weight: 500; font-size: 15px; }
+.wq-option span { font-size: 13.5px; color: var(--grey); }
+.wq-option:disabled { opacity: .6; cursor: progress; }
+.wq-actions { display: flex; gap: 12px; align-items: center; }
+.wq-free { display: flex; gap: 8px; align-items: center; }
+.wq-free input {
+  flex: 1; font: inherit; font-size: 15px; padding: 8px 10px;
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink);
+}
+.wq-error { font-size: 14px; border-left: 2px solid var(--rule-strong); padding-left: 10px; }
