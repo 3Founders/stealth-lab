@@ -10,7 +10,7 @@ import pytest
 import pytest_asyncio
 
 from app.db.session import create_pool
-from app.submissions import api, notify, review, runs, store
+from app.submissions import api, intake, notify, review, runs, store
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="requires a real DATABASE_URL -- live-database integration test")
@@ -459,3 +459,43 @@ async def test_the_same_name_pending_for_someone_else_is_published_without_their
     row = await pool.fetchrow("SELECT visibility::text AS v, description FROM goals WHERE id = $1::uuid", pending)
     assert row["v"] == "public" and "PRIVATE NOTE" not in (row["description"] or "")
     assert await _retrievable(pool, second["steps"][0]["procedure_row_id"])
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_submission_is_rewritten_by_kell_and_sent_again(pool, fakes, monkeypatch):
+    """Rejected -> "Ask kell to fix it" (a proposal, nothing stored) -> the person sends it -> reviewed again (2026-11-18)."""
+    import json
+
+    review_fake = review.complete
+
+    async def complete(messages, *, json_mode=False, max_tokens=1500, client=None):
+        if messages[0]["content"].startswith("You rewrite the steps"):
+            fakes["calls"].append("rewrite")
+            body = messages[-1]["content"]
+            assert "say which papers" in body and "name the papers" in body   # the reason and the instruction reach it
+            return json.dumps({"steps": [
+                {"order": 1, "kind": "human", "title": "Find papers", "description": "UNCHANGED"},
+                {"order": 2, "kind": "automated", "title": "Summarise", "prompt": "Summarise each pasted paper in two lines"},
+            ], "note": "step 2 now says what to summarise"}), "fake-rewriter"
+        return await review_fake(messages, json_mode=json_mode, max_tokens=max_tokens, client=client)
+
+    monkeypatch.setattr(review, "complete", complete)
+    owner = f"test-{uuid.uuid4().hex[:8]}"
+    goal = f"ml research {uuid.uuid4().hex[:6]}"
+    out = await api.submit(pool, owner, {"goal": goal, "steps": [
+        {"kind": "human", "title": "Find papers", "description": "UNCHANGED"}, {"prompt": "VAGUE do research"}]})
+    assert out["status"] == "needs_changes"
+    stored_before = await api.get(pool, owner, out["id"])
+
+    proposal = await api.rewrite(pool, owner, out["id"], "name the papers")
+    assert proposal["changed"] == [2] and proposal["note"].startswith("step 2")
+    assert await api.get(pool, owner, out["id"]) == stored_before              # a proposal stores nothing
+    with pytest.raises(LookupError):
+        await api.rewrite(pool, "someone-else", out["id"], "x")
+
+    sent = [s for s in proposal["steps"] if s["order"] in proposal["changed"]]
+    fixed = await api.fix_steps(pool, owner, out["id"], sent)
+    assert fixed["status"] == "ai_approved"
+    assert [s["revision"] for s in fixed["steps"]] == [1, 2]                   # the approved step was not re-sent
+    with pytest.raises(intake.SubmissionError):
+        await api.fix_steps(pool, owner, out["id"], [])

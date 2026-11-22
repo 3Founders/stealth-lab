@@ -9,6 +9,8 @@ import { rulesFor } from "@/lib/tools"
 import { isHome } from "@/lib/home"
 import { appendMessage, ensureSession, getAssistantMessages, getSession } from "@/lib/localdb"
 import { summarize } from "@/lib/summarize"
+import { freshSignIn } from "@/lib/signin"
+import { pinModel } from "@/lib/kellplugin"
 
 export const dynamic = "force-dynamic"
 
@@ -79,6 +81,9 @@ export async function POST(req: Request) {
           if (left !== null && way?.way && way.steps.length >= LONG_WAY_STEPS && left < LOW_FOR_LONG_WAY_USD)
             enc({ type: "low_balance", left, steps: way.steps.length })
         }
+        // kell's plugin in the engine reads the saved sign-in for this prompt's triage; an expired one made every triage fail,
+        // and a failed triage meant the strong model (2026-11-18). Refreshing here costs nothing while the sign-in is fresh.
+        await freshSignIn()
         const client = await clientFor(e)                 // async: loads the ESM-only client via import()
         // Subscribe before prompting: otherwise the turn's session.idle can fire before the stream starts.
         // A chat the engine no longer has (its session was removed, or an app restart lost it) is made again under the
@@ -190,6 +195,10 @@ export async function POST(req: Request) {
         // The composer's mode: "agent" adds the research rules (lib/tools.ts AGENT_RULES), so the model knows it may run
         // several web searches through kell's tools instead of one.
         const mode = String(body.mode || "")
+        // The person's own pick (body.pinned: the composer's model) is pinned for kell's plugin, which otherwise re-picks the model
+        // from its triage on every prompt, so the picker was ignored (2026-11-18). Back on Auto, the pin is lifted.
+        const pinned = !!body.pinned && !!model
+        pinModel(sessionID, pinned && model ? `${model.providerID}/${model.id}` : null)
         try {
           await client.experimental.session.instructions.entry.put({ sessionID, key: "kell-tools",
             value: contract ? `${rulesFor(isHome(e.directory), mode)}\n\n${contract}` : rulesFor(isHome(e.directory), mode) } as any)
@@ -198,8 +207,9 @@ export async function POST(req: Request) {
           if (stopped) { close(); return }
           await client.session.prompt({ sessionID, text: promptText, ...(model ? { model } : {}), ...(attached.files.length ? { files: attached.files } : {}) } as any)
           // A model the person named is also the session's own, so every later turn of this chat (a reply typed while the
-          // engine restarts, a queued prompt) starts from it rather than from whatever the session last used.
-          if (model) { try { await client.session.switchModel({ sessionID, model } as any) } catch { /* per-turn only */ } }
+          // engine restarts, a queued prompt) starts from it rather than from whatever the session last used. kell's own rung
+          // (a Way's strong model) is for this turn only: kept as the session's, it ran every later turn on it too.
+          if (model && pinned) { try { await client.session.switchModel({ sessionID, model } as any) } catch { /* per-turn only */ } }
           await pump
         } finally {
           // One assistant row per turn, assembled from the stream. A failed turn keeps the user row and any text received.

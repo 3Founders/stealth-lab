@@ -26,6 +26,19 @@ const newStep = (kind: Kind, title = ""): Step => ({ id: crypto.randomUUID(), ki
 const locatorText = (l: unknown) =>
   typeof l === "string" ? l : l && typeof l === "object" ? String((l as any).value || "") : ""
 
+/** The stored steps as form rows (a submission that came back from review), and each row's wire form, to tell what changed. */
+const fromStored = (out: StepOut[]): Step[] => out.map((o) => {
+  const kind: Kind = o.kind === "human" ? "human" : "automated"
+  return { ...newStep(kind, String(o.title || "")), description: String(o.description || ""), prompt: String(o.prompt || ""),
+           locator: locatorText(o.locator) }
+})
+const wire = (s: Step) => ({
+  kind: s.kind, title: s.title.trim(),
+  ...(s.kind === "human"
+    ? { description: s.description.trim() }
+    : { prompt: s.prompt.trim(), ...(s.locator.trim() ? { locator: s.locator.trim() } : {}) }),
+})
+
 const modeOf = (steps: Step[]): string => {
   const kinds = new Set(steps.map((s) => s.kind))
   return kinds.size === 1 ? (kinds.has("human") ? "Fully Human" : "Fully AI") : "Human+AI"
@@ -45,7 +58,21 @@ export default function SubmitWay({ onClose, onSubmitted, from }: {
   const [busy, setBusy] = useState<"" | "check" | "submit">("")
   const [err, setErr] = useState("")
   const [preview, setPreview] = useState<Preview | null>(null)
-  const [sub, setSub] = useState<Submission | null>(null)
+  const [sub, setSubRaw] = useState<Submission | null>(null)
+  // After review the form shows what was stored, and a submission that is not being reviewed can be changed again: by hand,
+  // or by asking kell ("Ask kell to fix it", the canvas's Change it for a submission). `stored` is each step's wire form as
+  // the server has it, so only the steps that changed are sent back (an approved step is not re-reviewed for nothing).
+  const [stored, setStored] = useState<string[]>([])
+  const [ask, setAsk] = useState("")
+  const [note, setNote] = useState("")
+  const setSub = (next: Submission | null) => {
+    setSubRaw(next)
+    if (next?.steps?.length) {
+      const rows = fromStored(next.steps)
+      setSteps(rows)
+      setStored(rows.map((r) => JSON.stringify(wire(r))))
+    }
+  }
   const box = useRef<HTMLDivElement | null>(null)
   const first = useRef<HTMLInputElement | null>(null)
 
@@ -58,12 +85,13 @@ export default function SubmitWay({ onClose, onSubmitted, from }: {
     return () => document.removeEventListener("keydown", key)
   }, [busy, onClose])
 
-  const sent = useMemo(() => steps.map((s) => ({
-    kind: s.kind, title: s.title.trim(),
-    ...(s.kind === "human"
-      ? { description: s.description.trim() }
-      : { prompt: s.prompt.trim(), ...(s.locator.trim() ? { locator: s.locator.trim() } : {}) }),
-  })), [steps])
+  const sent = useMemo(() => steps.map(wire), [steps])
+  // A stored submission is open for changes unless kell is still reviewing it.
+  const fixable = !!sub && sub.status !== "reviewing" && stored.length === steps.length
+  const locked = !!sub && !fixable
+  const edited = (i: number) => fixable && JSON.stringify(sent[i]) !== stored[i]
+  const changed = fixable ? sent.map((w, i) => ({ ...w, order: i + 1 })).filter((_, i) => edited(i)) : []
+  const rejected = !!sub?.steps?.some((o) => o.status === "rejected")
   // A step is ready when the part its doer needs is there: a person needs a description, kell a prompt or a locator.
   const ready = !!goal.trim() && steps.every((s) => s.kind === "human" ? !!s.description.trim() : !!(s.prompt.trim() || s.locator.trim()))
 
@@ -133,6 +161,36 @@ export default function SubmitWay({ onClose, onSubmitted, from }: {
 
   const subId = String(sub?.submission_id || sub?.id || "")
 
+  // kell rewrites the steps from one sentence (empty: the reviewer's reasons); the rewrite lands in the form, unsent.
+  const askKell = async () => {
+    if (!subId) return
+    setBusy("check"); setErr(""); setNote("")
+    try {
+      const j = await post({ submissionId: subId, rewrite: ask })
+      const r = j.rewrite || {}
+      const proposed: StepOut[] = Array.isArray(r.steps) ? r.steps : []
+      const orders: number[] = Array.isArray(r.changed) ? r.changed.map(Number) : []
+      if (!orders.length) { setErr(String(r.note || "kell had nothing to change. Say what to change, or edit a step yourself.")); return }
+      setSteps((rows) => rows.map((row, i) => {
+        const p = proposed.find((o) => Number(o.order) === i + 1)
+        if (!p || !orders.includes(i + 1)) return row
+        return { ...fromStored([p])[0], id: row.id }
+      }))
+      setNote(`${r.note ? `${r.note} ` : ""}Read it, edit it if you like, then send it.`)
+    } catch (ex) { setErr(String((ex as Error)?.message || ex)) }
+    finally { setBusy("") }
+  }
+  const sendFixes = async () => {
+    if (!subId || !changed.length) return
+    setBusy("submit"); setErr(""); setNote("")
+    try {
+      const j = await post({ submissionId: subId, fixSteps: changed })
+      if (j.submission) setSub(j.submission)
+      setAsk("")
+    } catch (ex) { setErr(String((ex as Error)?.message || ex)) }
+    finally { setBusy("") }
+  }
+
   return (
     <div className="dk-sw-backdrop" onMouseDown={() => { if (!busy) onClose() }}>
       <div className="dk-sw" role="dialog" aria-modal="true" aria-labelledby="dk-sw-title" ref={box} onMouseDown={(e) => e.stopPropagation()}>
@@ -175,12 +233,12 @@ export default function SubmitWay({ onClose, onSubmitted, from }: {
                   <div className="dk-sw-step-top">
                     <span className="n">{i + 1}</span>
                     <div className="dk-sw-kind" role="group" aria-label={`Who does step ${i + 1}`}>
-                      <button type="button" data-on={s.kind === "human" || undefined} disabled={!!sub || !!busy}
+                      <button type="button" data-on={s.kind === "human" || undefined} disabled={locked || !!busy}
                         onClick={() => edit(s.id, { kind: "human" })}>A person</button>
-                      <button type="button" data-on={s.kind === "automated" || undefined} disabled={!!sub || !!busy}
+                      <button type="button" data-on={s.kind === "automated" || undefined} disabled={locked || !!busy}
                         onClick={() => edit(s.id, { kind: "automated" })}>kell</button>
                     </div>
-                    <input className="dk-sw-title" value={s.title} maxLength={200} disabled={!!sub || !!busy}
+                    <input className="dk-sw-title" value={s.title} maxLength={200} disabled={locked || !!busy}
                       placeholder="What this step achieves" aria-label={`Step ${i + 1} title`} onChange={(e) => edit(s.id, { title: e.target.value })} />
                     {!sub && (
                       <span className="dk-sw-step-acts">
@@ -191,14 +249,14 @@ export default function SubmitWay({ onClose, onSubmitted, from }: {
                     )}
                   </div>
                   {s.kind === "human" ? (
-                    <input value={s.description} maxLength={4000} disabled={!!sub || !!busy}
+                    <input value={s.description} maxLength={4000} disabled={locked || !!busy}
                       placeholder="What the person does, e.g. Search 'xyz' on abc.com and copy the top 5 links"
                       aria-label={`Step ${i + 1}: what the person does`} onChange={(e) => edit(s.id, { description: e.target.value })} />
                   ) : (
                     <div className="dk-sw-auto">
-                      <input value={s.prompt} maxLength={4000} disabled={!!sub || !!busy}
+                      <input value={s.prompt} maxLength={4000} disabled={locked || !!busy}
                         placeholder="What kell does, i.e. a prompt" aria-label={`Step ${i + 1}: kell's prompt`} onChange={(e) => edit(s.id, { prompt: e.target.value })} />
-                      <input value={s.locator} maxLength={2000} disabled={!!sub || !!busy}
+                      <input value={s.locator} maxLength={2000} disabled={locked || !!busy}
                         placeholder="or where: https://…, path/to/file, script.py, tool-name" aria-label={`Step ${i + 1}: a locator`}
                         onChange={(e) => edit(s.id, { locator: e.target.value })} />
                     </div>
@@ -206,11 +264,13 @@ export default function SubmitWay({ onClose, onSubmitted, from }: {
                   {!sub && s.kind === "automated" && !s.prompt.trim() && !s.locator.trim() && (
                     <p className="dk-note">kell does this step: give it a prompt, a locator (a website, file, script or tool), or both.</p>
                   )}
-                  {out && (
+                  {out && (edited(i) ? (
+                    <p className="dk-sw-verdict" data-status="reviewing">Changed: it is reviewed again when you send the fixes.</p>
+                  ) : (
                     <p className="dk-sw-verdict" data-status={out.status}>
                       {out.status === "rejected" ? `Not approved: ${out.reason || "the reviewer gave no reason"}` : out.status || "reviewing"}
                     </p>
-                  )}
+                  ))}
                 </li>
               )
             })}
@@ -223,6 +283,23 @@ export default function SubmitWay({ onClose, onSubmitted, from }: {
             <p className="dk-sw-preview" role="status">{preview.message || `This will be submitted as ${preview.mode_label || "a Way"}.`}</p>
           )}
           {err && <p className="dk-err" role="alert">{err}</p>}
+
+          {fixable && (
+            <div className="dk-sw-askfix">
+              <label className="dk-sw-field">
+                <span>Ask kell to {rejected ? "fix it" : "change it"}</span>
+              </label>
+              <div className="dk-sw-askrow">
+                <input value={ask} maxLength={2000} disabled={!!busy}
+                  placeholder={rejected ? "What to change, or leave empty to fix what was rejected" : "What to change, e.g. make step 2 use the arXiv API"}
+                  aria-label="What kell should change" onChange={(e) => setAsk(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !busy) { e.preventDefault(); void askKell() } }} />
+                <button type="button" className="btn-line dg-mini" disabled={!!busy || (!rejected && !ask.trim())} onClick={() => void askKell()}>
+                  {busy === "check" ? "Working…" : "Rewrite"}</button>
+              </div>
+              {note && <p className="dk-note" role="status">{note}</p>}
+            </div>
+          )}
 
           {sub && (
             <div className="dk-sw-done" role="status">
@@ -240,12 +317,18 @@ export default function SubmitWay({ onClose, onSubmitted, from }: {
         </div>
 
         <footer className="dk-sw-foot">
-          <span className="dk-note">{sub ? "Review happens on kell's side; this asks again for the verdicts." : "Nothing is stored until you submit."}</span>
+          <span className="dk-note">{!sub ? "Nothing is stored until you submit."
+            : changed.length ? "Only the changed steps are sent; kell reviews them again."
+            : rejected ? "Edit a rejected step above, or ask kell to fix it."
+            : "Review happens on kell's side; this asks again for the verdicts."}</span>
           <span className="dk-sw-actions">
             {sub ? (
               <>
                 <button type="button" className="btn-line" disabled={!!busy} onClick={() => void refresh()}>{busy === "check" ? "Checking…" : "Check the verdicts"}</button>
-                <button type="button" className="btn-ink" onClick={onClose}>Done</button>
+                {changed.length > 0
+                  ? <button type="button" className="btn-ink" disabled={!!busy} onClick={() => void sendFixes()} title="Send the changed steps; kell reviews them again">
+                      {busy === "submit" ? "Reviewing…" : `Send the ${changed.length === 1 ? "fix" : `${changed.length} fixes`}`}</button>
+                  : <button type="button" className="btn-ink" onClick={onClose}>Done</button>}
               </>
             ) : (
               <>

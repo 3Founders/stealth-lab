@@ -41,6 +41,10 @@ export interface Run {
   outputs: { order: number; title: string; actor: "human" | "ai"; output: string }[];
 }
 
+/** kell's rewrite of a submission's steps from one sentence (POST /v1/goals/submissions/{id}/rewrite). A proposal: nothing is
+ *  stored until the person sends the changed steps with fixSteps. `changed` names the steps that differ from what is stored. */
+export interface Rewrite { steps: (StepIn & { order: number })[]; changed: number[]; note: string; model?: string }
+
 /** One of the person's runs, wherever it was started (the website, the desktop, a chat): GET /v1/goals/runs. */
 export interface RunRow {
   run_id: string; status: Run["status"]; mode: "session" | "headless"; way_id: string; way_name: string; input: string;
@@ -104,6 +108,11 @@ export function submissionsApi(deps: SubmissionsDeps) {
     list: () => call<{ submissions: SubmissionRow[] }>("GET", "/submissions").then((r) => r.submissions),
     get: (id: string) => call<Submission>("GET", `/submissions/${encodeURIComponent(id)}`),
     fix: (id: string, order: number, step: StepIn) => call<Submission>("POST", `/submissions/${encodeURIComponent(id)}/steps/${order}`, cleanStep(step)),
+    // "Ask kell to fix it", the canvas's Change it for a submission: a proposal first, then the changed steps, reviewed together.
+    rewrite: (id: string, instruction: string) =>
+      call<Rewrite>("POST", `/submissions/${encodeURIComponent(id)}/rewrite`, { instruction }),
+    fixSteps: (id: string, steps: (StepIn & { order: number })[]) =>
+      call<Submission>("POST", `/submissions/${encodeURIComponent(id)}/steps`, { steps: steps.map((s) => ({ order: s.order, ...cleanStep(s) })) }),
     removeStep: (id: string, order: number) => call<Submission>("DELETE", `/submissions/${encodeURIComponent(id)}/steps/${order}`),
     // Searched when asked, never stored: a remembered suggestion goes stale when a Way is renamed or deleted.
     suggestions: (id: string) =>

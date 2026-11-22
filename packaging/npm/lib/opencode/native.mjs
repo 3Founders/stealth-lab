@@ -63,10 +63,23 @@ export function parseModel(ref) {
   return i > 0 ? { providerID: s.slice(0, i), id: s.slice(i + 1) } : null
 }
 
-/** Which model for this prompt: the strong one (the session's own) for a hard task or no verdict; the cheap one otherwise. */
+/** Which model for this prompt: the strong one (the session's own) for an unclear request; the cheap one otherwise. No verdict
+ *  (the triage call failed: an expired sign-in, the network) changes nothing: the session keeps the model it has. It used to
+ *  mean "strong", so every prompt sent while the sign-in was stale ran on the most expensive rung (2026-11-18). */
 export function chooseModel(verdict, { cheap, strong }) {
-  if (!verdict || isHard(verdict)) return { which: "strong", ref: strong }
+  if (!verdict) return { which: "session", ref: null }
+  if (isHard(verdict)) return { which: "strong", ref: strong }
   return { which: "cheap", ref: cheap }
+}
+
+/** The model the person chose for a session, if they chose one: `{ [sessionID]: "provider/model" }` in the pins file the desktop
+ *  app writes (KELL_OC_PINS, or `pins` in the plugin settings). A pinned session is never switched by triage or escalation. */
+export function readPin(file, sessionID) {
+  if (!file || !sessionID) return null
+  try {
+    const ref = JSON.parse(fs.readFileSync(file, "utf8"))?.[sessionID]
+    return typeof ref === "string" && parseModel(ref) ? ref : null
+  } catch { return null }
 }
 
 /** Two failed test runs on the cheap model are the signal to escalate; a pass resets the count. */
@@ -132,7 +145,7 @@ export function addableRemote(reply, installed = []) {
     && !t.requires_auth && !t.oauth && !t.needs_key && !have.has(t.name)).slice(0, 2)
 }
 
-export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: strongCfg, fallback: fallbackCfg, fallbacks: fallbackCfgs } = {}) {
+export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: strongCfg, fallback: fallbackCfg, fallbacks: fallbackCfgs, pins: pinsCfg } = {}) {
   // read on each call, not once: the saved sign-in is refreshed about hourly (the hooks and the desktop app do it), and a session
   // that kept the first one sent every triage and outcome with an expired token (2026-11-08)
   const cfg = { get url() { return readKellConfig().url }, get token() { return readKellConfig().token } }
@@ -145,6 +158,7 @@ export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: 
     : Array.isArray(fallbackCfgs) && fallbackCfgs.length ? fallbackCfgs.map(String).filter(Boolean)
       : [fallback]
   const addRemote = process.env.KELL_OC_ADD_REMOTE === "on"
+  const pins = process.env.KELL_OC_PINS || pinsCfg || null
   const log = (...a) => { if (process.env.KELL_OC_DEBUG === "1") try { fs.appendFileSync(path.join(process.env.KELL_OC_STATE_DIR || os.tmpdir(), "native.log"), `${new Date().toISOString()} ${a.join(" ")}\n`) } catch { /* best effort */ } }
   const turns = new Map()            // sessionID -> { which, strongRef, testFails, lastTest, tools: Set, goal, tokens, cost, model, fallbackDone }
   const turn = (id) => { let t = turns.get(id); if (!t) { t = { which: "strong", testFails: 0, tools: new Set() }; turns.set(id, t) } return t }
@@ -155,7 +169,9 @@ export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: 
     const verdict = await post(cfg.url, "/triage", { query: String(e.prompt.text).slice(0, 6000) }, { token: cfg.token })
     t.goal = verdict?.tool && verdict.tool !== "-" ? String(verdict.tool) : undefined
     if (strong) t.strongRef = strong            // the session's own model, kept before the switch so escalation can go back to it
-    const pick = chooseModel(verdict, { cheap, strong: strong || t.strongRef })
+    // The person's own pick wins: the turn runs on it, and neither triage nor failed tests move it (desktop model picker).
+    const pinned = readPin(pins, e.sessionID)
+    const pick = pinned ? { which: "pinned", ref: pinned } : chooseModel(verdict, { cheap, strong: strong || t.strongRef })
     t.which = pick.which
     const ref = parseModel(pick.ref)
     log("triage", JSON.stringify({ kind: verdict?.kind, work: verdict?.work, category: verdict?.category, tool: verdict?.tool }), "->", pick.which, pick.ref || "(session's own)")

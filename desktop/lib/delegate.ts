@@ -5,6 +5,14 @@ import { planFromRoute, stepsOf, toolOf, type Delegation, type GoalOption, type 
 
 export * from "./plan"
 
+/** How proven a Way is, for the model rung (plan.ts chooseModel). A run-verified Way says "verified"; otherwise its review status
+ *  ("approved", "ai_approved", ...). verification_state is "unverified" on almost every Way, and it used to be read first, so a Way
+ *  the reviewer had approved still counted as unproven and every Way ran on the strong rung, DeepSeek V4 Pro (2026-11-18). */
+function approvalOf(way: any): string {
+  if (way?.verification_state === "verified") return "verified"
+  return String(way?.approval_status || way?.verification_state || "candidate")
+}
+
 /** find_ways' reply as the panel's shape: the Goal it resolved and every Way it offered. */
 function fromFindWays(found: any): Routed {
   const goal = found?.goal && typeof found.goal === "object" ? found.goal : null
@@ -16,7 +24,7 @@ function fromFindWays(found: any): Routed {
     options: ways.map((way: any) => ({
       id: String(way.procedure_id || way.version_id || ""),
       name: String(way.name || ""),
-      approval: String(way.verification_state || way.approval_status || "candidate"),
+      approval: approvalOf(way),
       review: String(way.approval_status || ""),
       why: String(way.why_chosen || ""),
       goal: asGoal ?? undefined,
@@ -55,7 +63,7 @@ function fromCatalog(answer: any, limit = 8): Routed {
       options.push({
         id,
         name: String(way?.name || ""),
-        approval: String(way?.verification_state || way?.approval_status || "candidate"),
+        approval: approvalOf(way),
         review: String(way?.approval_status || ""),
         why: String(way?.why_chosen || g?.description || g?.matched_by || ""),
         goal: g?.goal_id ? { id: String(g.goal_id), name: String(g.canonical_name || "") } : undefined,
