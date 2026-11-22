@@ -1,13 +1,20 @@
-"""The reward for sharing a referral code (db/212): the referrer is paid usage credit once the person they referred
-has PAID.
+"""The reward for sharing a referral code (db/212): the referrer is paid usage credit, in RUPEES, once the person they
+referred has PAID.
 
 What the briefing allows (docs/referral_legality_2026-11.md) and this module keeps to:
 
   * ONE level. The referrer of the referrer is never paid; there is no chain here, and the query below never walks one.
-  * Paid on a completed sale. `record_paid_order` is called from the payment webhook, for an order the gateway paid and
-    that we ourselves recorded. Applying a code on the pricing page (`referrals.active_codes`) pays nothing.
-  * Credit only. The reward is credit-dollars in the referrer's own prepaid wallet, via a row in org_wallet_credits
-    with source 'referral_reward'. It is not cash, not transferable, and not withdrawable.
+  * Paid on a completed sale. `record_paid_order` is called from the payment webhook and from the reconciler, for an
+    order the gateway paid and that we ourselves recorded. Applying a code on the pricing page pays nothing.
+  * Credit only. The reward is usage credit in the referrer's own prepaid wallet, via a row in org_wallet_credits with
+    source 'referral_reward'. It is not cash, not transferable, and not withdrawable.
+
+RUPEES, not dollars. The reward is a rupee amount (`KEL_REFERRAL_REWARD_INR`, 100 by default) and it is held in the
+wallet the way every rupee the wallet holds is: org_wallet_credits.amount_paise carries the rupees, and the
+credit-dollars they are worth are worked out at the SAME rate a purchase uses (wallet.usd_for_paise, i.e. the
+KELL_INR_PER_USD rate and the KELL_MARGIN), so Rs 100 of reward buys exactly what Rs 100 of top-up buys. The dollar
+figure is written alongside for the balance and the spend checks; the rupee figure is what was promised and what the
+person sees.
 
 Individual accounts only. The credit always goes to the REFERRER'S OWN wallet -- the account whose id is their user id
 (services/accounts.py), never a team or organization wallet. A team order can carry a code (for attribution, as it
@@ -31,6 +38,7 @@ import os
 from decimal import Decimal
 from typing import Any, Mapping, Optional
 
+from app.services import wallet
 from app.services.access import TenantScope, tenant_transaction
 
 log = logging.getLogger(__name__)
@@ -38,26 +46,48 @@ log = logging.getLogger(__name__)
 # One account may earn on this many paid referrals. The founder's number: 30 per account.
 MAX_REFERRALS_PER_REFERRER = 30
 
-# The reward, in credit-dollars, one per paid referral. 0 switches the programme off (no row is written at all), which
-# is the safe default for a deployment that has not decided to run a referral programme yet.
-DEFAULT_REWARD_USD = "1.00"
+# The reward, in RUPEES, one per paid referral. 0 switches the programme off. ON by default: the founder asked for the
+# programme to start, so an unset variable pays the default rather than nothing.
+DEFAULT_REWARD_INR = "100"
+
+# A runaway value is not a reward. Rs 100,000 is far above anything the scheme would promise and well under the
+# lifetime ceiling the tax note asks for; anything above it is treated as a mistake in configuration, not an amount.
+MAX_REWARD_INR = Decimal("100000")
 
 
-def reward_usd(env: Optional[Mapping[str, str]] = None) -> Decimal:
-    """The credit-dollars one paid referral is worth. Zero off, unset off, an unreadable value off -- a referral
-    programme that pays nothing is better than one that pays a number nobody chose."""
-    raw = (os.environ if env is None else env).get("KEL_REFERRAL_REWARD_USD")
-    if raw is None:
-        return Decimal("0")
+def reward_inr(env: Optional[Mapping[str, str]] = None) -> Decimal:
+    """The rupees one paid referral is worth. Whole rupees only (the wallet is kept in paise). 0 or a negative value
+    switches the programme off; an unreadable or absurd value falls back to the default rather than paying a number
+    nobody chose."""
+    raw = (os.environ if env is None else env).get("KEL_REFERRAL_REWARD_INR")
+    if raw is None or str(raw).strip() == "":
+        return Decimal(DEFAULT_REWARD_INR)
     try:
         v = Decimal(str(raw).strip())
     except Exception:  # noqa: BLE001
+        log.warning("KEL_REFERRAL_REWARD_INR=%r is not a number; using the default", raw)
+        return Decimal(DEFAULT_REWARD_INR)
+    if v <= 0:
         return Decimal("0")
-    return v if v > 0 else Decimal("0")
+    if v > MAX_REWARD_INR:
+        log.warning("KEL_REFERRAL_REWARD_INR=%s is above the ceiling; using the default", raw)
+        return Decimal(DEFAULT_REWARD_INR)
+    return v.quantize(Decimal("1"))
+
+
+def reward_paise(env: Optional[Mapping[str, str]] = None) -> int:
+    """The reward in paise, which is how the wallet records rupees."""
+    return int(reward_inr(env) * 100)
+
+
+def reward_usd(env: Optional[Mapping[str, str]] = None) -> Decimal:
+    """The credit-dollars those rupees are worth, at the same rate a purchase uses. This is the figure the balance and
+    the spend checks read; it is always derived from the rupee amount, never configured separately."""
+    return wallet.usd_for_paise(reward_paise(env), env)
 
 
 def enabled(env: Optional[Mapping[str, str]] = None) -> bool:
-    return reward_usd(env) > 0
+    return reward_paise(env) > 0
 
 
 async def _code_owner(conn: Any, code: str) -> Optional[dict[str, Any]]:
@@ -88,9 +118,10 @@ async def record_paid_order(pool: Any, *, order: Mapping[str, Any], payment_id: 
     code = (order.get("referral_code") or "").strip().upper()
     if not code:
         return None
-    amount = reward_usd(env)
-    if amount <= 0:
+    paise = reward_paise(env)
+    if paise <= 0:
         return None
+    usd = reward_usd(env)
     buyer = str(order.get("buyer_user_id") or "").strip()
     if not buyer:
         return None
@@ -131,52 +162,104 @@ async def record_paid_order(pool: Any, *, order: Mapping[str, Any], payment_id: 
                 "SELECT count(*) FROM referral_rewards WHERE referrer_user_id = $1::uuid AND status = 'released'",
                 referrer))
             status, reason = ("void", "this account has already earned for 30 paid referrals") \
-                if released >= MAX_REFERRALS_PER_REFERRER else ("pending", None)
+                if released >= MAX_REFERRALS_PER_REFERRER else ("released", None)
 
             row = await conn.fetchrow(
                 "INSERT INTO referral_rewards (code, referrer_user_id, referred_user_id, order_id, payment_id, "
-                "amount_paise, reward_usd, status, reason) "
-                "VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9) "
+                "amount_paise, reward_inr, reward_usd, status, reason, released_at) "
+                "VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, "
+                "CASE WHEN $9 = 'released' THEN now() ELSE NULL END) "
                 "ON CONFLICT DO NOTHING "
                 "RETURNING *",
-                code, referrer, buyer, order_id, str(payment_id), amount_paise, amount, status, reason)
+                code, referrer, buyer, order_id, str(payment_id), amount_paise, paise // 100, usd, status, reason)
             if row is None:
                 # A concurrent delivery of the same payment won the insert; return what it made.
                 row = await conn.fetchrow("SELECT * FROM referral_rewards WHERE payment_id = $1", str(payment_id))
                 return dict(row) if row else None
-    return dict(row) if row else None
 
+            if status == "released":
+                # AUTOMATIC RELEASE: the reward is credited in the SAME transaction that records the referral, so a
+                # referral can never be recorded as paid without its credit, and a rollback returns both. The wallet
+                # row's payment_ref is unique, so a retry credits once. A crash after commit is covered by
+                # `release_pending`, which finds a 'released' row with no wallet row and finishes the job.
+                credited = await conn.fetchval(
+                    "INSERT INTO org_wallet_credits (organization_id, payment_ref, source, amount_paise, amount_usd, "
+                    "created_by) VALUES ($1::uuid, $2, 'referral_reward', $3, $4, 'referral') "
+                    "ON CONFLICT (payment_ref) DO NOTHING RETURNING 1",
+                    referrer, f"referral:{row['id']}", paise, usd)
+                if not credited:
+                    log.info("referral %s was already credited to %s", row["id"], referrer)
+            # Return the row as stored, ONCE the credit is written: a caller that changes the returned dict (a test, a
+            # debugger) must not reach the stored row.
+            row = dict(row)
+            row["status"] = status
+            row["released_at"] = row["created_at"] if status == "released" and row.get("released_at") is None \
+                else row.get("released_at")
+            return row
+    return None
 
 async def release(pool: Any, *, referral_id: str) -> Optional[dict[str, Any]]:
-    """Add a pending referral's reward to the referrer's own wallet. Idempotent: the wallet's unique payment_ref
-    ('referral:<id>') means a second call credits once, and the status update happens in the same transaction, so a
-    reward is never paid without the row saying so.
+    """Credit a still-'pending' referral's reward to the referrer's own wallet, and mark it released.
 
-    The money moves through org_wallet_credits exactly as every other credit does (0 paise paid, credit-dollars), so
-    the balance, the spend checks and the history are the same machinery paid credit uses."""
+    New referrals are released inline by `record_paid_order`, so in normal running there is nothing here to find.
+    This exists for two honest cases: a row left 'pending' by an older deployment, and a repair run
+    (`release_pending`). Idempotent on the wallet's unique payment_ref ('referral:<id>')."""
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         row = await conn.fetchrow("SELECT * FROM referral_rewards WHERE id = $1::uuid", str(referral_id))
         if row is None or str(row["status"]) != "pending":
             return dict(row) if row else None
         referrer = str(row["referrer_user_id"])
-        reward = row["reward_usd"]
+        reward_inr, reward_usd_value = int(row["reward_inr"]), row["reward_usd"]
 
-    # The credit lands in the referrer's OWN wallet account, bound as that tenant. `credited` is None when this
-    # referral's payment_ref is already in the wallet, which is the crash-recovery case: the process died after crediting
-    # but before the status update below, so the row is still 'pending'. Paying again would double-credit, so stop here.
     async with tenant_transaction(pool, TenantScope.for_tenant(referrer)) as conn:
         credited = await conn.fetchval(
             "INSERT INTO org_wallet_credits (organization_id, payment_ref, source, amount_paise, amount_usd, created_by) "
-            "VALUES ($1::uuid, $2, 'referral_reward', 0, $3, 'referral') ON CONFLICT (payment_ref) DO NOTHING RETURNING 1",
-            referrer, f"referral:{referral_id}", reward)
+            "VALUES ($1::uuid, $2, 'referral_reward', $3, $4, 'referral') ON CONFLICT (payment_ref) DO NOTHING RETURNING 1",
+            referrer, f"referral:{referral_id}", reward_inr * 100, reward_usd_value)
     if not credited:
         log.info("referral %s was already credited to %s; nothing to release", referral_id, referrer)
-        return None
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         done = await conn.fetchrow(
             "UPDATE referral_rewards SET status = 'released', released_at = now() "
             "WHERE id = $1::uuid AND status = 'pending' RETURNING *", str(referral_id))
     return dict(done) if done else None
+
+
+async def release_pending(pool: Any, *, limit: int = 100) -> list[dict[str, Any]]:
+    """The repair run: finish any referral left unfinished.
+
+    Two shapes of unfinished, both of which a crash can produce and neither of which should ever pay twice:
+      * 'pending'                    -- the row was written but the credit was not (an older deployment, or a failure
+                                        between the two writes before they were made one transaction).
+      * 'released' with no wallet row -- the status says paid but the credit row is missing.
+    Returns the rows it acted on. Safe to run repeatedly and on a schedule."""
+    fixed: list[dict[str, Any]] = []
+    async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
+        pending = await conn.fetch(
+            "SELECT id::text AS id FROM referral_rewards WHERE status = 'pending' "
+            "ORDER BY created_at ASC LIMIT $1", limit)
+        missing = await conn.fetch(
+            "SELECT r.id::text AS id, r.referrer_user_id::text AS referrer FROM referral_rewards r "
+            "WHERE r.status = 'released' AND NOT EXISTS ("
+            "  SELECT 1 FROM org_wallet_credits w WHERE w.payment_ref = 'referral:' || r.id::text) "
+            "ORDER BY r.created_at ASC LIMIT $1", limit)
+    for r in pending:
+        done = await release(pool, referral_id=r["id"])
+        # `release` returns the row even when there was nothing to do (already released); only claim the ones it moved.
+        if done and str(done.get("status")) == "released":
+            fixed.append(done)
+    for r in missing:
+        # Re-credit through the same idempotent insert release() uses; the status is already 'released'.
+        async with tenant_transaction(pool, TenantScope.for_tenant(r["referrer"])) as conn:
+            row = await conn.fetchrow("SELECT reward_inr, reward_usd FROM referral_rewards WHERE id = $1::uuid", r["id"])
+            if row is not None:
+                await conn.execute(
+                    "INSERT INTO org_wallet_credits (organization_id, payment_ref, source, amount_paise, amount_usd, created_by) "
+                    "VALUES ($1::uuid, $2, 'referral_reward', $3, $4, 'referral_repair') "
+                    "ON CONFLICT (payment_ref) DO NOTHING",
+                    r["referrer"], f"referral:{r['id']}", int(row["reward_inr"]) * 100, row["reward_usd"])
+                fixed.append({"id": r["id"], "repaired": True})
+    return fixed
 
 
 async def reverse(pool: Any, *, referral_id: str, reason: str) -> Optional[dict[str, Any]]:
@@ -188,12 +271,18 @@ async def reverse(pool: Any, *, referral_id: str, reason: str) -> Optional[dict[
         if row is None or str(row["status"]) not in ("released", "pending"):
             return dict(row) if row else None
         referrer = str(row["referrer_user_id"])
-        reward = row["reward_usd"]
+        reward_paise_value = int(row["reward_inr"]) * 100
+        reward_usd_value = row["reward_usd"]
     async with tenant_transaction(pool, TenantScope.for_tenant(referrer)) as conn:
+        # Only take it back if it was actually credited, and take back exactly what was credited. A row that was never
+        # credited has nothing to reverse (a reversal of money never received would go the wrong way).
         await conn.execute(
             "INSERT INTO org_wallet_credits (organization_id, payment_ref, source, amount_paise, amount_usd, created_by) "
-            "VALUES ($1::uuid, $2, 'referral_reward', 0, $3, 'referral_reversal') ON CONFLICT (payment_ref) DO NOTHING",
-            referrer, f"referral-reversal:{referral_id}", -Decimal(str(reward)))
+            "SELECT $1::uuid, $2, 'referral_reward', $3, $4, 'referral_reversal' "
+            "WHERE EXISTS (SELECT 1 FROM org_wallet_credits WHERE payment_ref = $5) "
+            "ON CONFLICT (payment_ref) DO NOTHING",
+            referrer, f"referral-reversal:{referral_id}", -reward_paise_value, -Decimal(str(reward_usd_value)),
+            f"referral:{referral_id}")
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         done = await conn.fetchrow(
             "UPDATE referral_rewards SET status = 'reversed', reason = $2 "
@@ -210,7 +299,7 @@ async def summary(pool: Any, *, referrer_user_id: str) -> dict[str, Any]:
     opaque id and a date, nothing more."""
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         rows = await conn.fetch(
-            "SELECT id::text AS id, status, reward_usd, created_at, released_at, reason "
+            "SELECT id::text AS id, status, reward_inr, created_at, released_at, reason "
             "FROM referral_rewards WHERE referrer_user_id = $1::uuid ORDER BY created_at DESC LIMIT 100",
             str(referrer_user_id))
     out = []
@@ -220,10 +309,10 @@ async def summary(pool: Any, *, referrer_user_id: str) -> dict[str, Any]:
     for r in rows:
         if str(r["status"]) == "released":
             used += 1
-            earned += Decimal(str(r["reward_usd"]))
+            earned += Decimal(str(r["reward_inr"]))
         elif str(r["status"]) == "pending":
-            pending += Decimal(str(r["reward_usd"]))
-        out.append({"id": r["id"], "status": r["status"], "reward_usd": str(r["reward_usd"]),
+            pending += Decimal(str(r["reward_inr"]))
+        out.append({"id": r["id"], "status": r["status"], "reward_inr": int(r["reward_inr"]),
                     "at": r["created_at"].isoformat(),
                     "released_at": r["released_at"].isoformat() if r["released_at"] else None,
                     "reason": r["reason"]})
@@ -231,9 +320,9 @@ async def summary(pool: Any, *, referrer_user_id: str) -> dict[str, Any]:
         "limit": MAX_REFERRALS_PER_REFERRER,
         "used": used,
         "remaining": max(0, MAX_REFERRALS_PER_REFERRER - used),
-        "earned_usd": str(earned),
-        "pending_usd": str(pending),
-        "reward_usd": str(reward_usd()),
+        "earned_inr": str(earned),
+        "pending_inr": str(pending),
+        "reward_inr": str(reward_inr()),
         "enabled": enabled(),
         "referrals": out,
     }

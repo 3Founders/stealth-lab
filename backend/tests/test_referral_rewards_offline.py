@@ -21,6 +21,7 @@ class Conn:
 
     def __init__(self, st):
         self.s = st
+        self.shared = st
 
     def transaction(self):
         @asynccontextmanager
@@ -47,8 +48,9 @@ class Conn:
                 return None
             row = {"id": f"r{len(self.s['rows']) + 1}", "code": a[0], "referrer_user_id": a[1],
                    "referred_user_id": buyer, "order_id": a[3], "payment_id": a[4], "amount_paise": a[5],
-                   "reward_usd": a[6], "status": a[7], "reason": a[8],
-                   "created_at": datetime(2026, 11, 18, tzinfo=timezone.utc), "released_at": None}
+                   "reward_inr": a[6], "reward_usd": a[7], "status": a[8], "reason": a[9],
+                   "created_at": datetime(2026, 11, 18, tzinfo=timezone.utc),
+                   "released_at": datetime(2026, 11, 18, tzinfo=timezone.utc) if a[8] == "released" else None}
             self.s["referred"].add(buyer)
             self.s["rows"][a[4]] = row
             self.s["created"].append(row)
@@ -83,6 +85,12 @@ class Conn:
 
     async def fetch(self, sql, *a):
         self.s["sql"].append(sql)
+        if "FROM referral_rewards" in sql and "created_at ASC" in sql:
+            # release_pending's two queries: pending rows, then released rows with no wallet credit.
+            if "NOT EXISTS" in sql:
+                return [{"id": r["id"], "referrer": r["referrer_user_id"]} for r in self.s["rows"].values()
+                        if r["status"] == "released" and f"referral:{r['id']}" not in self.s["credits"]]
+            return [{"id": r["id"]} for r in self.s["rows"].values() if r["status"] == "pending"]
         return [r for r in self.s["rows"].values() if r["referrer_user_id"] == a[0]]
 
 
@@ -95,7 +103,6 @@ def state(monkeypatch):
     async def tx(pool, scope):
         st["last_scope"] = scope
         yield Conn(st)
-
     @asynccontextmanager
     async def acquire():
         yield Conn(st)
@@ -105,7 +112,7 @@ def state(monkeypatch):
             return acquire()
 
     monkeypatch.setattr(referral_rewards, "tenant_transaction", tx)
-    monkeypatch.setenv("KEL_REFERRAL_REWARD_USD", "1.00")
+    monkeypatch.setenv("KEL_REFERRAL_REWARD_INR", "100")
     st["pool"] = Pool()
     return st
 
@@ -115,14 +122,17 @@ def _order(code=CODE, buyer=BUYER, order_id="order_1", paise=64900):
 
 
 @pytest.mark.asyncio
-async def test_a_paid_personal_code_creates_one_pending_referral_for_its_owner(state, monkeypatch):
+async def test_a_paid_personal_code_pays_its_owner_at_once_and_counts_once(state, monkeypatch):
     async def ensure(*a, **k):
         return True
     monkeypatch.setattr("app.services.accounts.ensure_account", ensure)
     row = await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1")
-    assert row["status"] == "pending" and row["referrer_user_id"] == REFERRER
-    assert Decimal(str(row["reward_usd"])) == Decimal("1.00") and row["referred_user_id"] == BUYER
-    assert row["reason"] is None
+    assert row["status"] == "released" and row["referrer_user_id"] == REFERRER
+    assert row["reward_inr"] == 100 and row["referred_user_id"] == BUYER
+    assert row["reason"] is None and row["released_at"] is not None
+    # AUTOMATIC: the credit is in the referrer's wallet as part of the same call, in rupees (100 -> 10000 paise).
+    owner, usd = state["credits"][f"referral:{row['id']}"]
+    assert owner == REFERRER and usd > 0
 
 
 @pytest.mark.asyncio
@@ -167,55 +177,55 @@ async def test_an_issued_free_or_team_code_pays_nobody(state, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_programme_is_off_by_default_and_off_when_the_reward_is_zero(state, monkeypatch):
+async def test_the_programme_is_ON_by_default_and_off_only_at_zero(state, monkeypatch):
     async def ensure(*a, **k):
         return True
     monkeypatch.setattr("app.services.accounts.ensure_account", ensure)
-    monkeypatch.delenv("KEL_REFERRAL_REWARD_USD", raising=False)
+    monkeypatch.delenv("KEL_REFERRAL_REWARD_INR", raising=False)
+    assert referral_rewards.enabled() is True and referral_rewards.reward_inr() == Decimal("100")
+    row = await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1")
+    assert row is not None and row["status"] == "released"                 # on, out of the box
+    monkeypatch.setenv("KEL_REFERRAL_REWARD_INR", "0")
     assert referral_rewards.enabled() is False
-    assert await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1") is None
-    monkeypatch.setenv("KEL_REFERRAL_REWARD_USD", "0")
-    assert await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1") is None
+    assert await referral_rewards.record_paid_order(state["pool"], order=_order(buyer=THIRD, order_id="o2"), payment_id="p2") is None
 
 
 @pytest.mark.asyncio
-async def test_a_released_reward_is_credit_in_the_referrers_own_wallet_not_the_buyers(state, monkeypatch):
+async def test_the_reward_is_credit_in_the_referrers_own_wallet_not_the_buyers(state, monkeypatch):
     async def ensure(*a, **k):
         return True
     monkeypatch.setattr("app.services.accounts.ensure_account", ensure)
     row = await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1")
-    done = await referral_rewards.release(state["pool"], referral_id=row["id"])
-    assert done["status"] == "released"
+    assert row["status"] == "released"                                     # no separate release step
     owner, usd = state["credits"][f"referral:{row['id']}"]
-    assert owner == REFERRER and owner != BUYER and usd == Decimal("1.00")
-    # once released, a second release returns the same row and credits nothing more (the guard is the status check)
-    again = await referral_rewards.release(state["pool"], referral_id=row["id"])
-    assert again["status"] == "released" and len(state["credits"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_a_crash_after_crediting_does_not_pay_twice_on_retry(state, monkeypatch):
-    """The process died between the wallet insert and the status update: the row is still pending, the credit is
-    already there. A retry must find the existing payment_ref and stop rather than credit a second time."""
-    async def ensure(*a, **k):
-        return True
-    monkeypatch.setattr("app.services.accounts.ensure_account", ensure)
-    row = await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1")
-    state["credits"][f"referral:{row['id']}"] = (REFERRER, Decimal("1.00"))   # credited, but the row was never flipped
-    assert await referral_rewards.release(state["pool"], referral_id=row["id"]) is None
+    assert owner == REFERRER and owner != BUYER and usd > 0
     assert len(state["credits"]) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_reversal_closes_the_credit_with_a_negative_row(state, monkeypatch):
+async def test_a_reversal_takes_back_exactly_what_was_credited(state, monkeypatch):
     async def ensure(*a, **k):
         return True
     monkeypatch.setattr("app.services.accounts.ensure_account", ensure)
     row = await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1")
-    await referral_rewards.release(state["pool"], referral_id=row["id"])
+    credited_usd = state["credits"][f"referral:{row['id']}"][1]
     out = await referral_rewards.reverse(state["pool"], referral_id=row["id"], reason="refunded")
     assert out["status"] == "reversed" and out["reason"] == "refunded"
-    assert state["credits"][f"referral-reversal:{row['id']}"][1] == Decimal("-1.00")
+    assert state["credits"][f"referral-reversal:{row['id']}"][1] == -credited_usd
+
+
+@pytest.mark.asyncio
+async def test_a_referral_never_credited_is_not_reversed_into_negative_money(state, monkeypatch):
+    """A 'void' or never-credited row has nothing to take back: no negative wallet row is written."""
+    async def ensure(*a, **k):
+        return True
+    monkeypatch.setattr("app.services.accounts.ensure_account", ensure)
+    monkeypatch.setattr(referral_rewards, "MAX_REFERRALS_PER_REFERRER", 1)
+    await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="p0")
+    void = await referral_rewards.record_paid_order(state["pool"], order=_order(buyer=THIRD, order_id="o1"), payment_id="p1")
+    assert void["status"] == "void"
+    await referral_rewards.reverse(state["pool"], referral_id=void["id"], reason="refunded")
+    assert f"referral-reversal:{void['id']}" not in state["credits"]
 
 
 @pytest.mark.asyncio
@@ -227,8 +237,6 @@ async def test_the_thirty_first_paid_referral_is_recorded_but_void(state, monkey
     for i in range(2):
         await referral_rewards.record_paid_order(state["pool"], order=_order(buyer=f"00000000-0000-4000-8000-{i:012d}",
                                                                             order_id=f"o{i}"), payment_id=f"p{i}")
-        row = [r for r in state["created"] if r["payment_id"] == f"p{i}"][0]
-        await referral_rewards.release(state["pool"], referral_id=row["id"])
     over = await referral_rewards.record_paid_order(state["pool"], order=_order(buyer=THIRD, order_id="o9"), payment_id="p9")
     assert over["status"] == "void" and "30" in over["reason"] and f"referral:{over['id']}" not in state["credits"]
 
@@ -238,15 +246,54 @@ async def test_the_summary_never_names_the_people_who_used_the_code(state, monke
     async def ensure(*a, **k):
         return True
     monkeypatch.setattr("app.services.accounts.ensure_account", ensure)
-    row = await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1")
-    await referral_rewards.release(state["pool"], referral_id=row["id"])
+    await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1")
     out = await referral_rewards.summary(state["pool"], referrer_user_id=REFERRER)
     assert out["limit"] == 30 and out["used"] == 1 and out["remaining"] == 29
-    assert out["earned_usd"] == "1.00" and out["reward_usd"] == "1.00"
-    assert set(out["referrals"][0]) == {"id", "status", "reward_usd", "at", "released_at", "reason"}
+    assert out["earned_inr"] == "100" and out["reward_inr"] == "100"
+    assert set(out["referrals"][0]) == {"id", "status", "reward_inr", "at", "released_at", "reason"}
     assert BUYER not in str(out)
+
+
+@pytest.mark.asyncio
+async def test_the_repair_run_finishes_pending_and_uncredited_released_rows_once(state, monkeypatch):
+    """release_pending is what a crash or an older deployment leaves for: a 'pending' row, and a 'released' row whose
+    wallet credit never landed. Both are finished, and a second run changes nothing."""
+    async def ensure(*a, **k):
+        return True
+    monkeypatch.setattr("app.services.accounts.ensure_account", ensure)
+    old = await referral_rewards.record_paid_order(state["pool"], order=_order(), payment_id="pay_1")
+    # An older deployment's row: written, never credited. Put it back that way by hand (the fake stores objects; the
+    # service returns copies).
+    state["rows"]["pay_1"]["status"] = "pending"
+    state["rows"]["pay_1"]["released_at"] = None
+    del state["credits"][f"referral:{old['id']}"]
+    lost = await referral_rewards.record_paid_order(state["pool"], order=_order(buyer=THIRD, order_id="order_3"),
+                                                    payment_id="pay_3")
+    del state["credits"][f"referral:{lost['id']}"]                  # 'released', but the credit is missing
+
+    fixed = await referral_rewards.release_pending(state["pool"])
+    assert {f["id"] for f in fixed} == {old["id"], lost["id"]}
+    assert state["rows"]["pay_1"]["status"] == "released" and f"referral:{old['id']}" in state["credits"]
+    assert f"referral:{lost['id']}" in state["credits"]
+    assert len(state["credits"]) == 2
+    assert await referral_rewards.release_pending(state["pool"]) == []
 
 
 def test_the_allowance_and_the_default_reward_are_the_founders_numbers():
     assert referral_rewards.MAX_REFERRALS_PER_REFERRER == 30
-    assert referral_rewards.DEFAULT_REWARD_USD == "1.00"
+    assert referral_rewards.DEFAULT_REWARD_INR == "100"
+    assert referral_rewards.reward_paise() == 10000                            # Rs 100 in paise
+
+
+def test_rupees_convert_at_the_same_rate_a_purchase_uses():
+    """Rs 100 of reward buys exactly what Rs 100 of top-up buys: both go through wallet.usd_for_paise."""
+    from app.services import wallet
+    assert referral_rewards.reward_usd() == wallet.usd_for_paise(10000)
+    assert referral_rewards.reward_usd({"KEL_REFERRAL_REWARD_INR": "250"}) == wallet.usd_for_paise(25000)
+
+
+def test_an_absurd_or_unreadable_reward_falls_back_to_the_default():
+    assert referral_rewards.reward_inr({"KEL_REFERRAL_REWARD_INR": "lots"}) == Decimal("100")
+    assert referral_rewards.reward_inr({"KEL_REFERRAL_REWARD_INR": "99999999"}) == Decimal("100")
+    assert referral_rewards.reward_inr({"KEL_REFERRAL_REWARD_INR": "0"}) == Decimal("0")
+    assert referral_rewards.reward_inr({"KEL_REFERRAL_REWARD_INR": "-5"}) == Decimal("0")

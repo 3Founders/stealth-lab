@@ -7,8 +7,8 @@ import type { Session } from "@/lib/session";
 const link = { textDecoration: "underline" } as const;
 
 const STATUS_TEXT: Record<string, string> = {
-  pending: "Paid by them; we are confirming it",
   released: "In your wallet",
+  pending: "Being confirmed",
   void: "Not counted",
   reversed: "Refunded by them, taken back",
 };
@@ -16,8 +16,8 @@ const when = (iso: string) => {
   const t = Date.parse(iso);
   return Number.isFinite(t) ? new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 };
-/** An amount of credit as people read it: "1", not "1.000000". The credits are the wallet's dollars one for one. */
-const credits = (v: string) => String(Number(v) || 0);
+/** Rupees as people read them: "₹100", not "100.000000". */
+const rupees = (v: string | number) => `₹${Number(v).toLocaleString("en-IN")}`;
 
 /**
  * Your referrals (/referrals): the code to share, how many of your 30 paid referrals it has earned on, and what has been
@@ -81,8 +81,8 @@ export default function ReferralsPanel({ api, session, returnTo = "/referrals" }
       {data && data.code && (
         <div style={{ display: "grid", gap: 14, marginTop: 12 }}>
           <p className="small">
-            Share this code. When someone uses it to buy a plan and pays, you get <b>{credits(data.rewardUsd)} kell credits</b>{" "}
-            in your own wallet: usage credit for kell, not cash.
+            Share this code. When someone uses it to buy a plan and pays, you get <b>{rupees(data.rewardInr)} of kell credit</b>{" "}
+            in your own wallet, straight away. It is usage credit for kell, not cash.
           </p>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <code style={{ fontSize: 20, letterSpacing: ".06em", padding: "8px 12px", border: "1px solid var(--rule-strong)", borderRadius: 6 }}>{data.code}</code>
@@ -92,14 +92,15 @@ export default function ReferralsPanel({ api, session, returnTo = "/referrals" }
 
           <p className="small">
             <b>{data.used} of {data.limit}</b> paid referrals used. {data.remaining} left.
-            {Number(data.pendingUsd) > 0 ? <> {credits(data.pendingUsd)} credits are being confirmed.</> : null}
-            {Number(data.earnedUsd) > 0 ? <> <b>{credits(data.earnedUsd)} credits earned</b> so far.</> : null}
+            {Number(data.pendingInr) > 0 ? <> {rupees(data.pendingInr)} is being confirmed.</> : null}
+            {Number(data.earnedInr) > 0 ? <> <b>{rupees(data.earnedInr)} earned</b> so far.</> : null}
           </p>
 
           <details className="small">
             <summary style={{ cursor: "pointer" }}>How it works</summary>
             <ul style={{ margin: "8px 0 0", paddingLeft: 18, display: "grid", gap: 4 }}>
               <li>You earn only after the person you invited <b>pays</b>. A signup earns nothing.</li>
+              <li>The credit is added to your own kell wallet as soon as their payment goes through.</li>
               <li>An account can be referred once, and your own code never counts for you.</li>
               <li>One account can earn on {data.limit} paid referrals.</li>
               <li>Credits go into your own kell wallet. They aren&rsquo;t cash, can&rsquo;t be withdrawn and can&rsquo;t be transferred.</li>
@@ -123,7 +124,7 @@ export default function ReferralsPanel({ api, session, returnTo = "/referrals" }
                     <tr key={r.id} style={{ borderBottom: "1px solid var(--rule)" }}>
                       <td style={{ padding: "6px 8px 6px 0" }}>{when(r.releasedAt ?? r.at)}</td>
                       <td style={{ padding: "6px 8px 6px 0" }} title={r.reason ?? undefined}>{STATUS_TEXT[r.status] ?? r.status}</td>
-                      <td style={{ padding: "6px 0" }}>{credits(r.rewardUsd)}</td>
+                      <td style={{ padding: "6px 0" }}>{rupees(r.rewardInr)}</td>
                     </tr>
                   ))}
                 </tbody>

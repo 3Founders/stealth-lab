@@ -100,14 +100,14 @@ export interface SubscriptionState {
 /** One line of the referrer's own referral record. Never names the person who used the code: the server does not send it. */
 export interface ReferralRow {
   id: string; status: "pending" | "released" | "void" | "reversed" | string;
-  rewardUsd: string; at: string; releasedAt: string | null; reason: string | null;
+  rewardInr: number; at: string; releasedAt: string | null; reason: string | null;
 }
 
 /** GET /v1/billing/referrals: the person's code, their allowance of 30 paid referrals, and what they have earned. */
 export interface ReferralState {
   code: string | null;
   limit: number; used: number; remaining: number;
-  earnedUsd: string; pendingUsd: string; rewardUsd: string; enabled: boolean;
+  earnedInr: string; pendingInr: string; rewardInr: string; enabled: boolean;
   referrals: ReferralRow[];
 }
 
@@ -234,11 +234,11 @@ export function billingApi(deps: BillingDeps) {
       return { kind: "ok", data: {
         code: typeof d.code === "string" && d.code ? d.code : null,
         limit: n(d.limit) || 30, used: n(d.used), remaining: n(d.remaining),
-        earnedUsd: String(d.earned_usd ?? "0"), pendingUsd: String(d.pending_usd ?? "0"),
-        rewardUsd: String(d.reward_usd ?? "0"), enabled: d.enabled === true,
+        earnedInr: String(d.earned_inr ?? "0"), pendingInr: String(d.pending_inr ?? "0"),
+        rewardInr: String(d.reward_inr ?? "0"), enabled: d.enabled === true,
         referrals: rows.map((x) => {
           const row = x as Record<string, unknown>;
-          return { id: String(row.id ?? ""), status: String(row.status ?? ""), rewardUsd: String(row.reward_usd ?? "0"),
+          return { id: String(row.id ?? ""), status: String(row.status ?? ""), rewardInr: Number(row.reward_inr ?? 0),
                    at: String(row.at ?? ""), releasedAt: typeof row.released_at === "string" ? row.released_at : null,
                    reason: typeof row.reason === "string" ? row.reason : null };
         }),

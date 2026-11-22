@@ -5,7 +5,9 @@ down loses nothing only if somebody asks again). Razorpay's own guidance is to f
 job does that for the orders we recorded in the last few days: for each, it asks Razorpay for the payments on the order and, for
 a payment that is captured, INR and exactly the amount we recorded, runs the SAME activation the webhook runs (plans.activate
 for a plan order, wallet.credit_payment for a credit order). Both are idempotent on the payment id, so running this next to the
-webhook, or twice, changes nothing the second time.
+webhook, or twice, changes nothing the second time. A plan order that carries a referral code also earns the referrer their
+reward here (services/referral_rewards.record_paid_order, idempotent on the payment id): a payment recovered by this job is
+as real as one the webhook saw, and must pay the same reward.
 
 Run it by hand or from a scheduler:   python -m app.services.billing_reconcile [--apply] [--minutes 10] [--days 3]
 Without --apply it only reports what it would activate. It never touches an order younger than --minutes, which the webhook is
@@ -19,7 +21,7 @@ import logging
 import os
 from typing import Any, Awaitable, Callable
 
-from app.services import plans, wallet
+from app.services import plans, referral_rewards, wallet
 from app.services.access import TenantScope, tenant_transaction
 
 log = logging.getLogger(__name__)
@@ -75,6 +77,9 @@ async def reconcile(pool: Any, *, fetch_payments: FetchPayments = razorpay_order
             try:
                 if order.get("plan"):
                     done = await plans.activate(pool, order=order, payment_id=str(pay["id"]), amount_paise=int(pay["amount"]))
+                    # A payment recovered here is as real as one the webhook saw, so it earns the referrer their
+                    # reward too (idempotent: the referral row is keyed on the payment id).
+                    await referral_rewards.record_paid_order(pool, order=order, payment_id=str(pay["id"]))
                 else:
                     done = await wallet.credit_payment(pool, org_id=order["organization_id"], payment_ref=str(pay["id"]),
                                                        amount_paise=int(pay["amount"]), created_by="reconcile",

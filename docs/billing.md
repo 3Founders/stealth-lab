@@ -66,8 +66,17 @@ People want to pay us while the company is not yet incorporated, so the first ve
   the buyer's latest plan (a past date means it ended).
 - **Activation** happens only in the signed webhook, from the order we recorded: idempotent steps with the entitlement row written last,
   so a retry after a failure completes the work. A redelivered event id is acknowledged without work (`billing_webhook_events`).
-- **Not built yet (from the 2026-10-31 review, docs/pricing_page.md and the research notes):** refund and dispute events (a refund is manual in the
-  Razorpay dashboard for now and does not reverse credit or end a plan), a scheduled run of the reconcile job (`python -m app.services.billing_reconcile --apply` fetches captured payments whose webhook never
+- **Refunds are handled (db/215, `app/services/wallet_refunds.py`).** Razorpay's `refund.created` / `refund.processed`
+  webhooks are acted on: a refund takes its rupees back out of the buyer's wallet as a negative row (the ledger is
+  append-only, so a refund is a new row, never an edit or a delete), and takes back any referral reward paid on that
+  payment (db/212). Two deliberate limits: it never takes more than the wallet has left (a refund of money already spent
+  on usage is recorded as `skipped` with a reason, never driven into a debt), and it **does not end a plan early** — the
+  period was granted when it was paid for — nor claw back the usage a plan included, which is what the payment bought.
+  Ending a plan on refund is a product decision nobody has made; when one is, it is an explicit change, not a side effect
+  of a webhook. `refund.failed`, `refund.speed_changed` and auto-refunds of uncaptured payments move no money and are
+  acknowledged without action.
+- **Not built yet (from the 2026-10-31 review, docs/pricing_page.md and the research notes):** dispute/chargeback events
+  (Razorpay's `payment.dispute.*` is not subscribed; a chargeback today needs a manual reversal), a scheduled run of the reconcile job (`python -m app.services.billing_reconcile --apply` fetches captured payments whose webhook never
   arrived and activates them; it exists but nothing runs it yet), GST receipts, expiry of included usage, and scheduling the abandoned-reservation sweep (`ingestion.admin` settles reservations only
   when someone runs it).
 
@@ -165,7 +174,7 @@ Not verified, and each can cost a buyer their plan or their money: the webhook r
 2. One small live payment (Starter, ₹200): the plan appears on `/pricing` within about a minute. If it does not, stop selling until the webhook is fixed and run the reconcile job (`python -m app.services.billing_reconcile --apply`) for that payment. Refund it from the dashboard if it was only a test.
 3. Publish `/legal/refunds` (Razorpay requires it; the page is a placeholder today) and have Terms and Privacy reviewed.
 4. Set `NEXT_PUBLIC_KELL_GST_MODE`; confirm the margin and `KELL_INR_PER_USD`; decide who issues GST invoices (the endpoints exist; the console is not deployed).
-5. Schedule the reconcile job and write down who refunds and how (refund events are not handled; every refund is manual).
+5. Schedule the reconcile job, and write down who issues a refund and how (Razorpay's refund events are now applied automatically, db/215; a dispute or chargeback still needs a manual reversal).
 6. Deploy migrations 167/168, the backend endpoints, the referral frontend and the dashboard tabs when the local work is ready; the live site does not have them yet.
 
 ## Go-live steps
