@@ -112,8 +112,25 @@
 /* 7. Provenance ------------------------------------------------------------ */
 .kwm-code { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font-size: 13.5px; line-height: 1.6; }
 .kwm-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.kwm-cta { display: inline-block; border: 1px solid var(--ink); border-radius: 999px; padding: 7px 18px; font-size: 15px; text-decoration: none; color: var(--ink); }
-.kwm-cta:hover { background: var(--ink); color: var(--paper); }
+.kwm-cta {
+  display: inline-block; border: 1px solid var(--ink); border-radius: 999px; padding: 7px 18px;
+  font: inherit; font-size: 15px; line-height: inherit; text-decoration: none; color: var(--ink);
+  background: transparent; cursor: pointer;
+  /* iOS-style press feedback (docs/ios_animation.md §4.7): the micro spring on transform, shadow
+     and background, a 1px lift on hover, back to rest on press. Falls back to the literal curve
+     where the chat's spring variables are not mounted. */
+  transition: background-color .2s var(--ease), color .2s var(--ease),
+              transform var(--dg-micro-d, 200ms) var(--dg-micro, cubic-bezier(.2, .85, .25, 1)),
+              box-shadow var(--dg-micro-d, 200ms) var(--dg-micro, cubic-bezier(.2, .85, .25, 1));
+}
+.kwm-cta:hover { background: var(--ink); color: var(--paper); transform: translateY(-1px); box-shadow: 0 2px 10px rgba(0, 0, 0, .12); }
+.kwm-cta:active { transform: translateY(0) scale(.98); }
+.kwm-cta:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .kwm-cta { transition: none; }
+  .kwm-cta:hover, .kwm-cta:active { transform: none; box-shadow: none; }
+}
 
 /* 8. Sideways navigation --------------------------------------------------- */
 .kwm-next { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 18px; border-top: 1px solid var(--rule); padding-top: 16px; font-size: 15px; }
