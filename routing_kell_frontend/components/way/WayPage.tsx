@@ -243,31 +243,37 @@ export default function WayPage({ id }: { id: string }) {
         if (!way?.id) return setLoad({ kind: "missing" });
         setLoad({ kind: "ok", way });
         // "More like this" for anyone, signed in or not: the public catalogue narrowed by this Way's
-        // own goal, so the rail does not depend on having an account. Every tile names its relation,
-        // and a failure here must never take the Way page down — the rail is an addition.
+        // own goal, then — when that goal is unique — other published Ways. Every tile names its
+        // relation, and a failure here must never take the Way page down.
         if (!way.similar?.length) {
+          type CatalogueRow = { id?: string; goal_name?: string; price_paise?: number | null; price_currency?: string | null };
+          const pick = (rows: CatalogueRow[], relation: string): WaySibling[] =>
+            rows
+              .filter((r) => r?.id && r.id !== way.id)
+              .slice(0, 6)
+              .map((r) => ({
+                id: String(r.id),
+                goal_name: r.goal_name || "Untitled Way",
+                relation,
+                thumb_url: null,
+                price_paise: r.price_paise ?? null,
+                price_currency: r.price_currency ?? "INR",
+              }));
           try {
             const q = encodeURIComponent(String(way.goal_name || "").slice(0, 80));
-            const listRes = await fetch(`${MCP_ORIGIN}/v1/goals/submissions/public?q=${q}&limit=8`, {
+            let res = await fetch(`${MCP_ORIGIN}/v1/goals/submissions/public?q=${q}&limit=8`, {
               headers: { Accept: "application/json" },
             });
-            if (listRes.ok && live) {
-              const rows = (await listRes.json())?.ways;
-              if (Array.isArray(rows)) {
-                const siblings = rows
-                  .filter((r: { id?: string }) => r?.id && r.id !== way.id)
-                  .slice(0, 6)
-                  .map((r: { id: string; goal_name?: string; price_paise?: number | null; price_currency?: string | null }) => ({
-                    id: r.id,
-                    goal_name: r.goal_name || "Untitled Way",
-                    relation: "same Goal",
-                    thumb_url: null,
-                    price_paise: r.price_paise ?? null,
-                    price_currency: r.price_currency ?? "INR",
-                  }));
-                if (siblings.length) setLoad({ kind: "ok", way: { ...way, similar: siblings } });
-              }
+            let rows = res.ok ? (await res.json())?.ways : null;
+            let siblings = Array.isArray(rows) ? pick(rows, "same Goal") : [];
+            if (!siblings.length) {
+              res = await fetch(`${MCP_ORIGIN}/v1/goals/submissions/public?limit=8`, {
+                headers: { Accept: "application/json" },
+              });
+              rows = res.ok ? (await res.json())?.ways : null;
+              siblings = Array.isArray(rows) ? pick(rows, "another published Way") : [];
             }
+            if (live && siblings.length) setLoad({ kind: "ok", way: { ...way, similar: siblings } });
           } catch { /* the rail simply does not appear */ }
         }
       } catch {
