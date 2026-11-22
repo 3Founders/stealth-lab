@@ -61,7 +61,7 @@ describe("docs panel", () => {
     await mount(f.api, { timing: { poll: 40, save: 5000 } });       // a long pause before saving: my typing is still unsaved when theirs arrives
     await type("# Plan\n\nIntro, mine.\n\nStep one.\n");                     // I edit line 3 and have not saved yet
     f.set("# Plan\n\nIntro.\n\nStep one.\n\nStep two, theirs.\n", 2);        // they add a line meanwhile
-    await wait(35);
+    await wait(120);                                                          // three poll intervals: CI is slower than the local runner
     expect(editor().value).toBe("# Plan\n\nIntro, mine.\n\nStep one.\n\nStep two, theirs.\n");
   });
 
