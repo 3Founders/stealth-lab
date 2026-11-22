@@ -14,7 +14,7 @@
 # and press Retry in the app, or restart kell.
 
 [CmdletBinding()]
-param([int]$Port = 8765, [string]$ConnectionsFile = "")
+param([int]$Port = 8765, [string]$ConnectionsFile = "", [switch]$Detach)
 
 $ErrorActionPreference = "Stop"
 
@@ -62,4 +62,19 @@ if (-not (Test-Path $connections)) {
 
 Write-Host "kell MCP server on http://127.0.0.1:$Port (db: $(([uri]$env:DATABASE_URL).Host))"
 Write-Host "provider connections: $connections"
-python -m uvicorn app.mcp_server.server:app --host 127.0.0.1 --port $Port --workers 1 --log-level info
+
+$uvicorn = @("-m", "uvicorn", "app.mcp_server.server:app", "--host", "127.0.0.1",
+             "--port", "$Port", "--workers", "1", "--log-level", "info")
+
+if ($Detach) {
+  # A detached process has no console to receive Ctrl+C when the launching
+  # shell or task closes. That is what killed the foreground server (0xC000013A).
+  $out = Join-Path $env:TEMP "kell-mcp-local.log"
+  $err = Join-Path $env:TEMP "kell-mcp-local.err.log"
+  $proc = Start-Process -FilePath "python.exe" -ArgumentList $uvicorn -WorkingDirectory $backend `
+    -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+  Write-Host "started detached (pid $($proc.Id)); logs: $out"
+  exit 0
+}
+
+python @uvicorn
