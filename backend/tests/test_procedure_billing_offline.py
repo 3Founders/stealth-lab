@@ -106,6 +106,30 @@ async def test_purchase_status_paid_used_refunded_none():
     pool.fetch.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_purchase_status_counts_every_paid_output_not_only_the_newest():
+    # A prepaid batch or an operator comp leaves several paid rows; the newest may be
+    # consumed while older ones are still available. The answer is "paid" until the last
+    # unconsumed row is gone.
+    now = datetime.now(timezone.utc)
+    pool = pool_for(price_row=None)
+    pool.fetch.return_value = [
+        {"status": "paid", "consumed_at": now, "expires_at": None},
+        {"status": "paid", "consumed_at": None, "expires_at": None},
+    ]
+    assert await pb.purchase_status(pool, procedure_row_id=ROW, buyer_user_id=BUYER) == "paid"
+    pool.fetch.return_value = [
+        {"status": "refunded", "consumed_at": None, "expires_at": None},
+        {"status": "paid", "consumed_at": None, "expires_at": None},
+    ]
+    assert await pb.purchase_status(pool, procedure_row_id=ROW, buyer_user_id=BUYER) == "paid"
+    pool.fetch.return_value = [
+        {"status": "paid", "consumed_at": now, "expires_at": None},
+        {"status": "paid", "consumed_at": now, "expires_at": None},
+    ]
+    assert await pb.purchase_status(pool, procedure_row_id=ROW, buyer_user_id=BUYER) == "used"
+
+
 # ------------------------------------------------------------------ purchase
 
 @pytest.mark.asyncio

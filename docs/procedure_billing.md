@@ -75,7 +75,7 @@ Four rules:
 ### 2.2 The purchase record
 
 ```sql
-CREATE TABLE IF NOT EXISTS procedure_licences (
+CREATE TABLE IF NOT EXISTS procedure_purchases (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     procedure_id      UUID NOT NULL,          -- the family
     procedure_row_id  UUID NOT NULL,          -- THE EXACT VERSION BOUGHT
@@ -92,12 +92,23 @@ CREATE TABLE IF NOT EXISTS procedure_licences (
     expires_at        TIMESTAMPTZ,            -- NULL = perpetual (see §4)
     refunded_at       TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (procedure_row_id, buyer_user_id)  -- one licence per version per buyer
+    consumed_at       TIMESTAMPTZ,            -- 217: set when the run reaches done
+    used_by_run_id    UUID                     -- 217: the one run producing the output
 );
+
+-- 217 + 223: one OPEN CHECKOUT at a time, but a buyer may hold several paid,
+-- unconsumed purchases (a prepaid batch or an operator comp). Each is bound to
+-- one run and consumed at done, so N paid rows = N runs.
+CREATE UNIQUE INDEX uq_procedure_purchase_open_checkout
+    ON procedure_purchases (procedure_row_id, buyer_user_id)
+    WHERE status = 'pending';
 ```
 
-`UNIQUE (procedure_row_id, buyer_user_id)` is the rule that matters: **paying twice for the same version is
-impossible by construction**, so a double-click cannot charge twice even if the UI misbehaves.
+The rule that matters: **one purchase produces one output.** A double-click cannot charge twice
+because `create_purchase` returns the active paid purchase before it opens a new link; and a run
+cannot spend two purchases because `bind_purchase` claims exactly one row. Migration 223 relaxed
+the old "one active purchase" index so an operator can comp a batch of runs without inventing a
+credit system; the purchase record is still the accounting unit.
 
 ### 2.3 Where the money goes — the finding that determines scope
 

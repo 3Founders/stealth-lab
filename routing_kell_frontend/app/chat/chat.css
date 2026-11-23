@@ -1809,3 +1809,30 @@ span.dg-replyq { cursor: default; }
   :root:not([data-theme="light"]) .dg-page .dg-search-list li:hover { background: var(--yellow); }
 }
 .dg-rail-file { font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 6px 10px; color: var(--ink); cursor: pointer; text-align: left; width: 100%; }
+
+/* The run as a control surface in the rail: progress, the step list, inputs, files. Deliberately dense and
+   non-scrolling inside itself — the rail is the scroll container. */
+.dg-run-panel { display: grid; gap: 9px; }
+.dg-rail-h { margin: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
+.dg-run-progress { height: 4px; border-radius: 999px; background: var(--rule); overflow: hidden; }
+.dg-run-progress span { display: block; height: 100%; background: var(--ink); transition: width .4s ease; }
+.dg-run-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.dg-run-steps li { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; color: var(--grey); line-height: 1.4; }
+.dg-run-steps li[data-done] { color: var(--ink); }
+.dg-run-steps li[data-running] { color: var(--ink); font-weight: 500; }
+.dg-run-steps li[data-running] .dg-run-n { animation: dg-run-pulse 1.4s ease-in-out infinite; }
+.dg-run-n { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; border: 1px solid var(--rule); border-radius: 999px; padding: 0 6px; flex-shrink: 0; }
+@keyframes dg-run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .dg-run-steps li[data-running] .dg-run-n { animation: none; } }
+
+.dg-run-inputs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.dg-run-inputs label { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; font-weight: 500; }
+.dg-run-which { font-size: 11px; font-weight: 400; color: var(--grey); }
+.dg-run-inputs input { width: 100%; margin-top: 4px; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--surface); color: var(--ink); }
+
+.dg-run-cta { font: inherit; font-size: 13px; font-weight: 500; padding: 7px 12px; border: 0; border-radius: 6px; background: var(--ink); color: var(--surface); cursor: pointer; }
+.dg-run-cta:disabled { opacity: .45; cursor: default; }
+
+.dg-run-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.dg-run-files button { font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 6px 9px; color: var(--ink); cursor: pointer; text-align: left; width: 100%; overflow-wrap: anywhere; }
+.dg-run-files button:hover { border-color: var(--rule-strong); }

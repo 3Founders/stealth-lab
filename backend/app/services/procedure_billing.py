@@ -141,8 +141,10 @@ async def procedure_row(pool: Any, ref: str) -> Optional[dict[str, Any]]:
 async def purchase_status(pool: Any, *, procedure_row_id: Any, buyer_user_id: Optional[str]) -> str:
     """'none' | 'paid' | 'used' | 'refunded' for this buyer and this exact version.
 
-    'paid' means one output is bought and not yet produced. 'used' means the output was already
-    produced; producing another one needs another purchase.
+    'paid' means at least one output is bought and not yet produced. 'used' means every paid
+    output was already produced; producing another one needs another purchase. A buyer may hold
+    several paid, unconsumed purchases at once (a prepaid batch or an operator comp), so the
+    answer is "is there any unconsumed paid row", not "what does the newest row say".
     """
     buyer = _uuid(buyer_user_id)
     row_id = _uuid(procedure_row_id)
@@ -153,14 +155,23 @@ async def purchase_status(pool: Any, *, procedure_row_id: Any, buyer_user_id: Op
         "WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid ORDER BY created_at DESC",
         row_id, buyer)
     now = datetime.now(timezone.utc)
+    paid_unconsumed = False
+    paid_consumed = False
+    refunded = False
     for r in rows:
         if r["status"] == "paid":
             if r["consumed_at"] is not None:
-                return "used"
-            if r["expires_at"] is None or r["expires_at"] > now:
-                return "paid"
-        if r["status"] == "refunded":
-            return "refunded"
+                paid_consumed = True
+            elif r["expires_at"] is None or r["expires_at"] > now:
+                paid_unconsumed = True
+        elif r["status"] == "refunded":
+            refunded = True
+    if paid_unconsumed:
+        return "paid"
+    if paid_consumed:
+        return "used"
+    if refunded:
+        return "refunded"
     return "none"
 
 
@@ -192,11 +203,13 @@ async def check_entitlement(pool: Any, *, procedure_row_id: Any,
     row_id = _uuid(procedure_row_id)
     if buyer is None or row_id is None:
         raise ProcedureNotPurchased(int(price), currency)
+    # Prefer a row no run has claimed yet; if every one is bound, the selected row
+    # still triggers ProcedureInUse below, which is the honest refusal.
     purchase = await pool.fetchrow(
         "SELECT id::text AS id, status, consumed_at, used_by_run_id FROM procedure_purchases "
         "WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid AND status = 'paid' "
         "AND consumed_at IS NULL AND (expires_at IS NULL OR expires_at > now()) "
-        "ORDER BY created_at DESC LIMIT 1", row_id, buyer)
+        "ORDER BY (used_by_run_id IS NULL) DESC, created_at DESC LIMIT 1", row_id, buyer)
     if purchase is None:
         used = await pool.fetchval(
             "SELECT 1 FROM procedure_purchases WHERE procedure_row_id = $1::uuid AND buyer_user_id = $2::uuid "
