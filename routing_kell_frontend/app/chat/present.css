@@ -170,3 +170,25 @@
 
 /* What a restart was charged. Stated, because a person who paid twice should see why. */
 .pr-charge { margin: 0; font-size: 13.5px; color: var(--ink); border-left: 2px solid var(--rule-strong); padding-left: 10px; }
+
+/* ---- steps | canvas: two views of the same run ---- */
+.present-viewswitch {
+  display: flex; gap: 4px; margin: 0 0 18px; padding: 3px;
+  border: 1px solid var(--rule); border-radius: 8px; width: max-content;
+}
+.present-viewswitch button {
+  font: inherit; font-size: 13px; padding: 5px 14px; border: 0; border-radius: 6px;
+  background: none; color: var(--grey); cursor: pointer;
+}
+.present-viewswitch button[data-on] { background: var(--surface); color: var(--ink); font-weight: 500; }
+
+/* Canvas: every step as a card in a flowing wall, so the shape of the whole Way is visible at once. Read-only:
+   moving through the run still happens in the steps view. */
+.pr[data-layout="canvas"] { max-width: none; }
+.pr[data-layout="canvas"] .pr-steps {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;
+}
+.pr[data-layout="canvas"] .pr-step {
+  padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface);
+}
+.pr[data-layout="canvas"] .pr-out { max-height: 10em; font-size: 12px; }

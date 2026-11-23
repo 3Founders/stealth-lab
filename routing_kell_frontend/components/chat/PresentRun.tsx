@@ -57,7 +57,12 @@ function rupees(paise?: number | null): string {
   return `₹${Number.isInteger(r) ? r.toLocaleString("en-IN") : r.toFixed(2)}`
 }
 
-export default function PresentRun({ roomId, wayId }: { roomId: string; wayId: string }) {
+export default function PresentRun({ roomId, wayId, layout = "steps" }: {
+  roomId: string
+  wayId: string
+  /** "steps" is one screen at a time; "canvas" is the same run as a wall of cards. */
+  layout?: "steps" | "canvas"
+}) {
   const [view, setView] = useState<RunView | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
   const [steps, setSteps] = useState<StepPrice[]>([])
@@ -160,7 +165,7 @@ export default function PresentRun({ roomId, wayId }: { roomId: string; wayId: s
   }
 
   return (
-    <section className="pr" aria-label="Way run">
+    <section className="pr" data-layout={layout} aria-label="Way run">
       {/* 1. The first screen is inputs, or a Start button. Nothing else competes with it. */}
       {view.state === "needs_inputs" && (
         <div className="pr-panel">

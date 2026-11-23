@@ -9,22 +9,35 @@
  *   right  other Ways, and a labelled slot for advertising. Never a fake ad: a placeholder that says what it is.
  */
 import Link from "next/link"
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useSearchParams } from "next/navigation"
 
 import PresentRun from "@/components/chat/PresentRun"
 import { MCP_ORIGIN } from "@/lib/connector"
 import { getAccessToken } from "@/lib/session"
-import "./present.css"
-
+import "../present.css"
 type Room = { id: string; title: string; display_name?: string | null }
 type Related = { id: string; goal_name: string; price_paise?: number | null }
 
+/**
+ * `/chat/present` reads the room and Way from the query string, which Next requires to sit inside a Suspense
+ * boundary — without one the static export fails at build time ("useSearchParams() should be wrapped in a suspense
+ * boundary"). `tsc` cannot see that, and the dev server tolerates it, so the build is the only place it surfaced.
+ */
 export default function PresentPage() {
+  return (
+    <Suspense fallback={<main className="present-shell"><p className="pr-muted">Loading…</p></main>}>
+      <PresentFromQuery />
+    </Suspense>
+  )
+}
+
+function PresentFromQuery() {
   const params = useSearchParams()
   const roomId = String(params.get("room") || "")
   const wayId = String(params.get("way") || "")
   const [rail, setRail] = useState(false)
+  const [layout, setLayout] = useState<"steps" | "canvas">("steps")
   const [rooms, setRooms] = useState<Room[]>([])
   const [related, setRelated] = useState<Related[]>([])
 
@@ -97,7 +110,29 @@ export default function PresentPage() {
       </aside>
 
       <main className="present-main">
-        <PresentRun roomId={roomId} wayId={wayId} />
+        {/* Canvas: the whole run as a wall of cards, for seeing the shape of a Way at a glance. The step view is
+            how a person moves through it; the canvas is how they see it whole. Both read the same run. */}
+        <div className="present-viewswitch" role="tablist" aria-label="View">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={layout === "steps"}
+            data-on={layout === "steps" || undefined}
+            onClick={() => setLayout("steps")}
+          >
+            Steps
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={layout === "canvas"}
+            data-on={layout === "canvas" || undefined}
+            onClick={() => setLayout("canvas")}
+          >
+            Canvas
+          </button>
+        </div>
+        <PresentRun roomId={roomId} wayId={wayId} layout={layout} />
       </main>
 
       {/* Right: other Ways, and an honest advertising slot rather than an invented ad. */}

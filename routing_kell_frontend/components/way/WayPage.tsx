@@ -514,7 +514,7 @@ export function WayCard({ way }: { way: Submission }) {
               onWarm={prewarm}
               busy={buying}
               error={buyError}
-              run={runnable && !needsPurchase ? <WayRun way={way} /> : null}
+              run={runnable && !needsPurchase ? <OpenInRoom wayId={way.id} /> : null}
             />
           )}
 
@@ -836,6 +836,65 @@ function Reviews({ submissionId }: { submissionId: string }) {
         </form>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * The run lives in a room, not on this page (docs/blinkit/presentation_rooms.md).
+ *
+ * A Way's steps are a presentation a person moves through one screen at a time, with the room list beside it and
+ * other Ways on the right. That is a different surface from a marketing page, so the Way page hands over: this
+ * creates (or finds) the room for a paid Way and takes them there.
+ *
+ * It does NOT start the run. The room asks for the inputs the Way declares and waits for Start, because the first
+ * press is the one that spends the output they paid for.
+ */
+function OpenInRoom({ wayId }: { wayId: string }) {
+  const [href, setHref] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const token = await getAccessToken();
+        if (!token) return;
+        const res = await fetch(`${MCP_ORIGIN}/v1/rooms/from-way`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ submission_id: wayId }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error?.message || body?.error || `the server answered ${res.status}`);
+        if (live) {
+          setHref(`/chat/present?room=${encodeURIComponent(body.room_id)}&way=${encodeURIComponent(wayId)}`);
+        }
+      } catch (e) {
+        if (live) setError(String((e as Error)?.message || e));
+      }
+    })();
+    return () => { live = false; };
+  }, [wayId]);
+
+  if (error) {
+    return (
+      <p className="kwm-small kwm-muted">
+        The room could not be opened: {error}
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="kwm-muted">
+        Running this Way happens in a room: one screen per step, with the inputs it needs, the steps as they finish,
+        and the files at the end.
+      </p>
+      {href ? (
+        <p><Link className="kwm-cta" href={href}>Open it in a room</Link></p>
+      ) : (
+        <p className="kwm-small kwm-muted" role="status">Opening a room…</p>
+      )}
+    </>
   );
 }
 
