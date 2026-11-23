@@ -146,6 +146,51 @@ def test_a_thumbnail_url_is_none_when_nothing_is_public():
     assert ot.thumbnail_url("deadbeef") is None
 
 
+# ------------------------------------------------------------------ two buckets: public thumbnails, private artefacts
+
+def test_the_public_bucket_is_a_separate_store_from_the_private_one(monkeypatch):
+    """Thumbnails and paid artefacts have opposite access rules, so they are opposite buckets."""
+    from app.services import object_storage as obs
+
+    monkeypatch.setattr(obs, "_PUBLIC_STORE", None)
+    monkeypatch.setenv("OBJECT_STORAGE_PUBLIC_URL", "s3://kell-thumbs")
+    monkeypatch.setenv("OBJECT_STORAGE_ENDPOINT_URL", "https://acct.r2.cloudflarestorage.com")
+    monkeypatch.setattr(obs, "S3Store", lambda bucket, prefix, **kw: _s3()[0])
+
+    public = obs.get_public_store()
+    assert public is not None
+
+
+def test_no_public_bucket_configured_means_nothing_is_public(monkeypatch):
+    """The safe default, and no silent fallback to the PRIVATE bucket: that would expose every paid artefact."""
+    from app.services import object_storage as obs
+
+    monkeypatch.setattr(obs, "_PUBLIC_STORE", None)
+    monkeypatch.delenv("OBJECT_STORAGE_PUBLIC_URL", raising=False)
+    monkeypatch.delenv("OBJECT_STORAGE_PUBLIC_BASE", raising=False)
+
+    assert obs.get_public_store() is None
+    assert obs.public_url_for("thumbs/x.webp") is None
+
+
+def test_a_public_url_is_composed_from_the_public_base(monkeypatch):
+    from app.services import object_storage as obs
+
+    monkeypatch.setenv("OBJECT_STORAGE_PUBLIC_BASE", "https://files.kell.org.in/")
+
+    assert obs.public_url_for("thumbs/x.webp") == "https://files.kell.org.in/thumbs/x.webp"
+
+
+def test_a_public_url_needs_a_base_even_with_a_public_bucket(monkeypatch):
+    """A bucket with no domain in front of it has no public URL; the caller draws a tile, not a broken image."""
+    from app.services import object_storage as obs
+
+    monkeypatch.setenv("OBJECT_STORAGE_PUBLIC_URL", "s3://kell-thumbs")
+    monkeypatch.delenv("OBJECT_STORAGE_PUBLIC_BASE", raising=False)
+
+    assert obs.public_url_for("thumbs/x.webp") is None
+
+
 # ------------------------------------------------------------------ the download path
 
 class _Row(dict):

@@ -67,18 +67,16 @@ def thumbnail_key(sha256: str) -> str:
 
 
 def thumbnail_url(sha256: str, *, store: Optional[Any] = None) -> Optional[str]:
-    """The public URL for a stored thumbnail, or None when no public base is configured.
+    """The public URL for a stored thumbnail, or None when no public bucket is configured.
 
-    Composed at read time from `OBJECT_STORAGE_PUBLIC_BASE`, never stored: an R2 custom domain, a Cloudflare-fronted
-    B2 domain and a bucket's own host are the same code with different config (`docs/blinkit/storage_choice.md`).
+    Composed at read time from `OBJECT_STORAGE_PUBLIC_BASE`, never stored: an R2 custom domain in front of the
+    public bucket is the same code with different config. Thumbnails live in their OWN bucket because a public
+    one must never be the bucket that holds paid artefacts -- see `object_storage.get_public_store`'s docstring.
     A None here means "there is no public picture yet", and callers draw the labelled tile instead of a broken image.
     """
-    from app.services.object_storage import get_store
+    from app.services import object_storage as obs
 
-    s = store if store is not None else get_store()
-    if s is None:
-        return None
-    return s.public_url(key=thumbnail_key(sha256))
+    return obs.public_url_for(thumbnail_key(sha256))
 
 
 class ThumbnailUnavailable(Exception):

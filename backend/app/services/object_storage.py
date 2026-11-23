@@ -64,6 +64,42 @@ def _key(sha: str) -> str:
     return f"{sha[:2]}/{sha[2:4]}/{sha}"
 
 
+def get_public_store() -> Optional[ObjectStore]:
+    """The store behind the PUBLIC base URL, or None when nothing is public.
+
+    Two buckets, not one. A Way's paid artefact must never be fetchable without a licence, while a thumbnail has to
+    be fetchable by anyone or a listing is a grid of grey boxes (`docs/procedure_outputs.md` §3.2). Those are
+    opposite requirements, so they are opposite buckets:
+
+        OBJECT_STORAGE_URL           the private bucket: artefacts, presigned only
+        OBJECT_STORAGE_PUBLIC_URL    the public bucket: thumbnails, served from OBJECT_STORAGE_PUBLIC_BASE
+
+    Unset = nothing is public, which is the safe default. There is deliberately no fallback to the private bucket:
+    that would silently make every paid artefact public.
+    """
+    url = (os.environ.get("OBJECT_STORAGE_PUBLIC_URL") or "").strip()
+    if not url:
+        return None
+    global _PUBLIC_STORE
+    cache = _PUBLIC_STORE
+    if cache is not None and cache[0] == url:
+        return cache[1]
+    u = urlsplit(url)
+    if u.scheme != "s3":
+        raise RuntimeError(f"unsupported OBJECT_STORAGE_PUBLIC_URL scheme {u.scheme!r} (only s3:// is public)")
+    store = S3Store(u.netloc, u.path, endpoint_url=os.environ.get("OBJECT_STORAGE_ENDPOINT_URL"))
+    _PUBLIC_STORE = (url, store)
+    return store
+
+
+def public_url_for(key: str) -> Optional[str]:
+    """`key` under the configured public base, or None when no public bucket is configured."""
+    base = (os.environ.get("OBJECT_STORAGE_PUBLIC_BASE") or "").strip().rstrip("/")
+    if not base:
+        return None
+    return f"{base}/{key.strip('/')}"
+
+
 class ObjectStore:
     backend = "base"
 
@@ -253,6 +289,7 @@ class S3Store(ObjectStore):
 
 _STORE: Optional[ObjectStore] = None
 _STORE_LOADED = False
+_PUBLIC_STORE: Optional[tuple[str, ObjectStore]] = None   # (url it was built from, the store)
 
 
 def get_store() -> Optional[ObjectStore]:

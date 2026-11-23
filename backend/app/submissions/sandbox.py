@@ -114,6 +114,17 @@ async def _run_on_agent37(cmd: tuple[str, ...], code: str, stdin: str,
         "auto_sleep": True,
         "idle_timeout_seconds": 120,
     }
+    # Where the sandbox runs. Agent37 defaults to `us`; `ap-south` is Mumbai, which matters once buyers are in India:
+    # a script step's files otherwise cross the Pacific twice (out of the sandbox, then again on download).
+    #
+    # Region is fixed for an instance's life, and `ap-south` refuses the `default` type -- it runs only `vm` and
+    # `performance`. Asking for `default` there is a 400 rather than a silent fallback, so the pair is corrected
+    # here instead of failing the step with a message a person cannot act on.
+    region = (os.environ.get("AGENT37_REGION") or "").strip().lower()
+    if region and region != "us":
+        create_body["region"] = region
+        if create_body["type"] == "default":
+            create_body["type"] = "vm"
     if network == "deny-all":
         create_body["network"] = {"mode": "deny-all"}
 
