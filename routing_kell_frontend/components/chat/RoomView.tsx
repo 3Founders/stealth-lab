@@ -1498,7 +1498,16 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     setRoomList((l) => ({ rooms: [...l.rooms, label], current: label }));
     setMenuOpen(false);
   };
-  const shownName = (r: string) => (tempRef.current.has(r) ? "Temporary chat" : roomName(r));
+  /**
+   * How a room is titled on screen.
+   *
+   * `rooms.title` is a slug by CHECK constraint (`^#[a-z0-9][a-z0-9_.-]{0,78}$` -- no spaces), so a Way's room was
+   * shown as `#create-a-research-report-in-neurips-format-2` with dashes standing in for every space. A Way's room
+   * carries a human `display_name` from `room_runs.prepare`; that is what a person should read. Rooms without one
+   * (an ordinary chat) keep the old behaviour exactly.
+   */
+  const shownName = (r: string) =>
+    tempRef.current.has(r) ? "Temporary chat" : (info[r]?.display_name || roomName(r));
 
   /** Saves this room as a Markdown file: who said what and when. It is made on this device from what is already here. */
   const exportRoom = () => {

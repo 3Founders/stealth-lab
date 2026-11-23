@@ -9,6 +9,9 @@ import { readSse } from "@/lib/sse";
 
 export interface ServerRoom {
   id: string; title: string; mode: "open" | "private"; role: "owner" | "admin" | "member"; created_at: string; last_seq: number;
+  /** The human title, when the room has one (a Way's room does). `title` is a slug by DB constraint, so it cannot
+   *  carry spaces; this is what a person should read. */
+  display_name?: string | null;
   last_read_seq?: number; unread?: number; members?: number;
   last?: { handle: string; kind: "person" | "agent"; preview: string; at: string } | null;
 }

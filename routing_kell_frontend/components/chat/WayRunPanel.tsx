@@ -19,11 +19,22 @@ import { downloadArtifact } from "@/lib/api"
 type InputDef = { step: number; step_title: string; key: string; label: string; required: boolean; help: string }
 type StepDef = { order: number; title: string; price_low_paise: number; price_high_paise: number; is_human?: boolean }
 type RunState = {
-  state: "needs_inputs" | "ready" | "running" | "done" | "failed" | "no_way" | "cancelled"
+  state:
+    | "needs_inputs"
+    | "ready"
+    | "running"
+    | "waiting_human"   // a step needs a person: the run is paused on it, not finished
+    | "waiting_session"
+    | "done"
+    | "failed"
+    | "no_way"
+    | "cancelled"
   run: { run_id: string; status: string } | null
   inputs: InputDef[]
   /** The room knows which Way it is for, so a /chat?room=... link works without &way=... */
   submission_id?: string
+  /** Set while paused on a human step: which one, and what it asks for (app/execution/way_runs.py::view). */
+  waiting?: { kind?: string; order?: number; title?: string; description?: string } | null
 }
 type Output = { order: number; title: string; output: string }
 type FileOut = { name: string; size_bytes?: number; url: string }
@@ -69,6 +80,7 @@ export default function WayRunPanel({
   const [values, setValues] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [note, setNote] = useState("")
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** The Way to start. The room knows it even when the URL did not say, so the server's answer wins over `?way=`. */
   const wayForRun = view?.submission_id || wayId || ""
@@ -111,6 +123,24 @@ export default function WayRunPanel({
       .catch(() => { /* information only */ })
   }, [wayId])
 
+  async function resume() {
+    if (!roomId) return
+    setBusy(true)
+    setError(null)
+    try {
+      await call(`/v1/rooms/${encodeURIComponent(roomId)}/run/resume`, {
+        method: "POST",
+        body: { note },
+      })
+      setNote("")
+      await load()
+    } catch (e) {
+      setError(String((e as Error)?.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function start() {
     if (!roomId) return
     if (!wayForRun) {
@@ -142,6 +172,9 @@ export default function WayRunPanel({
   const total = steps.length || 0
   const pct = total ? Math.round((done / total) * 100) : 0
   const running = view?.state === "running"
+  // A run paused on a human step is NOT finished. Rendering it as "finished" is what the owner saw after pressing
+  // Start: the run was waiting_human at step 1 and the pane said "Finished." (2026-11-23).
+  const paused = view?.state === "waiting_human" || view?.state === "waiting_session"
   const finished = view?.state === "done" || view?.state === "failed"
 
   // A step is "done" once the run has an output for it; "running" while it is the next one and the run is going.
@@ -155,7 +188,11 @@ export default function WayRunPanel({
     <section className="dg-way-main" aria-label={title ? `${title}: steps and run` : "Way run"}>
       <header className="dg-way-head">
         <h2>{title || "This Way"}</h2>
-        {total > 0 && <p className="dg-way-sub">{done} of {total} steps done{finished ? " · finished" : ""}</p>}
+        {total > 0 && (
+          <p className="dg-way-sub">
+            {done} of {total} steps done{finished ? " · finished" : paused ? " · waiting on you" : running ? " · running" : ""}
+          </p>
+        )}
       </header>
 
       {total > 0 && (
@@ -215,9 +252,31 @@ export default function WayRunPanel({
         </div>
       )}
 
-      {/* Start is the one action. It is never disabled without saying why -- an unclickable button with no reason
-          is what sent the owner looking for a different screen. */}
-      {!running && !finished && (
+      {/* Paused on a human step. The reference for this shape is LangGraph's human-in-the-loop: the agent stops, the
+          UI shows the pending step and what it needs, and the run resumes from where it stopped -- never replaying. */}
+      {paused && view?.waiting && (
+        <div className="dg-way-pause">
+          <h3 className="dg-way-sec">Waiting on you — step {view.waiting.order}</h3>
+          <p className="dg-way-pause-title">{view.waiting.title}</p>
+          {view.waiting.description && <p className="dg-way-note">{view.waiting.description}</p>}
+          <form
+            className="dg-way-pause-form"
+            onSubmit={(e) => { e.preventDefault(); void resume() }}
+          >
+            <label htmlFor="dg-way-note">What you did or found</label>
+            <input
+              id="dg-way-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="A line or two is enough"
+            />
+            <button type="submit" className="dg-way-start" disabled={busy}>{busy ? "Continuing…" : "Continue"}</button>
+          </form>
+        </div>
+      )}
+
+      {/* Start is the one action of a run that has not begun. It is never disabled without saying why. */}
+      {!running && !paused && !finished && (
         <div className="dg-way-act">
           <button type="button" className="dg-way-start" disabled={busy} onClick={() => void start()}>
             {busy ? "Starting…" : view?.state === "needs_inputs" ? "Start with these answers" : "Start"}

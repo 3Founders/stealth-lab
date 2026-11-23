@@ -51,6 +51,18 @@
 @keyframes dg-way-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 
 .dg-way-act { display: grid; gap: 8px; justify-items: center; }
+
+/* Paused on a human step: the card from the human-in-the-loop pattern (LangGraph's reference shape) -- what it is
+   waiting on, what it asked for, and one button that continues from this step. */
+.dg-way-pause { display: grid; gap: 10px; justify-items: center; padding: 18px 16px; border-radius: 12px;
+  border: 1px solid var(--rule-strong); background: var(--surface); text-align: center; }
+.dg-way-pause .dg-way-sec { text-align: center; margin-bottom: 0; }
+.dg-way-pause-title { margin: 0; font-size: 16px; font-weight: 500; line-height: 1.35; }
+.dg-way-pause-form { display: grid; gap: 8px; width: 100%; max-width: 440px; }
+.dg-way-pause-form label { font-size: 12.5px; color: var(--grey); text-align: left; }
+.dg-way-pause-form input { width: 100%; font: inherit; font-size: 14px; padding: 9px 11px; border: 1px solid var(--rule-strong);
+  border-radius: 8px; background: var(--surface); color: var(--ink); }
+.dg-way-pause-form .dg-way-start { justify-self: center; }
 .dg-way-start { font: inherit; font-size: 15px; font-weight: 500; padding: 12px 28px; border: 0; border-radius: 999px;
   background: var(--ink); color: var(--surface); cursor: pointer; min-width: 160px; }
 .dg-way-start:disabled { opacity: .45; cursor: default; }

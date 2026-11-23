@@ -228,6 +228,27 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
         return _json(request, out)
 
 
+    @server.custom_route("/v1/rooms/{room_id}/run/resume", methods=["POST", "OPTIONS"], include_in_schema=False)
+    @handler
+    async def room_run_resume(request: Request, pool: Any, subject: str) -> Response:
+        """Answer the human step the run is paused on, and continue from there.
+
+        LangGraph's human-in-the-loop shape (researched 2026-11-23): the run stopped and emitted what it needs; the
+        person answers; the run resumes at that step rather than replaying. Until this route existed the only way
+        past a human step was the MCP `run_way(done=true)` tool, so a room could start a run and never continue it.
+        """
+        data = await body_of(request)
+        note = data.get("note")
+        if note is not None and not isinstance(note, str):
+            return _error(request, "note must be text", 400)
+        try:
+            out = await rr.resume(pool, room_id=str(request.path_params["room_id"]),
+                                  note=(note or "").strip(), owner_id=subject)
+        except rr.RoomRunError as exc:
+            return _error(request, str(exc), exc.status_code)
+        return _json(request, out)
+
+
 def _sse(event: str, data: Any) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n".encode("utf-8")
 

@@ -236,9 +236,33 @@ async def _save(pool: Any, run: dict) -> None:
                   plan = $7::jsonb, updated_at = now(),
                   finished_at = CASE WHEN $2 IN ('done', 'failed', 'cancelled') THEN now() ELSE NULL END
            WHERE id = $1::uuid""",
-        run["id"], run["status"], run["next_step"], json.dumps(run["outputs"]), run["error"],
-        json.dumps(run["waiting"]) if run.get("waiting") is not None else None,
-        json.dumps(run["plan"]))          # a lookup can replace a step with another Way's steps
+        run["id"], run["status"], run["next_step"], _jsonable(run["outputs"]), run["error"],
+        _jsonable(run["waiting"]),
+        _jsonable(run["plan"]))          # a lookup can replace a step with another Way's steps
+
+
+def _jsonable(value: Any) -> Any:
+    """A value for a `$n::jsonb` parameter: the Python object itself, or None for SQL NULL.
+
+    The pool registers a jsonb codec (`db/session.py::_init_connection`, encoder=json.dumps), so asyncpg does the
+    encoding. Passing `json.dumps(x)` here would hand the encoder an already-encoded STRING, and
+    `$4::jsonb` would then store a JSON string scalar rather than an array or object. Measured 2026-11-23:
+
+        list -> jsonb_typeof 'array'      json.dumps(list) -> jsonb_typeof 'string'
+
+    Every way_runs row written the old way held a quoted array (32 of 32), which is why
+    jsonb_array_length(outputs) failed with "cannot get array length of a scalar" while the Python read path still
+    worked -- it json.loads()ed the string. A string arriving here is decoded first so a spliced lookup result is
+    still stored as JSON rather than as text.
+    """
+    if value is None:
+        return None                  # SQL NULL, not the JSON literal "null": an absent waiting state is falsy
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
 
 
 def imported_bodies(run: dict, step: dict) -> tuple[dict[str, str], list[str]]:

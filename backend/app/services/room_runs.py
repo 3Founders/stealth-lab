@@ -84,10 +84,29 @@ async def prepare(pool: Any, *, owner_sub: str, submission_id: str) -> dict[str,
 
 
 async def _live_run(pool: Any, room_id: str) -> Optional[dict[str, Any]]:
+    """The room's most recent run, with what the pane and `resume` need to act on it.
+
+    `waiting` is what names the paused step (a run stopped on a person is indistinguishable from a stuck one
+    without it), and `owner_id` is what `resume` checks before letting anyone continue it.
+    """
     row = await pool.fetchrow(
-        """SELECT id::text AS id, status FROM way_runs WHERE room_id = $1::uuid
+        """SELECT id::text AS id, status, next_step, owner_id, waiting FROM way_runs WHERE room_id = $1::uuid
            ORDER BY started_at DESC LIMIT 1""", str(room_id))
-    return {"run_id": row["id"], "status": row["status"]} if row else None
+    if row is None:
+        return None
+    # `waiting` and `owner_id` are absent from older fixtures (and from any caller that selected less); treat a
+    # missing column as "not waiting", never as an error -- a run with no waiting state is an ordinary one.
+    keys = row.keys()
+    waiting = row["waiting"] if "waiting" in keys else None
+    if isinstance(waiting, str):
+        try:
+            waiting = json.loads(waiting)
+        except ValueError:
+            waiting = None
+    return {"id": row["id"], "run_id": row["id"], "status": row["status"],
+            "next_step": row["next_step"] if "next_step" in keys else None,
+            "owner_id": row["owner_id"] if "owner_id" in keys else None,
+            "waiting": waiting}
 
 
 async def inputs_needed(pool: Any, *, submission_id: str) -> list[dict[str, Any]]:
@@ -245,12 +264,40 @@ async def readiness(pool: Any, *, room_id: str, submission_id: str) -> dict[str,
     needed = await inputs_needed(pool, submission_id=submission_id)
     live = await _live_run(pool, room_id)
     if live and live["status"] not in ("cancelled",):
-        return {"state": "running" if live["status"] in ("running", "waiting_human", "waiting_session")
-                else live["status"], "run": live, "inputs": needed}
+        # Pass the run's own status through instead of collapsing the waiting states into "running": the pane needs
+        # to tell a run that is working from one paused on a person (2026-11-23 -- a paused run rendered as finished).
+        state = live["status"] if live["status"] in ("waiting_human", "waiting_session", "done", "failed") else "running"
+        return {"state": state, "run": live, "inputs": needed, "waiting": live.get("waiting"),
+                "submission_id": str(submission_id)}
     if needed:
-        return {"state": "needs_inputs", "run": None, "inputs": needed}
+        return {"state": "needs_inputs", "run": None, "inputs": needed,
+                "submission_id": str(submission_id)}
     # No declared inputs: the person still presses Start, because a run must never begin from a page they landed on.
-    return {"state": "ready", "run": None, "inputs": []}
+    return {"state": "ready", "run": None, "inputs": [],
+            "submission_id": str(submission_id)}
+
+
+async def resume(pool: Any, *, room_id: str, note: str, owner_id: str) -> dict[str, Any]:
+    """Answer the human step this room's run is paused on and continue from it.
+
+    The counterpart of `start`: a run that stops at a human step needs a way back in, and the room is where the
+    person is looking. Only the run's own owner may answer it, and only while it really is waiting -- answering a
+    finished run, or one belonging to someone else, is refused with the same sentence the rest of this module uses.
+    """
+    live = await _live_run(pool, room_id)
+    if live is None:
+        raise RoomRunError("this room has no run to continue", 409)
+    if str(live.get("owner_id") or "") != str(owner_id):
+        raise RoomRunError("this run is not yours", 403)
+    if live["status"] not in ("waiting_human", "waiting_session"):
+        raise RoomRunError(f"this run is not waiting for you (it is {live['status']})", 409)
+    from app.execution import way_runs
+
+    try:
+        out = await way_runs.report(pool, str(live["id"]), owner_id=str(owner_id), done=True, note=note)
+    except way_runs.RunError as exc:
+        raise RoomRunError(str(exc), 409) from exc
+    return {"state": "running", "run": {"run_id": str(live["id"]), "status": out.get("status", "running")}}
 
 
 async def _step_prices(pool: Any, run: Mapping[str, Any]) -> list[dict[str, Any]]:

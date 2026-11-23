@@ -128,6 +128,10 @@ async def _member_room(pool: Any, sub: str, room_id: Any) -> Any:
 
 def _room_json(row: Any, extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     out = {"id": str(row["id"]), "title": row["title"], "mode": row["mode"], "role": row["my_role"],
+           # The human title. `title` is a slug by CHECK constraint (no spaces), so a Way's room would otherwise be
+           # shown as "#create-a-research-report-in-neurips-format-2". None for an ordinary room, which keeps the
+           # client's existing behaviour of prettifying the slug.
+           "display_name": row["display_name"] if "display_name" in row.keys() else None,
            "created_at": _iso(row["created_at"]), "last_seq": row["next_seq"]}
     out.update(extra or {})
     return out
