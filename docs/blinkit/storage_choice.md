@@ -196,5 +196,16 @@ not through a public bucket. If the bucket itself is public, every paid output i
 - **CDN now?** → B2. Cheaper, free writes, and the CDN supplies the edge R2 would have given you.
 - **Not yet?** → R2. Edge-adjacent already, free egress already, and 101 ms costs less than an uncached B2 download.
 
-**Step-by-step setup (bucket, application key, Cloudflare CNAME + cache rules, Railway variables, and how to verify
-each layer): `storage_setup_b2_cloudflare.md`.**
+**Step-by-step setup: `launch_b2_cloudflare_india_us.md`** (B2 US East + Cloudflare, India and the US).
+
+> **Decision updated 2026-11-23 (India + US at launch, single region).** The tables above were measured from US and
+> EU vantage points and do not include India. Two facts overrode them:
+> - B2 has **no region east of Amsterdam** — US East, US West, EU Central, Canada East only — so B2 cannot lower
+>   India latency, and the region is **permanent at signup**.
+> - The backend runs in **Singapore** (best single-region worst case: 88 ms India / 209 ms US). To it, every B2 region
+>   is transcontinental.
+>
+> The shape that follows: **B2 stores bytes in US East; Cloudflare is what makes them fast.** Cloudflare's 9 Indian and
+> 54 North American PoPs serve every cacheable byte; paid downloads (signed, uncacheable by design) are the one slow
+> path and are mitigated by Argo and by keeping artefacts small. The provider choice below is superseded for this
+> launch by that runbook; the provider-agnostic code (§5) is unchanged and still the reason either works.

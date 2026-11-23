@@ -16,7 +16,7 @@ two decisions made in conversation that those documents did not record.
 | **`next_pass_plan.md`** | the plan for the unmeasured-price gate and attribution, written before the code, plus what actually happened | ✅ built |
 | **`presentation_rooms.md`** | a Way running in a Room as a presentation: inputs first, per-step price, restart from the middle | ✅ built (run rail in `/chat`) |
 | **`storage_choice.md`** | R2 vs Backblaze B2: cost, measured latency from six locations, and why the CDN decides it | ⚠️ decided open; code provider-agnostic, provider not chosen |
-| **`storage_setup_b2_cloudflare.md`** | the click-by-click runbook: bucket, key, Cloudflare CNAME + cache rules, Railway variables, verification | ⚠️ written; not yet executed |
+| **`launch_b2_cloudflare_india_us.md`** | the launch runbook: B2 US East + Cloudflare, for India and the US, every step in order | ⚠️ written; not yet executed |
 | **`what_was_done.md`** | what this session built, where it improves on the record, and what is still missing | ✅ built (purchase/run path, Way page) |
 
 ---
