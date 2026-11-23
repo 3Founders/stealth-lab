@@ -14,7 +14,9 @@ two decisions made in conversation that those documents did not record.
 | **`caps.md`** | why output caps are pricing parameters, why ours were invented, what replaces them | ⚠️ seeds built; learned caps not built |
 | **`open_questions.md`** | the ten decisions still open, each with a proposed default | — |
 | **`next_pass_plan.md`** | the plan for the unmeasured-price gate and attribution, written before the code, plus what actually happened | ✅ built |
-| **`presentation_rooms.md`** | a Way running in a Room as a presentation: inputs first, per-step price, restart from the middle | ✅ mostly built; `start` missing |
+| **`presentation_rooms.md`** | a Way running in a Room as a presentation: inputs first, per-step price, restart from the middle | ✅ built (run rail in `/chat`) |
+| **`storage_choice.md`** | R2 vs Backblaze B2: cost, measured latency from six locations, and why the CDN decides it | ⚠️ decided open; code provider-agnostic, provider not chosen |
+| **`storage_setup_b2_cloudflare.md`** | the click-by-click runbook: bucket, key, Cloudflare CNAME + cache rules, Railway variables, verification | ⚠️ written; not yet executed |
 | **`what_was_done.md`** | what this session built, where it improves on the record, and what is still missing | ✅ built (purchase/run path, Way page) |
 
 ---

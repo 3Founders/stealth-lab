@@ -41,7 +41,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt
+COPY backend/requirements-objectstore.txt backend/requirements-objectstore.txt
+# boto3 lives in its own file because object_storage imports it lazily. Without it, a configured bucket fails at
+# the first write with "boto3 is not installed" -- which reads like a bad key and is easy to misdiagnose.
+RUN pip install --no-cache-dir -r backend/requirements.txt \
+    && pip install --no-cache-dir -r backend/requirements-objectstore.txt
 
 COPY backend/ backend/
 

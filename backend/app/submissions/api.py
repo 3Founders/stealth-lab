@@ -440,6 +440,7 @@ async def _run_artifacts(pool: Any, run_id: str, owner_id: str) -> tuple[dict, l
     hold a licence for (a free Way passes). Only then are keys read out of the run — a stranger's run id must not
     reveal even a filename.
     """
+    from app.execution.way_runs import _stored_artifacts
     from app.services import procedure_billing
 
     row = await pool.fetchrow(
@@ -472,6 +473,33 @@ async def _artifact_bytes(artifact: dict) -> bytes:
     return await store.get(artifact["object_key"])
 
 
+async def _signed_or_bytes(artifact: dict, *, filename: Optional[str] = None,
+                           ttl_seconds: int = 300) -> Optional[str]:
+    """A URL for these bytes if the store can sign one, else None (the caller proxies).
+
+    The object-storage doc's rule (`docs/procedure_outputs.md` §4): a gated file is not streamed through FastAPI.
+    Callers must have finished the licence check before calling this -- a signed URL is a capability, not an ACL.
+    """
+    from app.services.object_storage import get_store
+
+    store = get_store()
+    if store is None:
+        raise LookupError("the files for this run are not in storage")
+    try:
+        return await store.presign_get(artifact["object_key"], ttl_seconds=ttl_seconds, filename=filename)
+    except Exception:  # noqa: BLE001 -- an unavailable signer degrades to proxying, it does not fail the download
+        return None
+
+
+def _redirect(url: str, request: Any) -> Any:
+    from starlette.responses import RedirectResponse
+
+    from app.mcp_server.room_routes import cors_headers
+
+    # 302, not 307: browsers re-issue GET, and the target is signed for exactly one method.
+    return RedirectResponse(url, status_code=302, headers={**cors_headers(request), "Cache-Control": "no-store"})
+
+
 async def download_artifact(pool: Any, owner_id: str, run_id: str, name: str, request: Any) -> Any:
     """One file, forced as a download (never rendered on kell's origin)."""
     from starlette.responses import Response
@@ -480,7 +508,7 @@ async def download_artifact(pool: Any, owner_id: str, run_id: str, name: str, re
     from app.submissions import artifacts as art
 
     try:
-        _, files = await _run_artifacts(pool, run_id)
+        _, files = await _run_artifacts(pool, run_id, owner_id)
     except LookupError as exc:
         return Response(str(exc), status_code=404, headers=cors_headers(request))
     except ProcedureNotPurchased:
@@ -490,6 +518,10 @@ async def download_artifact(pool: Any, owner_id: str, run_id: str, name: str, re
     match = next((a for a in files if a.get("name") == wanted), None)
     if match is None:
         return Response("this run produced no file with that name", status_code=404, headers=cors_headers(request))
+    # Licence checked above; the file itself is fetched from storage by the browser, not by this process.
+    signed = await _signed_or_bytes(match, filename=wanted)
+    if signed:
+        return _redirect(signed, request)
     data = await _artifact_bytes(match)
     return Response(data, media_type=match.get("media_type") or "application/octet-stream", headers={
         **cors_headers(request), "Content-Disposition": art.content_disposition(wanted),
@@ -498,14 +530,19 @@ async def download_artifact(pool: Any, owner_id: str, run_id: str, name: str, re
 
 
 async def download_artifacts_zip(pool: Any, owner_id: str, run_id: str, request: Any) -> Any:
-    """Every file the run produced, as one archive — what makes a multi-file Way feel like a finished thing."""
+    """Every file the run produced, as one archive — what makes a multi-file Way feel like a finished thing.
+
+    A ZIP is the one download still proxied when presigning works: signing each part would leave the browser
+    fetching N objects to build an archive it cannot read. Its ceiling (60 files × 8 MB) is bounded and rare,
+    unlike an every-download 10 MB stream.
+    """
     from starlette.responses import Response
 
     from app.mcp_server.room_routes import cors_headers
     from app.submissions import artifacts as art
 
     try:
-        run, files = await _run_artifacts(pool, run_id)
+        run, files = await _run_artifacts(pool, run_id, owner_id)
     except LookupError as exc:
         return Response(str(exc), status_code=404, headers=cors_headers(request))
     except ProcedureNotPurchased:

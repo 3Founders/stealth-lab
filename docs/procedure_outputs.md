@@ -83,8 +83,12 @@ the CDN, makes every backup 10× larger, and makes a 20 MB deck compete with rou
 ### Option E — a CDN in front of whichever bucket (do it regardless)
 
 A bucket serves bytes; it does not serve them *fast from Mumbai to a phone*. Cloudflare (free tier) in front of
-the R2 bucket, or any CDN with a custom domain, is a config change and not architecture. **Do this at the same
+the bucket, or any CDN with a custom domain, is a config change and not architecture. **Do this at the same
 time as the bucket**, not later.
+
+> **Updated 2026-11-23 — the provider question is open again, with numbers.** R2 vs Backblaze B2 costs and
+> latency to six locations, and why the CDN is now a precondition for B2 rather than a nicety:
+> `docs/blinkit/storage_choice.md`. The code is provider-agnostic; only configuration changes.
 
 ---
 
@@ -141,15 +145,14 @@ Two different jobs:
 | Output of a **paid** Way | a holder of a `paid` licence for that exact version (`procedure_billing.md` §3) |
 
 For gated bytes, do **not** proxy the file through FastAPI — that puts a 10 MB stream on the API. Issue a
-**short-lived signed URL** from the backend after the licence check. `object_storage.py` has no presign helper
-today; that is the one addition it needs:
+**short-lived signed URL** from the backend after the licence check.
 
-```python
-def presign_get(object_key: str, ttl_seconds: int = 300) -> str   # S3Store.client.generate_presigned_url
-```
-
-`services/room_files.py` carries the same gap and says so in its own docstring (*"person's session token (no
-signed URLs yet)"*). Adding presigning to `object_storage.py` fixes both.
+> **Built 2026-11-23.** `ObjectStore.presign_get(locator, ttl_seconds=300, filename=...)` exists on every backend.
+> `S3Store` signs with `generate_presigned_url` (identical on R2, B2, MinIO and AWS); `file://` and `memory://`
+> return `None`, and the route then proxies — so a dev environment needs no signer and a broken signer degrades
+> instead of failing. `download_artifact` redirects (302) once the licence check passes; the ZIP still streams,
+> because signing N parts leaves the browser fetching N objects. Provider choice, with the latency and cost tables:
+> `docs/blinkit/storage_choice.md`.
 
 ---
 

@@ -36,7 +36,7 @@ import hashlib
 import io
 import zipfile
 import re
-from typing import Optional
+from typing import Any, Optional
 
 # Pillow is a declared dependency (requirements.txt: avatar normalisation). PyMuPDF is optional: when it is
 # absent, PDF thumbnailing degrades to ThumbnailUnavailable rather than failing the import of this module.
@@ -55,6 +55,30 @@ WEBP_QUALITY = 82
 # 640 px covers the Way page's artefact preview; 1280 px covers a 16:9 tile in the "more like this" rail.
 PREVIEW_WIDTH = 640
 TILE_WIDTH = 1280
+
+
+THUMB_PREFIX = "thumbs"
+
+
+def thumbnail_key(sha256: str) -> str:
+    """Where a thumbnail lives. Content-addressed, so the same artefact always maps to the same key and the URL can
+    be cached forever (`docs/procedure_outputs.md` §5)."""
+    return f"{THUMB_PREFIX}/{sha256}.webp"
+
+
+def thumbnail_url(sha256: str, *, store: Optional[Any] = None) -> Optional[str]:
+    """The public URL for a stored thumbnail, or None when no public base is configured.
+
+    Composed at read time from `OBJECT_STORAGE_PUBLIC_BASE`, never stored: an R2 custom domain, a Cloudflare-fronted
+    B2 domain and a bucket's own host are the same code with different config (`docs/blinkit/storage_choice.md`).
+    A None here means "there is no public picture yet", and callers draw the labelled tile instead of a broken image.
+    """
+    from app.services.object_storage import get_store
+
+    s = store if store is not None else get_store()
+    if s is None:
+        return None
+    return s.public_url(key=thumbnail_key(sha256))
 
 
 class ThumbnailUnavailable(Exception):
