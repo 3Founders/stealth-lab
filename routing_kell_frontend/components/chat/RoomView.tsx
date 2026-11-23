@@ -1088,16 +1088,20 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
    * change, so switching to General still drew the Way panel and the room could not be left (2026-11-23).
    */
   const [roomIsWay, setRoomIsWay] = useState(() => Boolean(roomWayId));
+  /** The person asked to chat in a Way's room. Reset when they change rooms, so another room gets its own default. */
+  const [wayChatOpen, setWayChatOpen] = useState(false);
+  useEffect(() => { setWayChatOpen(false); }, [room]);
+  const showWayPanel = roomIsWay && !wayChatOpen;
   /** The device's name for the room that arrived with `?way=`, once sync has resolved it. */
   const [wayRoomName, setWayRoomName] = useState<string | null>(null);
   useEffect(() => {
     if (!roomWayId) { setRoomIsWay(false); return; }
-    // Resolve the Way's room to a name exactly once, then keep the Way WITH that room: switching to General must
-    // leave it behind. Keyed on the URL alone it re-armed on every room change and the room could not be left.
     if (wayRoomName === null) {
       const resolved = wantedRoomId ? Object.keys(info).find((n) => info[n]?.id === wantedRoomId) : room;
-      if (resolved) setWayRoomName(resolved);
-      setRoomIsWay(true);                 // the arrival room itself, before its name is known
+      if (resolved) { setWayRoomName(resolved); setRoomIsWay(room === resolved); }
+      // Not resolved yet: claim the pane ONLY if there is no ?room= to wait for, or we are already in it. Setting
+      // it true for "whatever room happens to be open" is what kept General looking like a Way.
+      else setRoomIsWay(Boolean(roomWayId) && !wantedRoomId);
       return;
     }
     setRoomIsWay(room === wayRoomName);
@@ -1111,21 +1115,23 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
    * person stays where they are rather than being shown a room that does not exist.
    */
   /**
-   * Arriving from `/chat?room=<id>`: switch to that room once sync has told us its name, and then forget about it.
+   * Arriving from `/chat?room=<id>`: switch to that room once, and never again.
    *
-   * It must apply ONCE. As an invariant it re-ran on every `info`/`room` change and dragged the person back to the
-   * Way's room the moment they clicked anything else -- "I'm not able to switch back to general" (2026-11-23). A
-   * URL that is still in the address bar is a record of how you got here, not a standing instruction.
+   * It used to re-run on every `info`/`room` change and dragged the person back to the Way's room the moment they
+   * clicked anything else ("I'm not able to switch back to general", twice, 2026-11-23). The deeper mistake was
+   * treating the address bar as state: it records how you arrived. So the switch happens ONCE, from the mount
+   * effect, and the room the person picks afterwards is the room they get.
    */
-  const wantedRoomDone = useRef(false);
+  const switchToWantedRoom = useRef(false);
   useEffect(() => {
-    if (!wantedRoomId || wantedRoomDone.current) return;
+    if (!wantedRoomId || switchToWantedRoom.current) return;
     const name = Object.keys(info).find((n) => info[n]?.id === wantedRoomId);
-    if (!name) return;
-    wantedRoomDone.current = true;
-    if (name === room) return;
-    setRoomList((l) => (l.rooms.includes(name) ? { ...l, current: name } : { rooms: [...l.rooms, name], current: name }));
-  }, [wantedRoomId, info, room]);
+    if (!name) return;                       // sync has not listed it yet: try again when info changes
+    switchToWantedRoom.current = true;       // locked before the state update, so no second pass can fight a click
+    if (name !== roomRef.current) {
+      setRoomList((l) => (l.rooms.includes(name) ? { ...l, current: name } : { rooms: [...l.rooms, name], current: name }));
+    }
+  }, [wantedRoomId, info]);
   // A room shows "no messages yet" only once its history could have arrived: saved on this device, or from the account (a few seconds at
   // most). Before, every room said "No messages in General yet" for about 3 s and then filled in (2026-11-05).
   const [waited, setWaited] = useState<Record<string, boolean>>({});
@@ -1867,7 +1873,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             and steps button in the central pane, where we would have had a chat, remove that chat entirely if it is
             a task". `roomIsWay` flips back to false when the room turns out not to be a Way, so an ordinary room is
             never left staring at a blank pane. */}
-        {roomIsWay && (
+        {showWayPanel && (
           <WayRunPanel
             // Fall back to the id in the URL: `info` is filled by sync a few seconds behind a cold load, and an
             // undefined id here would blank the pane and bounce the person back to the conversation.
@@ -1875,10 +1881,17 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             wayId={roomWayId || undefined}
             title={shownName(room)}
             onNothing={() => setRoomIsWay(false)}
+            onShowChat={() => setWayChatOpen(true)}
           />
         )}
 
-        {!roomIsWay && (<>
+        {!showWayPanel && (<>
+        {/* Chatting in a Way's room: one control back to the run, in the same place the run offers the chat. */}
+        {roomIsWay && (
+          <div className="dg-way-return">
+            <button type="button" onClick={() => setWayChatOpen(false)}>Back to the run</button>
+          </div>
+        )}
         <MessageScroller.Provider autoScroll={false} defaultScrollPosition="end">
           <MessageScroller.Root className="dg-scroll">
             <MessageScroller.Viewport ref={viewportRef} data-lenis-prevent className="dg-viewport" aria-label={`Messages in ${room}`}>

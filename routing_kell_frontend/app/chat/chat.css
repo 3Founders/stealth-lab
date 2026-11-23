@@ -6,22 +6,24 @@
 
 /* The room's right rail (components/chat/RoomRail.tsx): other Ways for this goal, and a labelled ad slot. It is a
    third column of dg-shell, hidden below 1100px where the middle pane needs the width. */
-/* The run as the room's MAIN pane: a room that belongs to a Way shows its steps here instead of the conversation.
-   Dense but not scrolling-inside-itself: the pane is the scroll container, like the transcript it replaces. */
-.dg-way-main { display: grid; gap: 18px; align-content: start; justify-items: center; text-align: center;
-  padding: 32px 18px 40px; max-width: 820px; width: 100%; min-width: 0; margin: 0 auto;
+/* The run as the room's MAIN pane, centred horizontally from the top of the pane: the same measured column as the
+   site's pages, but centred and top-aligned (owner, 2026-11-23: "align everything in center from top"). The site
+   font and tokens are used throughout -- an earlier version set its own sizes and read as a different product. */
+.dg-way-main { display: grid; gap: 22px; align-content: start; justify-items: center; text-align: center;
+  padding: 26px 22px 44px; max-width: 820px; width: 100%; min-width: 0; margin: 0 auto;
   overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+/* Text blocks stay readable while the block itself is centred; the step and file lists are left-aligned INSIDE a
+   centred column, because centred prose of more than a line is hard to read. */
 .dg-way-main > * { width: 100%; max-width: 680px; }
-.dg-way-head { display: grid; gap: 6px; justify-items: center; }
-.dg-way-head h2 { margin: 0; font-size: 22px; line-height: 1.28; text-wrap: balance; }
-.dg-way-sub { margin: 0; font-size: 13px; color: var(--grey); }
-.dg-way-sec { margin: 0 0 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey);
-  text-align: left; }
-.dg-way-note { margin: 0; font-size: 13px; color: var(--grey); line-height: 1.5; }
-.dg-way-error { margin: 0; font-size: 13px; color: var(--ink); border-left: 2px solid var(--ink); padding-left: 10px;
-  text-align: left; }
+.dg-way-head { display: grid; gap: 8px; justify-items: center; }
+.dg-way-sub { margin: 0; font-size: 14px; color: var(--grey); line-height: 1.5; }
+.dg-way-block { display: grid; gap: 10px; }
+.dg-way-block > h2 { margin: 0; font-size: 12px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
+.dg-way-note { margin: 0; font-size: 14px; color: var(--grey); line-height: 1.6; max-width: 46em; }
+.dg-way-error { margin: 0; font-size: 14px; color: var(--ink); border-left: 2px solid var(--ink); padding-left: 12px;
+  line-height: 1.5; }
 
-.dg-way-bar { height: 4px; border-radius: 999px; background: var(--rule); overflow: hidden; }
+.dg-way-bar { height: 3px; border-radius: 999px; background: var(--rule); overflow: hidden; margin-top: 4px; }
 /* `transform`, not `width`: a width transition is a layout change every frame (docs/ios_animation.md §6 rule 1). */
 .dg-way-bar span {
   display: block; height: 100%; width: 100%; background: var(--ink);
@@ -29,69 +31,89 @@
   transition: transform var(--dg-smooth-d, .5s) var(--dg-smooth, cubic-bezier(.22, 1, .36, 1));
 }
 
-.dg-way-list { text-align: left; }
-.dg-way-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.dg-way-steps li { display: flex; gap: 12px; align-items: baseline; padding: 11px 12px; border-radius: 8px;
-  font-size: 14px; line-height: 1.45; color: var(--grey); border: 1px solid transparent; }
+.dg-way-steps { list-style: none; margin: 0; padding: 0; display: grid; }
+.dg-way-steps li { display: flex; gap: 14px; align-items: baseline; padding: 11px 0;
+  font-size: 15px; line-height: 1.5; color: var(--grey); border-top: 1px solid var(--rule); }
+.dg-way-steps li:first-child { border-top: 0; }
 .dg-way-steps li[data-state="done"] { color: var(--ink); }
-.dg-way-steps li[data-state="running"] { color: var(--ink); background: var(--surface); border-color: var(--rule-strong); }
+.dg-way-steps li[data-state="running"] { color: var(--ink); }
 .dg-way-steps li[data-state="running"] .dg-way-n { animation: dg-way-pulse 1.4s var(--dg-smooth, cubic-bezier(.22, 1, .36, 1)) infinite; }
-.dg-way-n { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--grey);
-  border: 1px solid var(--rule); border-radius: 999px; padding: 1px 7px; flex-shrink: 0; min-width: 22px; text-align: center; }
+/* `review` is the state the Operant design system calls is-review: the run is stopped here, on a person. It gets the
+   site's own accent (--yellow) so "waiting for you" can never be mistaken for "running" or "done". */
+.dg-way-steps li[data-state="review"] { color: var(--ink); }
+.dg-way-steps li[data-state="review"] .dg-way-n { background: var(--yellow); border-color: var(--yellow); color: #171717; font-weight: 500; }
+.dg-way-n { font-size: 12px; color: var(--grey); border: 1px solid var(--rule-strong); border-radius: 999px;
+  padding: 0 8px; flex-shrink: 0; min-width: 24px; text-align: center; line-height: 1.7; }
 .dg-way-steps li[data-state="done"] .dg-way-n { color: var(--ink); border-color: var(--rule-strong); }
 .dg-way-col { flex: 1; display: grid; gap: 4px; min-width: 0; }
-.dg-way-title { display: block; }
-/* A finished step's own output, shown in place and clamped: "see every step's output" without turning the pane into
-   a document. The full file is the download at the end. */
+/* Bold, as every page titles its list items; the step's own output below it stays quiet. */
+.dg-way-title { display: block; font-weight: 500; }
 .dg-way-out-step { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
-  font-size: 12.5px; color: var(--grey); line-height: 1.5; padding-left: 10px; border-left: 2px solid var(--rule); }
-.dg-way-kind { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--grey);
-  border: 1px solid var(--rule); border-radius: 999px; padding: 1px 7px; flex-shrink: 0; }
-.dg-way-price { font-size: 12px; color: var(--grey); flex-shrink: 0; }
+  font-size: 14px; color: var(--grey); line-height: 1.55; }
+.dg-way-kind { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 2px 9px; flex-shrink: 0; }
+.dg-way-kind[data-tone="review"] { background: var(--yellow); border-color: var(--yellow); color: #171717; font-weight: 500; }
 @keyframes dg-way-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 
-.dg-way-act { display: grid; gap: 8px; justify-items: center; }
-
-/* Paused on a human step: the card from the human-in-the-loop pattern (LangGraph's reference shape) -- what it is
-   waiting on, what it asked for, and one button that continues from this step. */
-.dg-way-pause { display: grid; gap: 10px; justify-items: center; padding: 18px 16px; border-radius: 12px;
-  border: 1px solid var(--rule-strong); background: var(--surface); text-align: center; }
-.dg-way-pause .dg-way-sec { text-align: center; margin-bottom: 0; }
-.dg-way-pause-title { margin: 0; font-size: 16px; font-weight: 500; line-height: 1.35; }
-.dg-way-pause-form { display: grid; gap: 8px; width: 100%; max-width: 440px; }
-.dg-way-pause-form label { font-size: 12.5px; color: var(--grey); text-align: left; }
-.dg-way-pause-form input { width: 100%; font: inherit; font-size: 14px; padding: 9px 11px; border: 1px solid var(--rule-strong);
-  border-radius: 8px; background: var(--surface); color: var(--ink); }
-.dg-way-pause-form .dg-way-start { justify-self: center; }
-.dg-way-start { font: inherit; font-size: 15px; font-weight: 500; padding: 12px 28px; border: 0; border-radius: 999px;
-  background: var(--ink); color: var(--surface); cursor: pointer; min-width: 160px; }
+.dg-way-swap { font: inherit; font-size: 13px; padding: 4px 12px; border: 1px solid var(--rule); border-radius: 999px;
+  background: none; color: var(--grey); cursor: pointer; }
+.dg-way-swap:hover { color: var(--ink); border-color: var(--rule-strong); }
+/* The way back to the run from the conversation, above the transcript. */
+.dg-way-return { display: flex; justify-content: center; padding: 10px 18px 0; }
+.dg-way-return button { font: inherit; font-size: 13px; padding: 4px 12px; border: 1px solid var(--rule-strong);
+  border-radius: 999px; background: none; color: var(--ink); cursor: pointer; }
+.dg-way-return button:hover { background: var(--soft); }
+/* Actions never resize under the pointer. Each control keeps a fixed footprint: a button whose label changes
+   ("View" -> "Hide", "Start" -> "Starting...") would otherwise re-measure and shove its neighbours ("buttons are
+   warping", owner 2026-11-23). */
+.dg-way-act { display: flex; align-items: baseline; gap: 14px; flex-wrap: nowrap; }
+.dg-way-act .dg-way-note { flex: 1; min-width: 0; }
+.dg-way-start { font: inherit; font-size: 15px; font-weight: 500; padding: 11px 20px; border: 1px solid var(--ink);
+  border-radius: 999px; background: var(--ink); color: var(--paper); cursor: pointer; min-width: 190px;
+  text-align: center; flex-shrink: 0; }
 .dg-way-start:disabled { opacity: .45; cursor: default; }
 
-.dg-way-inputs { display: grid; gap: 10px; }
-.dg-way-inputs ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.dg-way-inputs label { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; font-weight: 500; }
-.dg-way-stepof { font-size: 11px; font-weight: 400; color: var(--grey); }
-.dg-way-inputs input { width: 100%; margin-top: 5px; font: inherit; font-size: 14px; padding: 9px 11px;
-  border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--surface); color: var(--ink); }
+/* Paused on a human step: the card from the human-in-the-loop pattern (LangGraph's reference shape) -- what it is
+   waiting on, what it asked for, and one action that continues from this step. */
+.dg-way-pause { display: grid; gap: 10px; padding: 18px 20px; border: 1px solid var(--rule-strong); border-radius: 8px;
+  background: var(--surface); }
+.dg-way-pause > h2 { margin: 0; font-size: 12px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
+.dg-way-pause-title { margin: 0; font-size: 16px; font-weight: 500; line-height: 1.4; }
+.dg-way-pause-form { display: grid; gap: 8px; margin-top: 4px; }
+.dg-way-pause-form label { font-size: 13px; color: var(--grey); }
+.dg-way-pause-form input { width: 100%; font: inherit; font-size: 15px; padding: 10px 12px; border: 1px solid var(--rule-strong);
+  border-radius: 6px; background: var(--paper); color: var(--ink); }
+.dg-way-pause-form .dg-way-start { justify-self: start; margin-top: 4px; }
 
-.dg-way-out { display: grid; gap: 8px; border-top: 1px solid var(--rule); padding-top: 16px; }
-.dg-way-out h3 { margin: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
-.dg-way-out ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.dg-way-out button { display: flex; justify-content: space-between; gap: 12px; font: inherit;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: none;
-  border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; color: var(--ink); cursor: pointer;
-  text-align: left; width: 100%; overflow-wrap: anywhere; }
-.dg-way-out button:hover { border-color: var(--rule-strong); }
-.dg-way-out li { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 8px 2px;
-  color: var(--grey); line-height: 1.45; border-bottom: 1px solid var(--rule); }
-.dg-way-out li:last-child { border-bottom: 0; }
-.dg-way-fname { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-.dg-way-fsize { color: var(--grey); flex-shrink: 0; text-align: right; }
-/* The one action when a run produced several files: an archive, so a six-file Way is one click. */
-.dg-way-all { justify-content: center !important; font-family: inherit !important; font-weight: 500;
-  background: var(--ink) !important; color: var(--surface) !important; border: 0 !important; }
-.dg-way-out button span { color: var(--grey); flex-shrink: 0; }
-.dg-way-all span { color: var(--surface) !important; }
+.dg-way-inputs { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.dg-way-inputs label { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; font-weight: 500; }
+.dg-way-stepof { font-size: 12px; font-weight: 400; color: var(--grey); }
+.dg-way-inputs input { width: 100%; margin-top: 6px; font: inherit; font-size: 15px; padding: 10px 12px;
+  border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); color: var(--ink); }
+
+/* Files: the same row shape as the Way page's lists. Each has View (read it here) and Download (take it). */
+.dg-way-files, .dg-way-refused { list-style: none; margin: 0; padding: 0; display: grid; }
+.dg-way-files > li { border-top: 1px solid var(--rule); padding: 10px 0; }
+.dg-way-files > li:first-child, .dg-way-refused > li:first-child { border-top: 0; }
+.dg-way-filerow { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.dg-way-fname { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px;
+  overflow-wrap: anywhere; }
+.dg-way-fsize { color: var(--grey); font-size: 13px; flex-shrink: 0; }
+.dg-way-facts { margin-left: auto; display: inline-flex; gap: 8px; flex-shrink: 0; }
+/* A fixed width per control: the label changes ("View" -> "Hide") and a min-content button would resize, shifting
+   the row. Both actions share one width so the pair is symmetric. */
+.dg-way-facts button { font: inherit; font-size: 13px; padding: 4px 0; border: 1px solid var(--rule-strong);
+  border-radius: 999px; background: none; color: var(--ink); cursor: pointer; min-width: 96px; text-align: center; }
+.dg-way-facts button:hover { background: var(--soft); }
+.dg-way-fileview { margin-top: 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface);
+  max-height: 46vh; overflow: auto; }
+.dg-way-fileview pre { margin: 0; padding: 14px 16px; font-family: "Cascadia Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.dg-way-refused li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; font-size: 14px;
+  color: var(--grey); line-height: 1.5; border-top: 1px solid var(--rule); }
+.dg-way-all { font: inherit; font-size: 14px; font-weight: 500; padding: 9px 20px; border: 1px solid var(--rule-strong);
+  border-radius: 999px; background: none; color: var(--ink); cursor: pointer; }
+.dg-way-all:hover { background: var(--soft); }
 
 /* Reduced motion means none (docs/ios_animation.md §6 rule 6): named here so the intent survives a selector change. */
 @media (prefers-reduced-motion: reduce) {
@@ -112,7 +134,8 @@
 .dg-rail-card li a { font-size: 13.5px; line-height: 1.4; color: var(--ink); text-decoration: none; }
 .dg-rail-card li a:hover { text-decoration: underline; }
 .dg-rail-way { display: grid; gap: 2px; min-width: 0; }
-.dg-rail-name { font-size: 13.5px; line-height: 1.35; color: var(--ink); }
+/* Bold titles, like every list on the site: the name is what a reader scans, the description is what qualifies it. */
+.dg-rail-name { font-size: 13.5px; line-height: 1.35; color: var(--ink); font-weight: 500; }
 .dg-rail-desc { font-size: 12px; line-height: 1.45; color: var(--grey); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .dg-rail-rel { font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--grey); }
 .dg-rail-price { font-size: 12px; color: var(--grey); flex-shrink: 0; }
@@ -1644,10 +1667,12 @@ span.dg-replyq { cursor: default; }
 .dg-way-card { align-self: stretch; width: 100%; background: var(--paper); color: var(--ink);
   border: 1px solid var(--rule-strong); border-radius: 12px; padding: 14px 16px 12px; display: grid; gap: 10px;
   animation: dg-signin-in 420ms var(--dg-bouncy) both; }
-.dg-way-head { display: grid; gap: 2px; }
-.dg-way-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.dg-way-head b { font-weight: 600; font-size: 1em; }
-.dg-way-head > span { font-size: .85em; color: var(--grey); }
+/* Scoped under .dg-way-card: an unprefixed `.dg-way-head` here also matched the run pane's header and silently
+   overrode its layout (display:grid; gap:2px), which is what made the pane's spacing jump between rooms. */
+.dg-way-card .dg-way-head { display: grid; gap: 2px; }
+.dg-way-card .dg-way-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.dg-way-card .dg-way-head b { font-weight: 600; font-size: 1em; }
+.dg-way-card .dg-way-head > span { font-size: .85em; color: var(--grey); }
 .dg-way-goal { flex: none; max-width: 48%; font-size: .75em; color: var(--grey); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .dg-way-strip { list-style: none; margin: 0 -16px; padding: 2px 16px 8px; display: flex; align-items: flex-start; gap: 8px; overflow-x: auto;
@@ -1755,16 +1780,19 @@ span.dg-replyq { cursor: default; }
 .dg-way-goal-chip[data-has-way] { color: var(--ink); border-color: var(--rule-strong); }
 /* The picked Way's steps, in the card: the same Goal -> Way -> steps shape as the desktop graph, compact. The dot of the
    step kell is on pulses; finished steps are inked. */
-.dg-way-steps { grid-column: 1 / -1; list-style: none; margin: 2px 0 0; padding: 4px 0 0; display: flex;
+/* Scoped under .dg-way-card: unscoped, these also matched the RUN pane's step list and overrode it (display:flex,
+   .8em type, a 6px dot for `.dg-way-dot`) -- the pane's rows changed shape depending on whether a picker card was on
+   screen, which is what "buttons are warping" described. */
+.dg-way-card .dg-way-steps { grid-column: 1 / -1; list-style: none; margin: 2px 0 0; padding: 4px 0 0; display: flex;
   flex-direction: column; gap: 3px; border-top: 1px solid var(--rule); }
-.dg-way-steps li { display: flex; align-items: flex-start; gap: 7px; font-size: .8em; color: var(--grey);
+.dg-way-card .dg-way-steps li { display: flex; align-items: flex-start; gap: 7px; font-size: .8em; color: var(--grey);
   animation: dg-rise 320ms var(--dg-smooth) backwards; animation-delay: calc(var(--i, 0) * 50ms); }
 .dg-way-dot { flex: none; width: 6px; height: 6px; margin-top: 4px; border-radius: 50%;
   border: 1.5px solid var(--rule-strong); background: var(--surface); }
-.dg-way-steps li[data-state="done"] .dg-way-dot { background: var(--ink); border-color: var(--ink); }
-.dg-way-steps li[data-state="running"] .dg-way-dot { background: var(--yellow); border-color: var(--ink);
+.dg-way-card .dg-way-steps li[data-state="done"] .dg-way-dot { background: var(--ink); border-color: var(--ink); }
+.dg-way-card .dg-way-steps li[data-state="running"] .dg-way-dot { background: var(--yellow); border-color: var(--ink);
   animation: dg-pulse 1.2s var(--dg-smooth) infinite; }
-.dg-way-steps li[data-state="running"] .dg-way-step-title { color: var(--ink); }
+.dg-way-card .dg-way-steps li[data-state="running"] .dg-way-step-title { color: var(--ink); }
 /* A human step: the run waits on the person; Done (with what they did) lets it go on. */
 .dg-way-human { display: flex; align-items: center; gap: 6px; animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) backwards; }
 .dg-way-human input { flex: 1; min-width: 0; font: inherit; font-size: .8em; padding: 5px 8px; border: 1px solid var(--rule-strong);

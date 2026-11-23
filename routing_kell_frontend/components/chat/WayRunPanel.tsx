@@ -2,13 +2,14 @@
 /**
  * A Way's run, as the room's MAIN pane.
  *
- * This was the right rail until the owner ran a Way and could not find Start (2026-11-23): the run sat in a 280px
- * column beside a conversation that was empty, while the middle of the screen said nothing. So when a room belongs
- * to a Way, the Way IS the room: the middle pane is the steps, the Start button, the progress and the output, and the
- * chat composer is hidden. A room that is not a Way renders the conversation exactly as before.
+ * The room renders this instead of the conversation when the room belongs to a Way. It follows the site's own pages
+ * rather than inventing a look: the same font, the same tokens (--ink, --grey, --rule-strong, --surface), the same
+ * measured left-aligned column as /way (app/way/way.css). An earlier version centred everything and set its own
+ * sizes, which read as a different product (owner, 2026-11-23: "this is bad UI, take a look at other pages we've
+ * built ... use the same font").
  *
- * The earlier research still holds and is why this is a checklist rather than a wizard: start with the list, expand
- * a step in place. What changed is the placement, not the shape -- a status surface a person cannot find is not one.
+ * What it shows, in order: what the Way is, where it has got to, the steps (bold titles, state per step), what it
+ * needs from a person when it pauses, and the files it produced -- each of which can be read in place or downloaded.
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 
@@ -31,13 +32,11 @@ type RunState = {
     | "cancelled"
   run: { run_id: string; status: string } | null
   inputs: InputDef[]
-  /** The room knows which Way it is for, so a /chat?room=... link works without &way=... */
   submission_id?: string
-  /** Set while paused on a human step: which one, and what it asks for (app/execution/way_runs.py::view). */
   waiting?: { kind?: string; order?: number; title?: string; description?: string } | null
 }
 type Output = { order: number; title: string; output: string }
-type FileOut = { name: string; size_bytes?: number; url: string }
+type FileOut = { name: string; size_bytes?: number; media_type?: string; text?: boolean; url: string }
 type Refused = { name: string; why: string }
 
 async function call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
@@ -56,36 +55,53 @@ async function call<T>(path: string, init?: { method?: string; body?: unknown })
   return body as T
 }
 
-function rupees(paise?: number | null): string {
-  if (paise == null || !Number.isFinite(paise)) return ""
-  const r = paise / 100
-  return `₹${Number.isInteger(r) ? r.toLocaleString("en-IN") : r.toFixed(2)}`
+/** A file's text, fetched through the same licence-checked route the download uses. */
+async function fetchText(url: string): Promise<string> {
+  const token = await getAccessToken()
+  const target = url.startsWith("http") ? url : `${MCP_ORIGIN}${url}`
+  const res = await fetch(target, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    redirect: "follow",
+    cache: "no-store",
+  })
+  if (!res.ok) throw new Error(`the file could not be read (${res.status})`)
+  return await res.text()
 }
 
-/** `onNothing` lets the room reclaim the middle pane when it turns out this room is not a Way after all. */
+function kb(n?: number): string {
+  if (n == null) return ""
+  return n < 1024 ? `${n} B` : `${Math.max(1, Math.round(n / 1024))} KB`
+}
+
 export default function WayRunPanel({
   roomId,
   wayId,
   title,
   onNothing,
+  onShowChat,
 }: {
   roomId?: string
   wayId?: string
   title?: string
   onNothing?: () => void
+  /** Back to the conversation in this same room. A Way room hides the chat, so it needs a way back. */
+  onShowChat?: () => void
 }) {
   const [view, setView] = useState<RunState | null>(null)
   const [steps, setSteps] = useState<StepDef[]>([])
   const [outputs, setOutputs] = useState<Output[]>([])
   const [files, setFiles] = useState<FileOut[]>([])
   const [refused, setRefused] = useState<Refused[]>([])
-  const [downloadAllUrl, setDownloadAllUrl] = useState<string>("")
+  const [downloadAllUrl, setDownloadAllUrl] = useState("")
   const [values, setValues] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState("")
+  /** The file open for reading: its name, and its text once it has arrived. */
+  const [openFile, setOpenFile] = useState<string | null>(null)
+  const [openText, setOpenText] = useState<string>("")
+  const [openErr, setOpenErr] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** The Way to start. The room knows it even when the URL did not say, so the server's answer wins over `?way=`. */
   const wayForRun = view?.submission_id || wayId || ""
 
   const load = useCallback(async () => {
@@ -105,136 +121,115 @@ export default function WayRunPanel({
         setRefused(full.artifacts_refused || [])
         setDownloadAllUrl(full.download_all || "")
       }
-      if (r.submission_id && !wayId) {
-        // The room knows its Way even when the URL did not say so: one read, then the step list is real.
+      if (r.submission_id) {
         void call<{ steps: StepDef[] }>(`/v1/goals/submissions/${encodeURIComponent(r.submission_id)}/steps/cost`)
           .then((c) => setSteps(c.steps || []))
-          .catch(() => { /* the estimate is information; its absence must not break the run */ })
+          .catch(() => { /* information only */ })
       }
     } catch (e) {
       setError(String((e as Error)?.message || e))
     }
-  }, [roomId, wayId])
+  }, [roomId])
 
   useEffect(() => { void load() }, [load])
 
-  // While a run is going, keep the panel current without the person reloading. Stops as soon as it finishes.
   useEffect(() => {
     if (view?.state !== "running") return
     timer.current = setTimeout(() => void load(), 3000)
     return () => { if (timer.current) clearTimeout(timer.current) }
   }, [view, load])
 
-  useEffect(() => {
-    if (!wayId) return
-    void call<{ steps: StepDef[] }>(`/v1/goals/submissions/${encodeURIComponent(wayId)}/steps/cost`)
-      .then((r) => setSteps(r.steps || []))
-      .catch(() => { /* information only */ })
-  }, [wayId])
+  const noWay = view?.state === "no_way"
+  useEffect(() => { if (noWay) onNothing?.() }, [noWay, onNothing])
 
-  async function downloadZip() {
-    if (!downloadAllUrl) return
-    setBusy(true)
-    setError(null)
+  async function start() {
+    if (!roomId) return
+    if (!wayForRun) { setError("this room does not name the Way it should run — open it from the Way's page"); return }
+    setBusy(true); setError(null)
     try {
-      await downloadArtifact(downloadAllUrl, "way-output.zip")
-    } catch (e) {
-      setError(String((e as Error)?.message || e))
-    } finally {
-      setBusy(false)
-    }
+      await call(`/v1/rooms/${encodeURIComponent(roomId)}/run/start`, {
+        method: "POST", body: { submission_id: wayForRun, values },
+      })
+      await load()
+    } catch (e) { setError(String((e as Error)?.message || e)) } finally { setBusy(false) }
   }
 
   async function resume() {
     if (!roomId) return
-    setBusy(true)
-    setError(null)
+    setBusy(true); setError(null)
     try {
-      await call(`/v1/rooms/${encodeURIComponent(roomId)}/run/resume`, {
-        method: "POST",
-        body: { note },
-      })
+      await call(`/v1/rooms/${encodeURIComponent(roomId)}/run/resume`, { method: "POST", body: { note } })
       setNote("")
       await load()
-    } catch (e) {
-      setError(String((e as Error)?.message || e))
-    } finally {
-      setBusy(false)
-    }
+    } catch (e) { setError(String((e as Error)?.message || e)) } finally { setBusy(false) }
   }
 
-  async function start() {
-    if (!roomId) return
-    if (!wayForRun) {
-      setError("this room does not name the Way it should run — open it from the Way's page")
-      return
-    }
-    setBusy(true)
-    setError(null)
+  async function viewFile(f: FileOut) {
+    if (openFile === f.name) { setOpenFile(null); return }
+    setOpenFile(f.name); setOpenText(""); setOpenErr(null)
     try {
-      await call(`/v1/rooms/${encodeURIComponent(roomId)}/run/start`, {
-        method: "POST",
-        body: { submission_id: wayForRun, values },
-      })
-      await load()
+      // `?mode=view` answers with the bytes inline. The download route redirects to a presigned storage URL, which
+      // fetch() cannot read cross-origin (no CORS headers from the bucket), so View would fail without this.
+      setOpenText(await fetchText(`${f.url}${f.url.includes("?") ? "&" : "?"}mode=view`))
     } catch (e) {
-      setError(String((e as Error)?.message || e))
-    } finally {
-      setBusy(false)
+      setOpenErr(String((e as Error)?.message || e))
     }
   }
 
-  // No room id yet is a WAITING state, not a "not a Way" state: `info` arrives from sync a few seconds after a cold
-  // load, so bailing out here bounced the person back to the conversation ("Loading messages…") and they never
-  // reached the Way at all. Only the server's own "no_way" answer means this room is not a Way.
-  const noWay = view?.state === "no_way"
-  useEffect(() => { if (noWay) onNothing?.() }, [noWay, onNothing])
+  async function downloadOne(f: FileOut) {
+    setError(null)
+    try { await downloadArtifact(f.url, f.name) } catch (e) { setError(String((e as Error)?.message || e)) }
+  }
+
+  async function downloadZip() {
+    if (!downloadAllUrl) return
+    setBusy(true); setError(null)
+    try { await downloadArtifact(downloadAllUrl, "way-output.zip") } catch (e) { setError(String((e as Error)?.message || e)) }
+    finally { setBusy(false) }
+  }
 
   const done = outputs.length
   const total = steps.length || 0
   const pct = total ? Math.round((done / total) * 100) : 0
   const running = view?.state === "running"
-  // A run paused on a human step is NOT finished. Rendering it as "finished" is what the owner saw after pressing
-  // Start: the run was waiting_human at step 1 and the pane said "Finished." (2026-11-23).
   const paused = view?.state === "waiting_human" || view?.state === "waiting_session"
   const finished = view?.state === "done" || view?.state === "failed"
 
-  // A step is "done" once the run has an output for it; "running" while it is the next one and the run is going.
   const stateOf = (order: number) => {
     if (outputs.some((o) => o.order === order)) return "done"
     if (running && steps[done]?.order === order) return "running"
+    if (paused && view?.waiting?.order === order) return "review"
     return "waiting"
   }
 
   return (
     <section className="dg-way-main" aria-label={title ? `${title}: steps and run` : "Way run"}>
+      {/* No headline: the room's own header already names it (owner, 2026-11-23). The progress line stays, because
+          it is the one thing the header does not say. */}
       <header className="dg-way-head">
-        <h2>{title || "This Way"}</h2>
+        <p className="dg-way-sub">
+          {total > 0 ? `${done} of ${total} steps done` : "Reading this Way…"}
+          {running ? " · running" : paused ? " · waiting on you" : finished ? (view?.state === "done" ? " · finished" : " · stopped") : ""}
+        </p>
+        {/* A Way room replaces the conversation, so there has to be an obvious way back to chatting in it. */}
+        <button type="button" className="dg-way-swap" onClick={() => onShowChat?.()}>
+          Open the chat in this room
+        </button>
         {total > 0 && (
-          <p className="dg-way-sub">
-            {done} of {total} steps done{finished ? " · finished" : paused ? " · waiting on you" : running ? " · running" : ""}
-          </p>
+          <div className="dg-way-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+            <span style={{ transform: `scaleX(${pct / 100})` }} />
+          </div>
         )}
       </header>
 
-      {total > 0 && (
-        <div className="dg-way-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-          {/* scaleX, not width: a width change is layout every frame (docs/ios_animation.md §6 rule 1). */}
-          <span style={{ transform: `scaleX(${pct / 100})` }} />
-        </div>
-      )}
-
-      {!view && <p className="dg-way-note" role="status">Reading this Way…</p>}
-
       {view?.state === "needs_inputs" && (
-        <div className="dg-way-inputs">
-          <h3 className="dg-way-sec">What it needs from you</h3>
-          <ul>
+        <section className="dg-way-block">
+          <h2>What it needs from you</h2>
+          <ul className="dg-way-inputs">
             {view.inputs.map((i) => (
               <li key={`${i.step}.${i.key}`}>
                 <label htmlFor={`wi-${i.step}-${i.key}`}>
-                  {i.label}
-                  <span className="dg-way-stepof">step {i.step}</span>
+                  {i.label}<span className="dg-way-stepof">step {i.step}</span>
                 </label>
                 <input
                   id={`wi-${i.step}-${i.key}`}
@@ -246,61 +241,48 @@ export default function WayRunPanel({
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
 
       {total > 0 && (
-        <div className="dg-way-list">
-          <h3 className="dg-way-sec">Steps</h3>
+        <section className="dg-way-block">
+          <h2>Steps</h2>
           <ol className="dg-way-steps">
             {steps.map((s) => {
               const st = stateOf(s.order)
-              const price = s.price_high_paise ? rupees(s.price_high_paise) : ""
               const wrote = outputs.find((o) => o.order === s.order)
               return (
                 <li key={s.order} data-state={st} data-human={s.is_human ? "true" : "false"}>
                   <span className="dg-way-n" aria-hidden="true">{st === "done" ? "✓" : s.order}</span>
                   <span className="dg-way-col">
                     <span className="dg-way-title">{s.title}</span>
-                    {/* The step's own output, in place: what "see the steps and outputs" means for a long run. */}
                     {wrote?.output && <span className="dg-way-out-step">{wrote.output}</span>}
                   </span>
                   {s.is_human && <span className="dg-way-kind">you</span>}
-                  {price && st === "waiting" && <span className="dg-way-price">{price}</span>}
+                  {st === "review" && <span className="dg-way-kind" data-tone="review">waiting</span>}
                 </li>
               )
             })}
           </ol>
-        </div>
+        </section>
       )}
 
-      {/* Paused on a human step. The reference for this shape is LangGraph's human-in-the-loop: the agent stops, the
-          UI shows the pending step and what it needs, and the run resumes from where it stopped -- never replaying. */}
       {paused && view?.waiting && (
-        <div className="dg-way-pause">
-          <h3 className="dg-way-sec">Waiting on you — step {view.waiting.order}</h3>
+        <section className="dg-way-pause">
+          <h2>Waiting on you — step {view.waiting.order}</h2>
           <p className="dg-way-pause-title">{view.waiting.title}</p>
           {view.waiting.description && <p className="dg-way-note">{view.waiting.description}</p>}
-          <form
-            className="dg-way-pause-form"
-            onSubmit={(e) => { e.preventDefault(); void resume() }}
-          >
+          <form className="dg-way-pause-form" onSubmit={(e) => { e.preventDefault(); void resume() }}>
             <label htmlFor="dg-way-note">What you did or found</label>
-            <input
-              id="dg-way-note"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="A line or two is enough"
-            />
+            <input id="dg-way-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="A line or two is enough" />
             <button type="submit" className="dg-way-start" disabled={busy}>{busy ? "Continuing…" : "Continue"}</button>
           </form>
-        </div>
+        </section>
       )}
 
-      {/* Start is the one action of a run that has not begun. It is never disabled without saying why. */}
       {!running && !paused && !finished && (
         <div className="dg-way-act">
-          <button type="button" className="dg-way-start" disabled={busy} onClick={() => void start()}>
+          <button type="button" className="dg-way-start" disabled={busy || !view} onClick={() => void start()}>
             {busy ? "Starting…" : view?.state === "needs_inputs" ? "Start with these answers" : "Start"}
           </button>
           <p className="dg-way-note">
@@ -310,54 +292,59 @@ export default function WayRunPanel({
       )}
 
       {finished && (
-        <div className="dg-way-act">
-          <p className="dg-way-note">
-            {view?.state === "done" ? "Finished." : "Stopped with a failure — the steps below show how far it got."}
-          </p>
-        </div>
+        <p className="dg-way-note">
+          {view?.state === "done" ? "Finished." : "Stopped with a failure — the steps above show how far it got."}
+        </p>
       )}
 
       {error && <p className="dg-way-error" role="alert">{error}</p>}
 
       {files.length > 0 && (
-        <div className="dg-way-out">
-          <h3>Output</h3>
-          <ul>
-            {files.map((f) => (
-              <li key={f.name}>
-                <button type="button" onClick={() => void downloadArtifact(f.url, f.name)}>
-                  <span className="dg-way-fname">{f.name}</span>
-                  {f.size_bytes != null && <span className="dg-way-fsize">{Math.max(1, Math.round(f.size_bytes / 1024))} KB</span>}
-                </button>
-              </li>
-            ))}
+        <section className="dg-way-block">
+          <h2>Files</h2>
+          <ul className="dg-way-files">
+            {files.map((f) => {
+              const open = openFile === f.name
+              return (
+                <li key={f.name} data-open={open ? "true" : "false"}>
+                  <div className="dg-way-filerow">
+                    <span className="dg-way-fname">{f.name}</span>
+                    <span className="dg-way-fsize">{kb(f.size_bytes)}</span>
+                    <span className="dg-way-facts">
+                      <button type="button" onClick={() => void viewFile(f)} aria-expanded={open}>
+                        {open ? "Hide" : "View"}
+                      </button>
+                      <button type="button" onClick={() => void downloadOne(f)}>Download</button>
+                    </span>
+                  </div>
+                  {open && (
+                    <div className="dg-way-fileview">
+                      {openErr ? <p className="dg-way-error">{openErr}</p>
+                        : openText ? <pre>{openText}</pre>
+                        : <p className="dg-way-note">Reading…</p>}
+                    </div>
+                  )}
+                </li>
+              )
+            })}
           </ul>
           {files.length > 1 && (
-            <button
-              type="button"
-              className="dg-way-all"
-              disabled={busy}
-              onClick={() => void downloadZip()}
-            >
+            <p><button type="button" className="dg-way-all" disabled={busy} onClick={() => void downloadZip()}>
               Download all ({files.length})
-            </button>
+            </button></p>
           )}
-        </div>
+        </section>
       )}
 
-      {/* Files the run refused, and why. Without this a missing `.tex` looks like a bug rather than a cut-off reply. */}
       {refused.length > 0 && (
-        <div className="dg-way-out">
-          <h3>Not kept</h3>
-          <ul>
+        <section className="dg-way-block">
+          <h2>Not kept</h2>
+          <ul className="dg-way-refused">
             {refused.map((r) => (
-              <li key={r.name}>
-                <span className="dg-way-fname">{r.name}</span>
-                <span className="dg-way-fsize">{r.why}</span>
-              </li>
+              <li key={r.name}><span className="dg-way-fname">{r.name}</span><span className="dg-way-fsize">{r.why}</span></li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
     </section>
   )

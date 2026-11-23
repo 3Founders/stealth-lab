@@ -17,7 +17,14 @@ import { useEffect, useState } from "react"
 import { MCP_ORIGIN } from "@/lib/connector"
 import { getAccessToken } from "@/lib/session"
 
-type Related = { id: string; goal_name: string; price_paise?: number | null }
+type Related = {
+  id: string
+  goal_name: string
+  description?: string
+  price_paise?: number | null
+  price_currency?: string | null
+  relation?: string
+}
 type FileOut = { name: string; size_bytes?: number; url: string }
 
 function rupees(paise?: number | null): string {
@@ -63,9 +70,15 @@ export default function RoomRail({ wayId, roomId }: { wayId?: string; roomId?: s
           <p className="dg-rail-muted" role="status">Loading…</p>
         ) : related.length ? (
           <ul>
-            {related.slice(0, 6).map((r) => (
+            {related.slice(0, 12).map((r) => (
               <li key={r.id}>
-                <Link href={`/way/${encodeURIComponent(r.id)}`}>{r.goal_name}</Link>
+                <Link className="dg-rail-way" href={`/way/${encodeURIComponent(r.id)}`}>
+                  <span className="dg-rail-name">{r.goal_name}</span>
+                  {/* A published Way need not have a description (`goal_submissions.description` is empty for
+                      several), and an empty line left the card looking broken. The relation is always known, so
+                      it stands in rather than showing nothing. */}
+                  <span className="dg-rail-desc">{r.description?.trim() || r.relation || "A published Way"}</span>
+                </Link>
                 {r.price_paise != null && <span className="dg-rail-price">{rupees(r.price_paise)}</span>}
               </li>
             ))}

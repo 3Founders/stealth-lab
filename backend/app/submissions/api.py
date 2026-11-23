@@ -323,7 +323,7 @@ async def my_runs(pool: Any, owner_id: str, *, open_only: bool = True) -> list[d
     return await way_runs.mine(pool, owner_id, open_only=open_only)
 
 
-async def related_ways(pool: Any, submission_id: str, *, limit: int = 6) -> dict[str, list[dict]]:
+async def related_ways(pool: Any, submission_id: str, *, limit: int = 12) -> dict[str, list[dict]]:
     """Ways related to this one, in two buckets the page labels separately.
 
     - **follows**: Ways that claim to apply after this one. There is no succession edge in the schema yet, so this
@@ -332,6 +332,8 @@ async def related_ways(pool: Any, submission_id: str, *, limit: int = 6) -> dict
     - **similar**: other published Ways toward the same goal.
 
     Both are discovery only. Nothing here is ranked by popularity: the ordering is the goal match, then recency.
+    When those two buckets have fewer than `limit` items, recent published Ways fill the rest, labelled
+    "another published Way", so the rail is useful instead of empty.
     """
     row = await pool.fetchrow(
         """SELECT g.id::text AS id, g.goal_id::text AS goal_id, g.owner_id,
@@ -340,35 +342,57 @@ async def related_ways(pool: Any, submission_id: str, *, limit: int = 6) -> dict
     if row is None:
         return {"follows": [], "similar": []}
 
-    async def fetch(sql: str, *args) -> list[dict]:
+    async def fetch(sql: str, *args, relation: str) -> list[dict]:
         try:
             rows = await pool.fetch(sql, *args)
         except Exception:  # noqa: BLE001 -- a rail that cannot read must not take the page down
             return []
-        return [{"id": r["id"], "goal_name": r["goal_name"], "price_paise": r["price_paise"],
+        return [{"id": r["id"], "goal_name": r["goal_name"],
+                 "description": r["description"] or "",
+                 "price_paise": r["price_paise"],
+                 "price_currency": r["price_currency"] or "INR",
+                 "relation": relation,
                  "parent_procedure_id": r["parent"]} for r in rows]
 
     similar = await fetch(
-        """SELECT g.id::text AS id, g.goal_name, p.price_paise, g.parent_procedure_id::text AS parent
+        """SELECT g.id::text AS id, g.goal_name, g.description, p.price_paise,
+                  p.price_currency, g.parent_procedure_id::text AS parent
            FROM goal_submissions g
            LEFT JOIN procedures p ON p.id = g.parent_procedure_id AND p.t_invalid IS NULL
            WHERE g.status IN ('approved', 'ai_approved') AND g.id <> $1::uuid
              AND g.goal_id IS NOT DISTINCT FROM $2::uuid
            ORDER BY g.created_at DESC LIMIT $3""",
-        str(submission_id), row["goal_id"], int(limit))
+        str(submission_id), row["goal_id"], int(limit), relation="same Goal")
 
     follows = []
     if row["owner_id"]:
         follows = await fetch(
-            """SELECT g.id::text AS id, g.goal_name, p.price_paise, g.parent_procedure_id::text AS parent
+            """SELECT g.id::text AS id, g.goal_name, g.description, p.price_paise,
+                      p.price_currency, g.parent_procedure_id::text AS parent
                FROM goal_submissions g
                LEFT JOIN procedures p ON p.id = g.parent_procedure_id AND p.t_invalid IS NULL
                WHERE g.status IN ('approved', 'ai_approved') AND g.id <> $1::uuid AND g.owner_id = $2
                ORDER BY g.created_at DESC LIMIT $3""",
-            str(submission_id), row["owner_id"], int(limit))
+            str(submission_id), row["owner_id"], int(limit), relation="by the same author")
 
-    seen = {r["id"] for r in similar}
-    return {"follows": [f for f in follows if f["id"] not in seen], "similar": similar}
+    seen = {r["id"] for r in similar} | {f["id"] for f in follows}
+    follows = [f for f in follows if f["id"] not in {r["id"] for r in similar}]
+
+    # Fill the rail to `limit` with recent published Ways, labelled honestly. Same-goal and
+    # same-author neighbours come first; this is discovery, not a claim that they fit.
+    remaining = max(0, int(limit) - len(similar) - len(follows))
+    if remaining:
+        discover = await fetch(
+            """SELECT g.id::text AS id, g.goal_name, g.description, p.price_paise,
+                      p.price_currency, g.parent_procedure_id::text AS parent
+               FROM goal_submissions g
+               LEFT JOIN procedures p ON p.id = g.parent_procedure_id AND p.t_invalid IS NULL
+               WHERE g.status IN ('approved', 'ai_approved') AND g.id <> $1::uuid
+               ORDER BY g.created_at DESC LIMIT $2""",
+            str(submission_id), remaining, relation="another published Way")
+        similar.extend([d for d in discover if d["id"] not in seen])
+
+    return {"follows": follows, "similar": similar}
 
 
 async def step_costs(pool: Any, submission_id: str) -> dict:
@@ -444,17 +468,21 @@ async def _run_artifacts(pool: Any, run_id: str, owner_id: str) -> tuple[dict, l
     from app.services import procedure_billing
 
     row = await pool.fetchrow(
-        "SELECT submission_id::text AS submission_id, owner_id, outputs FROM way_runs WHERE id = $1::uuid",
+        # `way_runs` has no submission_id column: a run points at the procedures row it executes (`procedure_row_id`)
+        # and at the room it belongs to. Selecting a name that does not exist made this raise UndefinedColumnError
+        # for EVERY download, so no file a Way produced could ever be fetched (2026-11-23).
+        "SELECT procedure_row_id::text AS procedure_row_id, room_id::text AS room_id, owner_id, outputs "
+        "FROM way_runs WHERE id = $1::uuid",
         str(run_id))
     if row is None:
         raise LookupError("no run with that id")
     if str(row["owner_id"] or "") != str(owner_id or "") or not procedure_billing._uuid(owner_id):
         raise LookupError("no run with that id")          # the same answer as a missing run: no probing
-    way_row = await _way_price_row(pool, row["submission_id"])
-    if not await procedure_billing.may_download(pool, procedure_row_id=way_row,
+    # The licence is bought against the procedures row, which is what the run itself carries.
+    if not await procedure_billing.may_download(pool, procedure_row_id=str(row["procedure_row_id"]),
                                                 buyer_user_id=owner_id, run_id=str(run_id)):
         raise ProcedureNotPurchased(0, "INR")
-    return {"submission_id": row["submission_id"]}, _stored_artifacts(row["outputs"])
+    return {"room_id": row["room_id"]}, _stored_artifacts(row["outputs"])
 
 
 async def _way_price_row(pool: Any, submission_id: str) -> str:
@@ -518,6 +546,17 @@ async def download_artifact(pool: Any, owner_id: str, run_id: str, name: str, re
     match = next((a for a in files if a.get("name") == wanted), None)
     if match is None:
         return Response("this run produced no file with that name", status_code=404, headers=cors_headers(request))
+    # `?mode=view` returns the bytes inline for the page's file reader. A redirect to a presigned URL cannot be read
+    # by fetch(): the storage host sends no CORS headers for a cross-origin read, so "View" would fail silently.
+    # A text artefact is small (MAX_ARTIFACT_BYTES), the licence was checked above, and no-store keeps it private.
+    viewing = (request.query_params.get("mode") or "") == "view" if hasattr(request, "query_params") else False
+    if viewing:
+        data = await _artifact_bytes(match)
+        return Response(data, media_type=match.get("media_type") or "text/plain", headers={
+            **cors_headers(request), "Cache-Control": "private, no-store",
+            "Content-Disposition": "inline",   # read in place, not saved
+            "X-Content-Type-Options": "nosniff",
+        })
     # Licence checked above; the file itself is fetched from storage by the browser, not by this process.
     signed = await _signed_or_bytes(match, filename=wanted)
     if signed:
@@ -553,7 +592,7 @@ async def download_artifacts_zip(pool: Any, owner_id: str, run_id: str, request:
     got: list[tuple[str, bytes]] = []
     for a in files:
         got.append((a.get("name") or "output.txt", await _artifact_bytes(a)))
-    name = art.safe_name(f"{run['submission_id'][:8]}-output.zip")
+    name = art.safe_name(f"{str(run_id)[:8]}-output.zip")
     return Response(art.zip_artifacts(got), media_type="application/zip", headers={
         **cors_headers(request), "Content-Disposition": art.content_disposition(name),
         "Cache-Control": "private, max-age=0, must-revalidate",

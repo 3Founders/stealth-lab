@@ -209,8 +209,9 @@ class _Pool:
 
     async def fetchrow(self, sql, *args):
         if "FROM way_runs" in sql:
-            return {"submission_id": "11111111-2222-3333-4444-555555555555", "owner_id": "u-1",
-                    "outputs": self._outputs}
+            # way_runs carries the procedures row it executes, not a submission id (fixed 2026-11-23).
+            return {"procedure_row_id": "11111111-2222-3333-4444-555555555555", "room_id": None,
+                    "owner_id": "u-1", "outputs": self._outputs}
         return None
 
     async def fetchval(self, sql, *args):
