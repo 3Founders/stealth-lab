@@ -82,7 +82,16 @@
   border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; color: var(--ink); cursor: pointer;
   text-align: left; width: 100%; overflow-wrap: anywhere; }
 .dg-way-out button:hover { border-color: var(--rule-strong); }
+.dg-way-out li { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 8px 2px;
+  color: var(--grey); line-height: 1.45; border-bottom: 1px solid var(--rule); }
+.dg-way-out li:last-child { border-bottom: 0; }
+.dg-way-fname { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.dg-way-fsize { color: var(--grey); flex-shrink: 0; text-align: right; }
+/* The one action when a run produced several files: an archive, so a six-file Way is one click. */
+.dg-way-all { justify-content: center !important; font-family: inherit !important; font-weight: 500;
+  background: var(--ink) !important; color: var(--surface) !important; border: 0 !important; }
 .dg-way-out button span { color: var(--grey); flex-shrink: 0; }
+.dg-way-all span { color: var(--surface) !important; }
 
 /* Reduced motion means none (docs/ios_animation.md §6 rule 6): named here so the intent survives a selector change. */
 @media (prefers-reduced-motion: reduce) {
@@ -99,9 +108,13 @@
 .dg-rail-card:nth-child(3) { animation-delay: 80ms; }
 .dg-rail-card h2 { margin: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); font-weight: 500; }
 .dg-rail-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
-.dg-rail-card li { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.dg-rail-card li { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
 .dg-rail-card li a { font-size: 13.5px; line-height: 1.4; color: var(--ink); text-decoration: none; }
 .dg-rail-card li a:hover { text-decoration: underline; }
+.dg-rail-way { display: grid; gap: 2px; min-width: 0; }
+.dg-rail-name { font-size: 13.5px; line-height: 1.35; color: var(--ink); }
+.dg-rail-desc { font-size: 12px; line-height: 1.45; color: var(--grey); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dg-rail-rel { font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--grey); }
 .dg-rail-price { font-size: 12px; color: var(--grey); flex-shrink: 0; }
 .dg-rail-muted { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--grey); }
 .dg-rail-ad { border-style: dashed; }

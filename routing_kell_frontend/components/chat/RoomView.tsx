@@ -1083,9 +1083,25 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
    * True while the room is showing its run: arriving with `?way=` (the Way page and the paid page both do), or when
    * the room reports it has a run at all. It starts true for a `?way=` arrival so the pane never flashes an empty
    * conversation first, and `WayRunPanel` sets it false via `onNothing` if there is no Way after all.
+   *
+   * Only the room the URL asked for starts as a Way. Keyed on `[roomWayId, room]` it re-armed itself on EVERY room
+   * change, so switching to General still drew the Way panel and the room could not be left (2026-11-23).
    */
   const [roomIsWay, setRoomIsWay] = useState(() => Boolean(roomWayId));
-  useEffect(() => { setRoomIsWay(Boolean(roomWayId)); }, [roomWayId, room]);
+  /** The device's name for the room that arrived with `?way=`, once sync has resolved it. */
+  const [wayRoomName, setWayRoomName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!roomWayId) { setRoomIsWay(false); return; }
+    // Resolve the Way's room to a name exactly once, then keep the Way WITH that room: switching to General must
+    // leave it behind. Keyed on the URL alone it re-armed on every room change and the room could not be left.
+    if (wayRoomName === null) {
+      const resolved = wantedRoomId ? Object.keys(info).find((n) => info[n]?.id === wantedRoomId) : room;
+      if (resolved) setWayRoomName(resolved);
+      setRoomIsWay(true);                 // the arrival room itself, before its name is known
+      return;
+    }
+    setRoomIsWay(room === wayRoomName);
+  }, [roomWayId, room, wantedRoomId, wayRoomName, info]);
 
   /**
    * Arriving from `/chat?room=<id>`: switch to that room once sync has told us its name.
@@ -1094,11 +1110,20 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
    * now equals the name it wanted. If the id never appears -- a room from another device, or a deleted one -- the
    * person stays where they are rather than being shown a room that does not exist.
    */
+  /**
+   * Arriving from `/chat?room=<id>`: switch to that room once sync has told us its name, and then forget about it.
+   *
+   * It must apply ONCE. As an invariant it re-ran on every `info`/`room` change and dragged the person back to the
+   * Way's room the moment they clicked anything else -- "I'm not able to switch back to general" (2026-11-23). A
+   * URL that is still in the address bar is a record of how you got here, not a standing instruction.
+   */
+  const wantedRoomDone = useRef(false);
   useEffect(() => {
-    if (!wantedRoomId) return;
+    if (!wantedRoomId || wantedRoomDone.current) return;
     const name = Object.keys(info).find((n) => info[n]?.id === wantedRoomId);
-    if (!name || name === room) return;
-    // A room the server lists but this device has not named yet: add it before switching, or the switch is ignored.
+    if (!name) return;
+    wantedRoomDone.current = true;
+    if (name === room) return;
     setRoomList((l) => (l.rooms.includes(name) ? { ...l, current: name } : { rooms: [...l.rooms, name], current: name }));
   }, [wantedRoomId, info, room]);
   // A room shows "no messages yet" only once its history could have arrived: saved on this device, or from the account (a few seconds at

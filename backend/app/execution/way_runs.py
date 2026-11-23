@@ -368,7 +368,18 @@ async def _collect_artifacts(step: dict, run: dict, output: str, entry: dict) ->
 
 
 def _stored_artifacts(outputs: Any) -> list[dict]:
-    """Every file a run kept, read back out of the persisted step entries."""
+    """Every file a run kept, read back out of the persisted step entries.
+
+    Accepts JSON TEXT as well as a list: rows written before 2026-11-23 stored `outputs` as a quoted string
+    (`"[]"` -- see `_jsonable`), so a run that produced four files reported none, and the pane offered no download.
+    `_load` decodes it, but `view()` is also called with a hand-built dict by some callers, so the decode belongs
+    here too -- this is the function that decides whether a buyer can download what they paid for.
+    """
+    if isinstance(outputs, str):
+        try:
+            outputs = json.loads(outputs)
+        except ValueError:
+            return []
     found: list[dict] = []
     for o in outputs if isinstance(outputs, list) else []:
         for a in (o.get("files") or []) if isinstance(o, dict) else []:

@@ -38,6 +38,7 @@ type RunState = {
 }
 type Output = { order: number; title: string; output: string }
 type FileOut = { name: string; size_bytes?: number; url: string }
+type Refused = { name: string; why: string }
 
 async function call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const token = await getAccessToken()
@@ -77,6 +78,8 @@ export default function WayRunPanel({
   const [steps, setSteps] = useState<StepDef[]>([])
   const [outputs, setOutputs] = useState<Output[]>([])
   const [files, setFiles] = useState<FileOut[]>([])
+  const [refused, setRefused] = useState<Refused[]>([])
+  const [downloadAllUrl, setDownloadAllUrl] = useState<string>("")
   const [values, setValues] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -91,10 +94,16 @@ export default function WayRunPanel({
       const r = await call<RunState>(`/v1/rooms/${encodeURIComponent(roomId)}/run`)
       setView(r)
       if (r.run?.run_id) {
-        const full = await call<{ outputs?: Output[]; artifacts?: FileOut[] }>(
-          `/v1/goals/runs/${encodeURIComponent(r.run.run_id)}`)
+        const full = await call<{
+          outputs?: Output[]
+          artifacts?: FileOut[]
+          artifacts_refused?: Refused[]
+          download_all?: string
+        }>(`/v1/goals/runs/${encodeURIComponent(r.run.run_id)}`)
         setOutputs(full.outputs || [])
         setFiles(full.artifacts || [])
+        setRefused(full.artifacts_refused || [])
+        setDownloadAllUrl(full.download_all || "")
       }
       if (r.submission_id && !wayId) {
         // The room knows its Way even when the URL did not say so: one read, then the step list is real.
@@ -122,6 +131,19 @@ export default function WayRunPanel({
       .then((r) => setSteps(r.steps || []))
       .catch(() => { /* information only */ })
   }, [wayId])
+
+  async function downloadZip() {
+    if (!downloadAllUrl) return
+    setBusy(true)
+    setError(null)
+    try {
+      await downloadArtifact(downloadAllUrl, "way-output.zip")
+    } catch (e) {
+      setError(String((e as Error)?.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function resume() {
     if (!roomId) return
@@ -304,9 +326,34 @@ export default function WayRunPanel({
             {files.map((f) => (
               <li key={f.name}>
                 <button type="button" onClick={() => void downloadArtifact(f.url, f.name)}>
-                  {f.name}
-                  {f.size_bytes != null && <span>{Math.max(1, Math.round(f.size_bytes / 1024))} KB</span>}
+                  <span className="dg-way-fname">{f.name}</span>
+                  {f.size_bytes != null && <span className="dg-way-fsize">{Math.max(1, Math.round(f.size_bytes / 1024))} KB</span>}
                 </button>
+              </li>
+            ))}
+          </ul>
+          {files.length > 1 && (
+            <button
+              type="button"
+              className="dg-way-all"
+              disabled={busy}
+              onClick={() => void downloadZip()}
+            >
+              Download all ({files.length})
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Files the run refused, and why. Without this a missing `.tex` looks like a bug rather than a cut-off reply. */}
+      {refused.length > 0 && (
+        <div className="dg-way-out">
+          <h3>Not kept</h3>
+          <ul>
+            {refused.map((r) => (
+              <li key={r.name}>
+                <span className="dg-way-fname">{r.name}</span>
+                <span className="dg-way-fsize">{r.why}</span>
               </li>
             ))}
           </ul>
