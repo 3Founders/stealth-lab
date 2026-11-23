@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Composer from "@/components/chat/Composer";
+import RoomRail from "@/components/chat/RoomRail";
 import OnboardButton from "@/components/chat/OnboardButton";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
 import { quoteText, withReplyContext } from "@/lib/chat/reply";
@@ -1043,6 +1044,22 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // Who is in this room (once it exists on your account). Changing them happens in Manage rooms.
   const synced = info[room] !== undefined;
+
+  /**
+   * The Way this room is running, when the person arrived from one (`/chat?room=…&way=…`).
+   *
+   * Read from the URL rather than from room state: the room row knows its `way_submission_id`, but this component
+   * receives room *names*, not that projection, and inventing a fetch here would be a second source of truth. Absent
+   * is honest — the rail then shows its advertising slot and says there is nothing to relate yet.
+   */
+  const roomWayId = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return new URLSearchParams(window.location.search).get("way") || "";
+    } catch {
+      return "";
+    }
+  }, []);
   // A room shows "no messages yet" only once its history could have arrived: saved on this device, or from the account (a few seconds at
   // most). Before, every room said "No messages in General yet" for about 3 s and then filled in (2026-11-05).
   const [waited, setWaited] = useState<Record<string, boolean>>({});
@@ -1748,8 +1765,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         />
       )}
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
-        <header className="dg-head">
-          <HamburgerMenu onTemporary={newTemporary} onSubmitWay={() => setSubmitOpen(true)} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
+        <header className="dg-head">          <HamburgerMenu onTemporary={newTemporary} onSubmitWay={() => setSubmitOpen(true)} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r),
               onRead: (id) => setNotes((p) => p.filter((n) => n.id !== id)),
               onClear: () => { closeAllOs(); setNotes([]); } }}
@@ -1846,6 +1862,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           </div>)}
         <Composer onEscape={replyingTo ? () => setReplyingTo(null) : editing ? () => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); } : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} procedureMode={procMode} onProcedureMode={chooseProcMode} />
       </section>
+      {/* The room's right rail: other Ways for this goal, and a labelled advertising slot (owner, 2026-11-23: the
+          right-panel components belong in the room's sidebar, not on a separate page). */}
+      <RoomRail wayId={roomWayId || undefined} roomId={info[room]?.id} />
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
       <input ref={encFile} type="file" accept=".kellbackup,application/json" hidden onChange={(e) => void restoreEncrypted(e)} />
       {settings.open && (

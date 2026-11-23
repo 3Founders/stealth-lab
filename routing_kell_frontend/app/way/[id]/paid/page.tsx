@@ -94,7 +94,7 @@ export default function PaidPage() {
         if (live) {
           setRoom({
             room_id: body.room_id,
-            href: `/chat/present?room=${encodeURIComponent(body.room_id)}&way=${encodeURIComponent(id)}`,
+            href: `/chat?room=${encodeURIComponent(body.room_id)}&way=${encodeURIComponent(id)}`,
           });
         }
       } catch (e) {

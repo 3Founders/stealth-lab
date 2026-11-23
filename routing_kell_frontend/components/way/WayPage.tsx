@@ -867,7 +867,7 @@ function OpenInRoom({ wayId }: { wayId: string }) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body?.error?.message || body?.error || `the server answered ${res.status}`);
         if (live) {
-          setHref(`/chat/present?room=${encodeURIComponent(body.room_id)}&way=${encodeURIComponent(wayId)}`);
+          setHref(`/chat?room=${encodeURIComponent(body.room_id)}&way=${encodeURIComponent(wayId)}`);
         }
       } catch (e) {
         if (live) setError(String((e as Error)?.message || e));

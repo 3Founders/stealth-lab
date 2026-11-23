@@ -1,8 +1,30 @@
 /* The Chat sandbox: a chat shell in the console's own palette (paper, ink, yellow, cobalt). Scoped by the dg- prefix. */
 .dg-page { /* spring timing functions and durations (--dg-micro, --dg-smooth, --dg-bouncy, each with -d) are set inline from lib/chat/spring.ts */
   --dg-micro: cubic-bezier(.22, 1, .36, 1); --dg-micro-d: 160ms; --dg-smooth: cubic-bezier(.22, 1, .36, 1); --dg-smooth-d: 300ms; --dg-bouncy: cubic-bezier(.34, 1.4, .64, 1); --dg-bouncy-d: 360ms; interpolate-size: allow-keywords; /* the chat takes the window: the site nav floats above, the page has no heading of its own */ padding: 24px var(--pad); }
-.dg-shell { min-height: 0; display: grid; grid-template-columns: 260px 1fr; grid-template-rows: minmax(0, 1fr); border: 0; border-radius: 0; overflow: hidden; background: var(--surface); font-size: 15px; }
+.dg-shell { min-height: 0; display: grid; grid-template-columns: 260px 1fr auto; grid-template-rows: minmax(0, 1fr); border: 0; border-radius: 0; overflow: hidden; background: var(--surface); font-size: 15px; }
 .dg-shell { transition: box-shadow var(--dg-smooth-d) var(--dg-smooth); }
+
+/* The room's right rail (components/chat/RoomRail.tsx): other Ways for this goal, and a labelled ad slot. It is a
+   third column of dg-shell, hidden below 1100px where the middle pane needs the width. */
+.dg-rail { display: grid; gap: 12px; align-content: start; padding: 14px 14px 14px 0; width: 280px; overflow-y: auto; }
+.dg-rail-card { border: 1px solid var(--rule); border-radius: 10px; padding: 12px; background: var(--surface); display: grid; gap: 8px; }
+.dg-rail-card h2 { margin: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); font-weight: 500; }
+.dg-rail-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.dg-rail-card li { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.dg-rail-card li a { font-size: 13.5px; line-height: 1.4; color: var(--ink); text-decoration: none; }
+.dg-rail-card li a:hover { text-decoration: underline; }
+.dg-rail-price { font-size: 12px; color: var(--grey); flex-shrink: 0; }
+.dg-rail-muted { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--grey); }
+.dg-rail-ad { border-style: dashed; }
+.dg-rail-ad-h { margin: 0; font-size: 13px; font-weight: 500; }
+.dg-rail-ad-link { font-size: 12.5px; color: var(--grey); }
+.dg-rail-ad-link:hover { color: var(--ink); }
+
+@media (max-width: 1100px) {
+  .dg-rail { display: none; }
+  .dg-shell, .dg-shell[data-panel="closed"] { grid-template-columns: 260px 1fr; }
+  .dg-shell[data-panel="closed"] { grid-template-columns: 0 1fr; }
+}
 .dg-shell[data-paused="true"] { box-shadow: inset 0 3px 0 #b3261e; }
 
 .dg-side { background: var(--paper); border-right: 1px solid var(--rule); padding: 14px 12px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; min-height: 0; }
@@ -1786,3 +1808,4 @@ span.dg-replyq { cursor: default; }
   :root:not([data-theme="light"]) .dg-page .dg-search-list li[data-active="true"],
   :root:not([data-theme="light"]) .dg-page .dg-search-list li:hover { background: var(--yellow); }
 }
+.dg-rail-file { font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 6px 10px; color: var(--ink); cursor: pointer; text-align: left; width: 100%; }
