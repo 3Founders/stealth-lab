@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Composer from "@/components/chat/Composer";
 import RoomRail from "@/components/chat/RoomRail";
+import WayRunPanel from "@/components/chat/WayRunPanel";
 import OnboardButton from "@/components/chat/OnboardButton";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
 import { quoteText, withReplyContext } from "@/lib/chat/reply";
@@ -1060,6 +1061,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       return "";
     }
   }, []);
+  /**
+   * Whether the middle pane is this Way's run instead of the conversation.
+   *
+   * True while the room is showing its run: arriving with `?way=` (the Way page and the paid page both do), or when
+   * the room reports it has a run at all. It starts true for a `?way=` arrival so the pane never flashes an empty
+   * conversation first, and `WayRunPanel` sets it false via `onNothing` if there is no Way after all.
+   */
+  const [roomIsWay, setRoomIsWay] = useState(() => Boolean(roomWayId));
+  useEffect(() => { setRoomIsWay(Boolean(roomWayId)); }, [roomWayId, room]);
   // A room shows "no messages yet" only once its history could have arrived: saved on this device, or from the account (a few seconds at
   // most). Before, every room said "No messages in General yet" for about 3 s and then filled in (2026-11-05).
   const [waited, setWaited] = useState<Record<string, boolean>>({});
@@ -1787,6 +1797,21 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         {tempRef.current.has(room) && <div className="dg-temp-note" role="status">Temporary chat: not saved, not synced, and gone when you close this page.</div>}
         {paused && <div className="dg-banner" role="status">Paused. Agents in this tab will not be woken until you resume.</div>}
 
+        {/* A room that belongs to a Way is the Way: the middle pane is its steps and its Start button, and the
+            conversation (empty, and not what the person came for) is not drawn. Owner, 2026-11-23: "move the start
+            and steps button in the central pane, where we would have had a chat, remove that chat entirely if it is
+            a task". `roomIsWay` flips back to false when the room turns out not to be a Way, so an ordinary room is
+            never left staring at a blank pane. */}
+        {roomIsWay && (
+          <WayRunPanel
+            roomId={info[room]?.id}
+            wayId={roomWayId || undefined}
+            title={shownName(room)}
+            onNothing={() => setRoomIsWay(false)}
+          />
+        )}
+
+        {!roomIsWay && (<>
         <MessageScroller.Provider autoScroll={false} defaultScrollPosition="end">
           <MessageScroller.Root className="dg-scroll">
             <MessageScroller.Viewport ref={viewportRef} data-lenis-prevent className="dg-viewport" aria-label={`Messages in ${room}`}>
@@ -1861,6 +1886,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <button type="button" aria-label="Cancel the reply" title="Cancel the reply" onClick={() => setReplyingTo(null)}>×</button>
           </div>)}
         <Composer onEscape={replyingTo ? () => setReplyingTo(null) : editing ? () => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); } : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} procedureMode={procMode} onProcedureMode={chooseProcMode} />
+        </>)}
       </section>
       {/* The room's right rail: other Ways for this goal, and a labelled advertising slot (owner, 2026-11-23: the
           right-panel components belong in the room's sidebar, not on a separate page). */}

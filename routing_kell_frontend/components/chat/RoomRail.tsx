@@ -16,7 +16,6 @@ import { useEffect, useState } from "react"
 
 import { MCP_ORIGIN } from "@/lib/connector"
 import { getAccessToken } from "@/lib/session"
-import WayRunPanel from "@/components/chat/WayRunPanel"
 
 type Related = { id: string; goal_name: string; price_paise?: number | null }
 type FileOut = { name: string; size_bytes?: number; url: string }
@@ -56,8 +55,8 @@ export default function RoomRail({ wayId, roomId }: { wayId?: string; roomId?: s
 
   return (
     <aside className="dg-rail" aria-label="More Ways">
-      {/* The run itself is a control surface, not a transcript: steps, inputs, and the files it produced. */}
-      <WayRunPanel roomId={roomId} wayId={wayId} />
+      {/* The run is NOT here. It is the room's main pane when the room belongs to a Way (WayRunPanel in RoomView);
+          the rail keeps discovery only. It was here until 2026-11-23 and nobody could find Start. */}
       <section className="dg-rail-card">
         <h2>More like this</h2>
         {!loaded ? (

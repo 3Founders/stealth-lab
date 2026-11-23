@@ -1,15 +1,14 @@
 "use client"
 /**
- * A Way's run, as a control surface in the room's right rail.
+ * A Way's run, as the room's MAIN pane.
  *
- * Researched before building (2026-11-23): the guidance is consistent that chat is for conversation and a
- * multi-step run needs a **persistent status surface** beside it — "chat excels at goal-setting but struggles with
- * ongoing visibility", and an inline card should stay small (≤2 actions, no nested scrolling, ≤4–5 data points).
+ * This was the right rail until the owner ran a Way and could not find Start (2026-11-23): the run sat in a 280px
+ * column beside a conversation that was empty, while the middle of the screen said nothing. So when a room belongs
+ * to a Way, the Way IS the room: the middle pane is the steps, the Start button, the progress and the output, and the
+ * chat composer is hidden. A room that is not a Way renders the conversation exactly as before.
  *
- * So the run is not rendered as a takeover of the transcript. It lives here: a checklist of the steps, the one that
- * is running, the inputs it needs, and the files it produced. The room's messages stay messages.
- *
- * It does not start by itself: a person who arrives from a purchase reads what the Way needs, then presses Start.
+ * The earlier research still holds and is why this is a checklist rather than a wizard: start with the list, expand
+ * a step in place. What changed is the placement, not the shape -- a status surface a person cannot find is not one.
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 
@@ -23,6 +22,8 @@ type RunState = {
   state: "needs_inputs" | "ready" | "running" | "done" | "failed" | "no_way" | "cancelled"
   run: { run_id: string; status: string } | null
   inputs: InputDef[]
+  /** The room knows which Way it is for, so a /chat?room=... link works without &way=... */
+  submission_id?: string
 }
 type Output = { order: number; title: string; output: string }
 type FileOut = { name: string; size_bytes?: number; url: string }
@@ -44,12 +45,23 @@ async function call<T>(path: string, init?: { method?: string; body?: unknown })
 }
 
 function rupees(paise?: number | null): string {
-  if (paise == null || !Number.isFinite(paise)) return "—"
+  if (paise == null || !Number.isFinite(paise)) return ""
   const r = paise / 100
   return `₹${Number.isInteger(r) ? r.toLocaleString("en-IN") : r.toFixed(2)}`
 }
 
-export default function WayRunPanel({ roomId, wayId }: { roomId?: string; wayId?: string }) {
+/** `onNothing` lets the room reclaim the middle pane when it turns out this room is not a Way after all. */
+export default function WayRunPanel({
+  roomId,
+  wayId,
+  title,
+  onNothing,
+}: {
+  roomId?: string
+  wayId?: string
+  title?: string
+  onNothing?: () => void
+}) {
   const [view, setView] = useState<RunState | null>(null)
   const [steps, setSteps] = useState<StepDef[]>([])
   const [outputs, setOutputs] = useState<Output[]>([])
@@ -57,7 +69,6 @@ export default function WayRunPanel({ roomId, wayId }: { roomId?: string; wayId?
   const [values, setValues] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [openInputs, setOpenInputs] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const load = useCallback(async () => {
@@ -71,17 +82,22 @@ export default function WayRunPanel({ roomId, wayId }: { roomId?: string; wayId?
         setOutputs(full.outputs || [])
         setFiles(full.artifacts || [])
       }
+      if (r.submission_id && !wayId) {
+        // The room knows its Way even when the URL did not say so: one read, then the step list is real.
+        void call<{ steps: StepDef[] }>(`/v1/goals/submissions/${encodeURIComponent(r.submission_id)}/steps/cost`)
+          .then((c) => setSteps(c.steps || []))
+          .catch(() => { /* the estimate is information; its absence must not break the run */ })
+      }
     } catch (e) {
       setError(String((e as Error)?.message || e))
     }
-  }, [roomId])
+  }, [roomId, wayId])
 
   useEffect(() => { void load() }, [load])
 
   // While a run is going, keep the panel current without the person reloading. Stops as soon as it finishes.
   useEffect(() => {
-    const running = view?.state === "running"
-    if (!running) return
+    if (view?.state !== "running") return
     timer.current = setTimeout(() => void load(), 3000)
     return () => { if (timer.current) clearTimeout(timer.current) }
   }, [view, load])
@@ -90,7 +106,7 @@ export default function WayRunPanel({ roomId, wayId }: { roomId?: string; wayId?
     if (!wayId) return
     void call<{ steps: StepDef[] }>(`/v1/goals/submissions/${encodeURIComponent(wayId)}/steps/cost`)
       .then((r) => setSteps(r.steps || []))
-      .catch(() => { /* the estimate is information; its absence must not break the run */ })
+      .catch(() => { /* information only */ })
   }, [wayId])
 
   async function start() {
@@ -102,7 +118,6 @@ export default function WayRunPanel({ roomId, wayId }: { roomId?: string; wayId?
         method: "POST",
         body: { submission_id: wayId, values },
       })
-      setOpenInputs(false)
       await load()
     } catch (e) {
       setError(String((e as Error)?.message || e))
@@ -111,94 +126,113 @@ export default function WayRunPanel({ roomId, wayId }: { roomId?: string; wayId?
     }
   }
 
-  if (!roomId) return null
-
-  // Nothing to show when the room is not running a Way: the rail keeps its other cards rather than an empty one.
-  if (!view) return null
-  if (view.state === "no_way") return null
+  if (!roomId) { onNothing?.(); return null }
+  if (view && view.state === "no_way") { onNothing?.(); return null }
 
   const done = outputs.length
   const total = steps.length || 0
   const pct = total ? Math.round((done / total) * 100) : 0
+  const running = view?.state === "running"
+  const finished = view?.state === "done" || view?.state === "failed"
+
+  // A step is "done" once the run has an output for it; "running" while it is the next one and the run is going.
+  const stateOf = (order: number) => {
+    if (outputs.some((o) => o.order === order)) return "done"
+    if (running && steps[done]?.order === order) return "running"
+    return "waiting"
+  }
 
   return (
-    <section className="dg-rail-card" aria-label="This Way">
-      <h2>This Way</h2>
+    <section className="dg-way-main" aria-label={title ? `${title}: steps and run` : "Way run"}>
+      <header className="dg-way-head">
+        <h2>{title || "This Way"}</h2>
+        {total > 0 && <p className="dg-way-sub">{done} of {total} steps done{finished ? " · finished" : ""}</p>}
+      </header>
 
-      {view.state === "needs_inputs" && (
-        <div className="dg-run-panel">
-          <p className="dg-rail-muted">It needs {view.inputs.length} answer{view.inputs.length === 1 ? "" : "s"} before it can start.</p>
-          {openInputs ? (
-            <ul className="dg-run-inputs">
-              {view.inputs.map((i) => (
-                <li key={`${i.step}.${i.key}`}>
-                  <label htmlFor={`ri-${i.step}-${i.key}`}>
-                    {i.label}
-                    <span className="dg-run-which">step {i.step}</span>
-                  </label>
-                  <input
-                    id={`ri-${i.step}-${i.key}`}
-                    value={values[`${i.step}.${i.key}`] || ""}
-                    onChange={(e) => setValues((v) => ({ ...v, [`${i.step}.${i.key}`]: e.target.value }))}
-                    required={i.required}
-                  />
-                  {i.help && <span className="dg-rail-muted">{i.help}</span>}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <button
-            type="button"
-            className="dg-run-cta"
-            disabled={busy}
-            onClick={() => (openInputs ? void start() : setOpenInputs(true))}
-          >
-            {openInputs ? (busy ? "Starting…" : "Start") : "Answer to start"}
-          </button>
+      {total > 0 && (
+        <div className="dg-way-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+          {/* scaleX, not width: a width change is layout every frame (docs/ios_animation.md §6 rule 1). */}
+          <span style={{ transform: `scaleX(${pct / 100})` }} />
         </div>
       )}
 
-      {view.state === "ready" && (
-        <div className="dg-run-panel">
-          <p className="dg-rail-muted">{total ? `${total} steps, one at a time.` : "Ready when you are."}</p>
-          <button type="button" className="dg-run-cta" disabled={busy} onClick={() => void start()}>
-            {busy ? "Starting…" : "Start"}
-          </button>
-        </div>
-      )}
+      {!view && <p className="dg-way-note" role="status">Reading this Way…</p>}
 
-      {(view.state === "running" || view.state === "done" || view.state === "failed") && (
-        <div className="dg-run-panel">
-          <div className="dg-run-progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-            {/* scaleX, not width: a width change repaints every frame (docs/ios_animation.md §6 rule 1). */}
-            <span style={{ transform: `scaleX(${pct / 100})` }} />
-          </div>
-          <p className="dg-rail-muted">{done} of {total || "?"} steps done</p>
-          <ol className="dg-run-steps">
-            {outputs.map((o) => (
-              <li key={o.order} data-done="true">
-                <span className="dg-run-n">{o.order}</span>
-                <span>{o.title}</span>
+      {view?.state === "needs_inputs" && (
+        <div className="dg-way-inputs">
+          <p className="dg-way-note">
+            {view.inputs.length} answer{view.inputs.length === 1 ? "" : "s"} before it can start.
+          </p>
+          <ul>
+            {view.inputs.map((i) => (
+              <li key={`${i.step}.${i.key}`}>
+                <label htmlFor={`wi-${i.step}-${i.key}`}>
+                  {i.label}
+                  <span className="dg-way-stepof">step {i.step}</span>
+                </label>
+                <input
+                  id={`wi-${i.step}-${i.key}`}
+                  value={values[`${i.step}.${i.key}`] || ""}
+                  onChange={(e) => setValues((v) => ({ ...v, [`${i.step}.${i.key}`]: e.target.value }))}
+                  required={i.required}
+                />
+                {i.help && <span className="dg-way-note">{i.help}</span>}
               </li>
             ))}
-            {view.state === "running" && total > done && steps[done] && (
-              <li data-running="true">
-                <span className="dg-run-n">{steps[done].order}</span>
-                <span>{steps[done].title}</span>
-              </li>
-            )}
-          </ol>
-          {error && <p className="dg-rail-muted">{error}</p>}
+          </ul>
         </div>
       )}
 
+      {total > 0 && (
+        <ol className="dg-way-steps">
+          {steps.map((s) => {
+            const st = stateOf(s.order)
+            const price = s.price_high_paise ? rupees(s.price_high_paise) : ""
+            return (
+              <li key={s.order} data-state={st} data-human={s.is_human ? "true" : "false"}>
+                <span className="dg-way-n" aria-hidden="true">{st === "done" ? "✓" : s.order}</span>
+                <span className="dg-way-title">{s.title}</span>
+                {s.is_human && <span className="dg-way-kind">you</span>}
+                {price && st === "waiting" && <span className="dg-way-price">{price}</span>}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+
+      {view?.state !== "running" && !finished && (
+        <div className="dg-way-act">
+          <button type="button" className="dg-way-start" disabled={busy || !view} onClick={() => void start()}>
+            {busy ? "Starting…" : view?.state === "needs_inputs" ? "Start with these answers" : "Start"}
+          </button>
+          <p className="dg-way-note">
+            {view?.state === "needs_inputs"
+              ? "A human step pauses the run and waits for you."
+              : "It runs one step at a time; a human step pauses and waits for you."}
+          </p>
+        </div>
+      )}
+
+      {finished && (
+        <div className="dg-way-act">
+          <p className="dg-way-note">
+            {view?.state === "done" ? "Finished." : "Stopped with a failure — the steps below show how far it got."}
+          </p>
+        </div>
+      )}
+
+      {error && <p className="dg-way-error" role="alert">{error}</p>}
+
       {files.length > 0 && (
-        <div className="dg-run-panel">
-          <p className="dg-rail-h">Output</p>
-          <ul className="dg-run-files">
+        <div className="dg-way-out">
+          <h3>Output</h3>
+          <ul>
             {files.map((f) => (
               <li key={f.name}>
-                <button type="button" onClick={() => void downloadArtifact(f.url, f.name)}>{f.name}</button>
+                <button type="button" onClick={() => void downloadArtifact(f.url, f.name)}>
+                  {f.name}
+                  {f.size_bytes != null && <span>{Math.max(1, Math.round(f.size_bytes / 1024))} KB</span>}
+                </button>
               </li>
             ))}
           </ul>
