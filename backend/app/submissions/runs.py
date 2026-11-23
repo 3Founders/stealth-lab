@@ -299,7 +299,8 @@ async def _run_script(step: dict, run: dict) -> str:
     from app.submissions.artifacts import parse_captured, produced_names
 
     wanted = produced_names(step)
-    # And files it imports are written in before its script runs, so a step can read an earlier step's output.
+    # And files it imports are written in before its script runs, so a step can read an earlier step's output. Inputs
+    # the person supplied are written too, under the name the author declared (site: present, run in a room).
     from app.execution.way_runs import imported_bodies
 
     bodies, missing = imported_bodies(run, step)
@@ -308,6 +309,16 @@ async def _run_script(step: dict, run: dict) -> str:
             f"step {step['order']} needs {', '.join(missing)}, which no earlier step produced. "
             "Name the file on the step that writes it, or drop it from this step's imports."
         )
+    from app.services import room_runs as _rr_mod
+
+    supplied = run.get("step_inputs") or {}
+    if isinstance(supplied, str):
+        try:
+            supplied = json.loads(supplied)
+        except ValueError:
+            supplied = {}
+    answers = _rr_mod.inputs_for_step(supplied if isinstance(supplied, dict) else {}, int(step["order"]))
+    bodies = {**_rr_mod.input_files(step, answers), **bodies}
     try:
         result = await sandbox.run_script(code, url, stdin=stdin, produces=wanted, imports=bodies)
     except sandbox.SandboxUnavailable as exc:

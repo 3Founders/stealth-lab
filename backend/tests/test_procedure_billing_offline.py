@@ -269,10 +269,37 @@ async def test_set_price_bounds_and_update():
     pool = AsyncMock()
     with pytest.raises(pb.PurchaseError):
         await pb.set_price(pool, procedure_row_id=ROW, price_paise=100_001)
-    pool.fetchrow.return_value = {**procedure(), "price_paise": 15000}
+    # set_price reads the version first, to refuse a Way that has never run (docs/blinkit/pricing_discussions.md D6):
+    # a measured Way prices, and the UPDATE still carries priced_at.
+    pool.fetchrow.side_effect = [
+        {**procedure(), "version": 1, "name": "A Way", "measured_runs": 1, "measured_cost_paise": 31},
+        {**procedure(), "price_paise": 15000},
+    ]
     out = await pb.set_price(pool, procedure_row_id=ROW, price_paise=15000)
     assert out["price_paise"] == 15000
     assert "priced_at = now()" in pool.fetchrow.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_set_price_refuses_a_way_that_has_never_run():
+    """The gate itself, at the level this file already tests billing at."""
+    pool = AsyncMock()
+    pool.fetchrow.side_effect = [{**procedure(), "version": 1, "name": "A Way", "measured_runs": 0,
+                                  "measured_cost_paise": None}]
+    with pytest.raises(pb.PurchaseError) as exc:
+        await pb.set_price(pool, procedure_row_id=ROW, price_paise=15000)
+    assert exc.value.status_code == 409 and "run it once" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_un_pricing_a_way_never_needs_a_measurement():
+    pool = AsyncMock()
+    pool.fetchrow.side_effect = [
+        {**procedure(), "version": 1, "name": "A Way", "measured_runs": 0, "measured_cost_paise": None},
+        {**procedure(), "price_paise": None},
+    ]
+    out = await pb.set_price(pool, procedure_row_id=ROW, price_paise=None)
+    assert out["price_paise"] is None
 
 
 @pytest.mark.asyncio

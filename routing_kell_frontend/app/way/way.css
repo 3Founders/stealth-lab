@@ -89,10 +89,10 @@
 /* 4. Decomposition ---------------------------------------------------------- */
 .kwm-steps { list-style: none; display: grid; gap: 0; margin-top: 4px; }
 .kwm-step { position: relative; display: grid; grid-template-columns: 26px 1fr; gap: 12px; padding: 0 0 18px; }
-/* The rail: one line joining the dots, drawn by each item for the one below it. */
-.kwm-step::before { content: ""; position: absolute; left: 12px; top: 22px; bottom: 0; width: 1px; background: var(--rule); }
+/* The line joining the dots was removed (2026-11-23): the dots and the step numbers already say the order, so it
+   only added weight. `content: none` keeps the rule visible rather than deleting it, so the intent is on record. */
+.kwm-step::before { content: none; }
 .kwm-step:last-child { padding-bottom: 0; }
-.kwm-step:last-child::before { display: none; }
 .kwm-dot { width: 9px; height: 9px; border-radius: 50%; margin: 7px 0 0 8px; background: var(--ink); border: 1.5px solid var(--ink); z-index: 1; }
 .kwm-step[data-kind="human"] .kwm-dot { background: var(--surface); }
 .kwm-step[data-status="rejected"] .kwm-dot { background: var(--surface); border-color: var(--ink); box-shadow: 0 0 0 3px var(--soft); }

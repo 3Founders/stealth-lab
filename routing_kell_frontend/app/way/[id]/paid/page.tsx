@@ -67,6 +67,43 @@ export default function PaidPage() {
     };
   }, [id]);
 
+  /**
+   * Once the payment is confirmed, open the room that runs it.
+   *
+   * The room is created here and NOT started: a person who lands on a paid page should see what the Way needs
+   * before anything spends their run. The run begins when they press Start inside the room.
+   */
+  const [room, setRoom] = useState<{ room_id: string; href: string } | null>(null);
+  const [roomError, setRoomError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (confirm !== "paid" || !id || room) return;
+    let live = true;
+    void (async () => {
+      try {
+        const token = await getAccessToken();
+        if (!token) return;
+        const res = await fetch(`${MCP_ORIGIN}/v1/rooms/from-way`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json",
+                     Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ submission_id: id }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error?.message || body?.error || `the server answered ${res.status}`);
+        if (live) {
+          setRoom({
+            room_id: body.room_id,
+            href: `/chat/present?room=${encodeURIComponent(body.room_id)}&way=${encodeURIComponent(id)}`,
+          });
+        }
+      } catch (e) {
+        if (live) setRoomError(String((e as Error)?.message || e));
+      }
+    })();
+    return () => { live = false; };
+  }, [confirm, id, room]);
+
   const wayHref = `/way/${encodeURIComponent(id)}`;
   const runHref = `${wayHref}#kwm-run-h`;
   const signInHref = `/sign-in?redirect=${encodeURIComponent(`/way/${id}/paid`)}`;
@@ -82,11 +119,20 @@ export default function PaidPage() {
         <article className="kwm-paid-card">
           <h2>Do it on the website</h2>
           <p>
-            Run it here. You answer only the inputs and questions this Way declares; nothing else is
-            needed.
+            Run it here, step by step. You answer only the inputs this Way asks for; the run starts when you
+            say so, and nothing is spent until then.
           </p>
           {confirm === "paid" ? (
-            <Link className="kwm-cta" href={runHref}>Open the run</Link>
+            room ? (
+              <Link className="kwm-cta" href={room.href}>Open it in kell</Link>
+            ) : roomError ? (
+              <p className="kwm-small kwm-muted">
+                The room could not be opened: {roomError}{" "}
+                <Link href={wayHref}>Open the Way</Link>
+              </p>
+            ) : (
+              <p className="kwm-small kwm-muted" role="status">Opening a room for this Way…</p>
+            )
           ) : confirm === "signin" ? (
             <Link className="kwm-cta" href={signInHref}>Sign in to run it</Link>
           ) : confirm === "slow" ? (

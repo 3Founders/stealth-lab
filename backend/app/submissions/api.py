@@ -323,6 +323,108 @@ async def my_runs(pool: Any, owner_id: str, *, open_only: bool = True) -> list[d
     return await way_runs.mine(pool, owner_id, open_only=open_only)
 
 
+async def related_ways(pool: Any, submission_id: str, *, limit: int = 6) -> dict[str, list[dict]]:
+    """Ways related to this one, in two buckets the page labels separately.
+
+    - **follows**: Ways that claim to apply after this one. There is no succession edge in the schema yet, so this
+      is the honest approximation — another Way toward the same goal, or one published by the same author, that is
+      not this Way. It is labelled "often done next", never "the next step", because kell cannot yet know.
+    - **similar**: other published Ways toward the same goal.
+
+    Both are discovery only. Nothing here is ranked by popularity: the ordering is the goal match, then recency.
+    """
+    row = await pool.fetchrow(
+        """SELECT g.id::text AS id, g.goal_id::text AS goal_id, g.owner_id,
+                  g.parent_procedure_id::text AS parent
+           FROM goal_submissions g WHERE g.id::text = $1""", str(submission_id))
+    if row is None:
+        return {"follows": [], "similar": []}
+
+    async def fetch(sql: str, *args) -> list[dict]:
+        try:
+            rows = await pool.fetch(sql, *args)
+        except Exception:  # noqa: BLE001 -- a rail that cannot read must not take the page down
+            return []
+        return [{"id": r["id"], "goal_name": r["goal_name"], "price_paise": r["price_paise"],
+                 "parent_procedure_id": r["parent"]} for r in rows]
+
+    similar = await fetch(
+        """SELECT g.id::text AS id, g.goal_name, p.price_paise, g.parent_procedure_id::text AS parent
+           FROM goal_submissions g
+           LEFT JOIN procedures p ON p.id = g.parent_procedure_id AND p.t_invalid IS NULL
+           WHERE g.status IN ('approved', 'ai_approved') AND g.id <> $1::uuid
+             AND g.goal_id IS NOT DISTINCT FROM $2::uuid
+           ORDER BY g.created_at DESC LIMIT $3""",
+        str(submission_id), row["goal_id"], int(limit))
+
+    follows = []
+    if row["owner_id"]:
+        follows = await fetch(
+            """SELECT g.id::text AS id, g.goal_name, p.price_paise, g.parent_procedure_id::text AS parent
+               FROM goal_submissions g
+               LEFT JOIN procedures p ON p.id = g.parent_procedure_id AND p.t_invalid IS NULL
+               WHERE g.status IN ('approved', 'ai_approved') AND g.id <> $1::uuid AND g.owner_id = $2
+               ORDER BY g.created_at DESC LIMIT $3""",
+            str(submission_id), row["owner_id"], int(limit))
+
+    seen = {r["id"] for r in similar}
+    return {"follows": [f for f in follows if f["id"] not in seen], "similar": similar}
+
+
+async def step_costs(pool: Any, submission_id: str) -> dict:
+    """The Way's price split by step, so the page can show where the money goes and what a restart costs.
+
+    A restart from step N re-runs only steps N..end, so the per-step split is what makes that restart priceable
+    at all (`cost_estimate.per_step_prices` / `suffix_from`).
+    """
+    row = await pool.fetchrow(
+        "SELECT steps FROM goal_submissions WHERE id::text = $1", str(submission_id))
+    if row is None:
+        raise intake.SubmissionError("no such Way", 404)
+    steps = row["steps"]
+    if isinstance(steps, str):
+        import json as _json
+        steps = _json.loads(steps)
+    from app.submissions.cost_estimate import per_step_prices
+
+    prices = per_step_prices([s for s in (steps or []) if isinstance(s, dict)])
+    return {"steps": prices,
+            "total_price_low_paise": round(sum(p["price_low_usd"] for p in prices) * 8400),
+            "total_price_high_paise": round(sum(p["price_high_usd"] for p in prices) * 8400)}
+
+
+async def set_step_inputs(pool: Any, owner_id: str, submission_id: str, order: int, inputs: Any) -> dict:
+    """The author declares the inputs a step asks the buyer for.
+
+    Prompts are frozen for the buyer (a run cannot change them), but inputs are exactly the part a person is meant to
+    supply — so this is the author's editable surface, and the step's own `prompt` is untouched.
+    """
+    if inputs is not None and not isinstance(inputs, list):
+        raise intake.SubmissionError("inputs must be a list (or null to declare none)")
+    clean = []
+    for item in inputs or []:
+        if not isinstance(item, dict):
+            raise intake.SubmissionError("each input must be an object")
+        key = str(item.get("key") or "").strip()
+        if not key or not re.match(r"^[a-zA-Z0-9_.-]{1,64}$", key):
+            raise intake.SubmissionError("each input needs a key of letters, digits, dot, dash or underscore")
+        clean.append({"key": key, "label": str(item.get("label") or key)[:120],
+                      "required": bool(item.get("required", True)), "help": str(item.get("help") or "")[:300]})
+    owned = await pool.fetchval(
+        "SELECT 1 FROM goal_submissions WHERE id::text = $1 AND owner_id = $2", str(submission_id), str(owner_id))
+    if not owned:
+        raise intake.SubmissionError("no such Way of yours", 404)
+    import json as _json
+
+    done = await pool.fetchval(
+        """UPDATE goal_submission_steps SET inputs = $3::jsonb, updated_at = now()
+           WHERE submission_id = $1::uuid AND step_order = $2 RETURNING 1""",
+        str(submission_id), int(order), _json.dumps(clean) if clean else None)
+    if not done:
+        raise intake.SubmissionError(f"this Way has no step {order}", 404)
+    return {"order": int(order), "inputs": clean}
+
+
 async def cancel_run(pool: Any, owner_id: str, run_id: str) -> dict:
     from app.execution import way_runs
 

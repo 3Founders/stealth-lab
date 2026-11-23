@@ -280,3 +280,131 @@ def measured_after_first_run(run_outputs: Iterable[Mapping[str, Any]]) -> Option
     return {"measured": True, "steps": len(char_counts),
             "output_tokens_approx": max(1, round(total_chars / CHARS_PER_TOKEN)),
             "note": "measured from a completed run; output tokens are an approximation from its character count"}
+
+
+def _step_costs_exact(
+    steps: Iterable[Mapping[str, Any]],
+    *,
+    run_input: str = "",
+    in_rate_per_m: float = DEFAULT_IN_RATE_PER_M,
+    out_rate_per_m: float = DEFAULT_OUT_RATE_PER_M,
+    locator_rates: Optional[Mapping[str, float]] = None,
+) -> list[tuple[int, float, float]]:
+    """`[(order, cost_low_usd, cost_high_usd)]` per step, UNROUNDED, accumulating exactly as `estimate_cost` does.
+
+    One source of truth for the composition, used by both the whole-way estimate and the per-step split. Without the
+    shared loop the two would drift: `StepCost` stores 6dp for display, and summing rounded steps cannot equal the
+    unrounded total, so "the steps add up to the price" would be false by a hair that grows with step count.
+    """
+    rates = dict(LOCATOR_RATE_USD)
+    if locator_rates:
+        rates.update(locator_rates)
+    ordered = sorted((s for s in steps if isinstance(s, Mapping)),
+                     key=lambda s: int(s.get("order", s.get("step_order", 0)) or 0))
+    grown_low = grown_high = approx_tokens(run_input)
+    out: list[tuple[int, float, float]] = []
+    for i, step in enumerate(ordered, start=1):
+        order = int(step.get("order", step.get("step_order", i)) or i)
+        own = approx_tokens(_step_prompt_text(step))
+        cap = step.get("output_cap_tokens")
+        cap = int(cap) if isinstance(cap, int) and cap > 0 else DEFAULT_OUTPUT_CAP
+        out_low = max(1, round(cap * OUTPUT_LOW_FRACTION))
+        out_high = cap
+        kind = _locator_kind(step)
+        loc_usd = float(rates.get(kind, 0.0)) if kind else 0.0
+        low = ((own + grown_low) * in_rate_per_m + out_low * out_rate_per_m) / 1_000_000 + loc_usd
+        high = ((own + grown_high) * in_rate_per_m + out_high * out_rate_per_m) / 1_000_000 + loc_usd
+        out.append((order, low, high))
+        grown_low += out_low
+        grown_high += out_high
+    return out
+
+
+def per_step_prices(
+    steps: Iterable[Mapping[str, Any]],
+    *,
+    run_input: str = "",
+    retry_probability: float = DEFAULT_RETRY_PROBABILITY,
+    retry_fraction: float = DEFAULT_RETRY_FRACTION,
+    margin: float = MIN_MARGIN,
+) -> list[dict[str, Any]]:
+    """Every step's own share of the price, in order, summing exactly to the whole Way's price.
+
+    Why per step: a person can restart a run from the middle ("that step was wrong, redo it and the rest"). That
+    costs only the steps after the restart point, so the price has to be decomposable or the restart is unpriced —
+    and an unpriced re-run is exactly the kind of free money the one-run purchase exists to prevent.
+
+    The sum is exact by construction: `estimate_cost` already produces a `StepCost` per step, so the same numbers are
+    reported individually with the same retry and margin applied to each. `suffix_from()` then gives the price of a
+    restart without re-deriving the model.
+
+    A per-step price is a RANGE like the whole estimate, for the same reason: a step's output varies up to 30x.
+    """
+    if isinstance(steps, Mapping):
+        # A caller passing one step is a real mistake (a dict iterates its KEYS, silently pricing nothing), so it is
+        # accepted here rather than returning an empty list that looks like "this Way is free".
+        steps = [steps]
+    est = estimate_cost(steps, run_input=run_input, retry_probability=retry_probability,
+                        retry_fraction=retry_fraction, margin=margin)
+    mult = (1.0 + retry_probability * retry_fraction) * (1.0 + margin)
+    ordered = sorted((s for s in steps if isinstance(s, Mapping)),
+                     key=lambda s: int(s.get("order", s.get("step_order", 0)) or 0))
+    exact = _step_costs_exact(steps, run_input=run_input)
+    out: list[dict[str, Any]] = []
+    for i, sc in enumerate(est.steps):
+        src = ordered[i] if i < len(ordered) else {}
+        _, low, high = exact[i] if i < len(exact) else (sc.order, sc.cost_low_usd, sc.cost_high_usd)
+        out.append({
+            "order": sc.order,
+            "title": _step_title(src),
+            # Unrounded, so the per-step list sums to the whole price exactly. Display rounds; arithmetic must not.
+            "cost_low_usd": low,
+            "cost_high_usd": high,
+            "price_low_usd": low * mult,
+            "price_high_usd": high * mult,
+            "price_low_paise": round(low * mult * PAISE_PER_USD),
+            "price_high_paise": round(high * mult * PAISE_PER_USD),
+            "locator_kind": sc.locator_kind,
+            "produces": _produces(src),
+            "is_human": str(src.get("kind") or "") == "human",
+        })
+    return out
+
+
+def _step_title(step: Mapping[str, Any]) -> str:
+    for key in ("title", "goal", "instruction"):
+        v = step.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:160]
+    return "(untitled step)"
+
+
+def _produces(step: Mapping[str, Any]) -> list[str]:
+    p = step.get("produces")
+    if isinstance(p, str) and p.strip():
+        return [p.strip()]
+    if isinstance(p, (list, tuple)):
+        return [str(x).strip() for x in p if isinstance(x, str) and x.strip()]
+    return []
+
+
+def suffix_from(step_prices: list[dict[str, Any]], start_order: int) -> dict[str, Any]:
+    """What a restart FROM `start_order` costs: the steps from there to the end, nothing before them.
+
+    A restart does not re-pay for steps that already produced good output, so pricing it as the whole Way would
+    overcharge, and pricing it as free would let a buyer redo the expensive half for nothing. Steps before the
+    restart point are listed with `already_run: True` so the page can show the arithmetic rather than a number.
+    """
+    kept = [s for s in step_prices if int(s["order"]) >= int(start_order)]
+    low = sum(float(s["price_low_usd"]) for s in kept)
+    high = sum(float(s["price_high_usd"]) for s in kept)
+    return {
+        "from_step": int(start_order),
+        "steps": [{**s, "already_run": int(s["order"]) < int(start_order)} for s in step_prices],
+        # Unrounded, so a restart from step 1 equals the whole price and from step N equals the last N steps.
+        "price_low_usd": low,
+        "price_high_usd": high,
+        "price_low_paise": round(low * PAISE_PER_USD),
+        "price_high_paise": round(high * PAISE_PER_USD),
+        "steps_paid_for": len(kept),
+    }

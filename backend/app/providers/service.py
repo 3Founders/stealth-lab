@@ -171,6 +171,7 @@ async def call_unit(pool: Any, scope: AccessScope, unit: str, request: CallReque
     attempts: list[dict[str, Any]] = []
     first_denial: Optional[ProviderCallDenied] = None
     first_refusal: Optional[ProviderCallFailed] = None
+    started_all = time.monotonic()
     for conn, spec in _rotation(offers):
         try:
             result = await _call_one(pool, scope, unit, conn, spec, request, actor=actor, tenant_id=tenant_id,
@@ -194,6 +195,11 @@ async def call_unit(pool: Any, scope: AccessScope, unit: str, request: CallReque
             continue
         HEALTH.record_success(conn.connection_id, spec.unit)
         failed = [a for a in attempts if "error" in a]
+        if request.run_id:
+            # Attribute the call to the run and step that made it. This is the ONLY place every successful call
+            # passes through, and it works whether or not an organisation governs the call (hold_budget returns
+            # None for a personal caller, so the org ledger would miss them entirely).
+            await _attribute_call(pool, request, result, spec, started_all)
         return replace(result, extra={**dict(result.extra), "failover": failed}) if failed else result
     if first_refusal is not None and not any("error" in a for a in attempts):
         raise first_refusal                              # every endpoint refused this model: another model may answer
@@ -202,6 +208,41 @@ async def call_unit(pool: Any, scope: AccessScope, unit: str, request: CallReque
     raise ProviderCallFailed(
         f"every endpoint offering {unit!r} failed: " + "; ".join(a.get("error") or a.get("refused", "") for a in attempts),
         transport=True, attempts=attempts)
+
+
+async def _attribute_call(pool: Any, request: CallRequest, result: CallResult, spec: UnitSpec,
+                          started: float) -> None:
+    """Record that this call belonged to `run_id` / `step_order`.
+
+    Written here rather than in the org ledger for one measured reason: `hold_budget` returns `(None, None)` when no
+    organisation governs the call, so a personal buyer's Way run writes **no** `provider_call_ledger` row at all
+    (`db/136_org_governance.sql` makes `organization_id` NOT NULL). Attribution must not depend on the buyer having an
+    org.
+
+    Never raises. The model call has already happened and been paid for; losing a completed, correct answer because
+    a bookkeeping insert failed would be the worse outcome. It is logged loudly instead, because unrecorded spend
+    erodes the very floor a price is set against.
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+    if pool is None:
+        return
+    try:
+        await pool.execute(
+            "INSERT INTO llm_spend (scope_key, provider, model, operation, estimated_cost, input_tokens, "
+            "output_tokens, run_id, step_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::uuid,$9)",
+            "way_run", spec.provider if hasattr(spec, "provider") else "unknown", spec.model, "way_step",
+            float(result.cost_usd or 0.0),
+            int(result.tokens_in or 0) + int(result.tokens_cache_read or 0) + int(result.tokens_cache_write or 0),
+            int(result.tokens_out or 0),
+            str(request.run_id), int(request.step_order or 0))
+    except Exception as exc:  # noqa: BLE001
+        log.error("failed to attribute a model call to run %s step %s: %s", request.run_id, request.step_order, exc)
+    try:
+        await pool.execute("UPDATE way_runs SET updated_at = now() WHERE id = $1::uuid", str(request.run_id))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def _call_one(pool: Any, scope: AccessScope, unit: str, conn: Connection, spec: UnitSpec,

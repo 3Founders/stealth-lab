@@ -163,6 +163,10 @@ class CallRequest:
     max_tokens: int = 1024
     temperature: Optional[float] = None
     data_class: str = "USER_PRIVATE"            # the most conservative private class, unless the caller says more
+    # Which Way run and step this call belongs to, when it belongs to one (docs/blinkit/measurement.md). Both are
+    # optional so every existing caller is unchanged; without them a call is simply not attributable to a run.
+    run_id: Optional[str] = None
+    step_order: Optional[int] = None
 
 
 @dataclass(frozen=True)

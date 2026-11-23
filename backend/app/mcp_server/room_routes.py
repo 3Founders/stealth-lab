@@ -24,6 +24,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from app.mcp_server.delegate_routes import Gate, allowed_origins
 from app.services import rooms as rm
+from app.services import room_runs as rr
 
 STREAM_SECONDS = 50
 POLL_SECONDS = 2.0
@@ -160,6 +161,71 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
         await rm.list_events(pool, subject, rid, after, 1)          # membership is checked before streaming starts
         return StreamingResponse(_stream(pool, subject, rid, after), media_type="text/event-stream",
                                  headers={**cors_headers(request), "Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+    # -- a Way running inside a room, as a presentation (docs/blinkit/presentation_rooms.md) ---------------------
+
+    @server.custom_route("/v1/rooms/from-way", methods=["POST", "OPTIONS"], include_in_schema=False)
+    @handler
+    async def room_from_way(request: Request, pool: Any, subject: str) -> Response:
+        """Create (or find) the room for a Way the person has paid for. Does NOT start the run."""
+        data = await body_of(request)
+        submission_id = str(data.get("submission_id") or "").strip()
+        if not submission_id:
+            return _error(request, "give the Way's submission id", 400)
+        try:
+            out = await rr.prepare(pool, owner_sub=subject, submission_id=submission_id)
+        except rr.RoomRunError as exc:
+            return _error(request, str(exc), exc.status_code)
+        return _json(request, out)
+
+    @server.custom_route("/v1/rooms/{room_id}/run", methods=["GET", "OPTIONS"], include_in_schema=False)
+    @handler
+    async def room_run(request: Request, pool: Any, subject: str) -> Response:
+        """What the main pane shows: the inputs to ask for, or the steps already running."""
+        rid = request.path_params["room_id"]
+        room = await pool.fetchrow(
+            "SELECT way_submission_id::text AS way FROM rooms WHERE id = $1::uuid AND deleted_at IS NULL", str(rid))
+        if room is None or not room["way"]:
+            return _json(request, {"state": "no_way", "run": None, "inputs": []})
+        out = await rr.readiness(pool, room_id=str(rid), submission_id=room["way"])
+        return _json(request, out)
+
+    @server.custom_route("/v1/rooms/{room_id}/run/start", methods=["POST", "OPTIONS"], include_in_schema=False)
+    @handler
+    async def room_run_start(request: Request, pool: Any, subject: str) -> Response:
+        """Begin the run with the person's inputs. The only place a room starts work."""
+        data = await body_of(request)
+        submission_id = str(data.get("submission_id") or "").strip()
+        values = data.get("values") or {}
+        if not submission_id:
+            return _error(request, "give the Way's submission id", 400)
+        if not isinstance(values, dict):
+            return _error(request, "values must be an object of answers", 400)
+        try:
+            out = await rr.start(pool, room_id=str(request.path_params["room_id"]), submission_id=submission_id,
+                                 supplied=values, owner_id=subject)
+        except rr.RoomRunError as exc:
+            return _error(request, str(exc), exc.status_code)
+        return _json(request, out)
+
+    @server.custom_route("/v1/rooms/{room_id}/run/restart", methods=["POST", "OPTIONS"], include_in_schema=False)
+    @handler
+    async def room_run_restart(request: Request, pool: Any, subject: str) -> Response:
+        """Restart from a step with the person's edits, paying only for the steps that re-run."""
+        data = await body_of(request)
+        try:
+            from_step = int(data.get("from_step") or 0)
+        except (TypeError, ValueError):
+            return _error(request, "from_step must be a number", 400)
+        edits = data.get("edits") or {}
+        if not isinstance(edits, dict):
+            return _error(request, "edits must be an object of input changes", 400)
+        try:
+            out = await rr.restart(pool, room_id=str(request.path_params["room_id"]), from_step=from_step,
+                                   edits=edits, owner_id=subject)
+        except rr.RoomRunError as exc:
+            return _error(request, str(exc), exc.status_code)
+        return _json(request, out)
 
 
 def _sse(event: str, data: Any) -> bytes:

@@ -188,3 +188,81 @@ def test_locator_rates_are_overridable_so_a_real_price_can_replace_the_estimate(
 def test_a_locator_estimate_says_it_is_an_estimate():
     e = estimate_cost([{"order": 1, "prompt": "x", "locator": {"type": "tool", "value": "t"}}])
     assert any("locator" in a for a in e.assumptions), "the page must disclose that locator cost is guessed"
+
+
+# --- per-step pricing, so a restart from the middle is priced --------------------------------------------
+
+def test_per_step_prices_sum_to_the_whole_way():
+    """If they did not, a person restarting from step 2 would be charged a different total than a full run —
+    the arithmetic on the page would be a lie."""
+    from app.submissions.cost_estimate import _step_costs_exact, estimate_cost, per_step_prices
+
+    steps = _steps(5)
+    whole = estimate_cost(steps)
+    prices = per_step_prices(steps)
+    mult = (1.0 + whole.retry_probability * 1.0) * (1.0 + whole.margin)
+    exact = _step_costs_exact(steps)
+    # Compare against the SAME unrounded accumulators the whole estimate sums, then against the rounded whole.
+    assert abs(sum(p["price_high_usd"] for p in prices) - sum(h for _, _, h in exact) * mult) < 1e-12
+    assert round(sum(p["price_high_usd"] for p in prices), 6) == whole.price_high_usd
+    assert round(sum(p["price_low_usd"] for p in prices), 6) == whole.price_low_usd
+
+
+def test_every_step_gets_its_own_price():
+    from app.submissions.cost_estimate import per_step_prices
+
+    prices = per_step_prices(_steps(4))
+    assert [p["order"] for p in prices] == [1, 2, 3, 4]
+    assert all(p["price_high_usd"] > 0 for p in prices)
+
+
+def test_a_later_step_is_priced_above_an_earlier_one():
+    """The re-read term again: step 5 reads steps 1-4, so it cannot cost what step 1 costs."""
+    from app.submissions.cost_estimate import per_step_prices
+
+    prices = per_step_prices(_steps(5))
+    assert prices[-1]["price_high_usd"] > prices[0]["price_high_usd"]
+
+
+def test_a_restart_from_the_middle_pays_only_for_what_remains():
+    """The point of splitting the price: steps that already produced good output are not re-paid for."""
+    from app.submissions.cost_estimate import per_step_prices, suffix_from
+
+    prices = per_step_prices(_steps(5))
+    rest = suffix_from(prices, 3)
+    expected = sum(p["price_high_usd"] for p in prices if p["order"] >= 3)
+    assert abs(rest["price_high_usd"] - expected) < 1e-12
+    assert rest["steps_paid_for"] == 3
+
+
+def test_a_restart_from_step_one_is_the_whole_run():
+    from app.submissions.cost_estimate import per_step_prices, suffix_from
+
+    prices = per_step_prices(_steps(4))
+    whole = sum(p["price_high_usd"] for p in prices)
+    assert abs(suffix_from(prices, 1)["price_high_usd"] - whole) < 1e-12
+
+
+def test_a_restart_from_the_last_step_is_the_cheapest_possible_re_run():
+    from app.submissions.cost_estimate import per_step_prices, suffix_from
+
+    prices = per_step_prices(_steps(5))
+    rest = suffix_from(prices, 5)
+    assert rest["steps_paid_for"] == 1
+    assert rest["price_high_usd"] == prices[-1]["price_high_usd"]
+
+
+def test_the_restart_listing_marks_what_has_already_run():
+    """The page shows the arithmetic, so a reader can see why the restart is cheaper."""
+    from app.submissions.cost_estimate import per_step_prices, suffix_from
+
+    rest = suffix_from(per_step_prices(_steps(3)), 2)
+    flags = {s["order"]: s["already_run"] for s in rest["steps"]}
+    assert flags == {1: True, 2: False, 3: False}
+
+
+def test_a_human_step_is_marked_so_it_is_not_priced_as_model_work():
+    from app.submissions.cost_estimate import per_step_prices
+
+    prices = per_step_prices({"order": 1, "prompt": "x", "kind": "human", "title": "Sign the form"})
+    assert prices[0]["is_human"] is True

@@ -475,13 +475,31 @@ async def refund_by_payment(pool: Any, *, payment_id: str) -> Optional[str]:
 
 async def set_price(pool: Any, *, procedure_row_id: str, price_paise: Optional[int],
                     currency: str = "INR", priced_by: str = "operator") -> dict[str, Any]:
-    """Price one exact version. None un-prices it; 0 is a deliberate free listing."""
+    """Price one exact version. None un-prices it; 0 is a deliberate free listing.
+
+    A Way that has never run cannot be priced above free (docs/blinkit/pricing_discussions.md D6). Its cost is
+    unknown, so any positive number is a guess with a currency symbol on it — and since one purchase now buys exactly
+    one run, an unmeasured price can lose money on every sale with nobody able to see it.
+
+    Withdrawing a price (None) and listing free (0) are always allowed: neither has a margin to be wrong about.
+    """
     if price_paise is not None:
         price_paise = int(price_paise)
         if not 0 <= price_paise <= MAX_PRICE_PAISE:
             raise PurchaseError(f"price_paise must be between 0 and {MAX_PRICE_PAISE}")
     if currency not in ("INR", "USD"):
         raise PurchaseError("currency must be INR or USD")
+    row = await pool.fetchrow(
+        """SELECT id::text AS id, name, version, measured_runs, measured_cost_paise
+           FROM procedures WHERE id::text = $1 AND t_invalid IS NULL""",
+        str(procedure_row_id))
+    if row is None:
+        raise PurchaseError("no such Way", 404)
+    if price_paise is not None and price_paise > 0 and not int(row["measured_runs"] or 0):
+        # Named, actionable, and it says what to do rather than only what went wrong.
+        raise PurchaseError(
+            f"{row['name']!r} v{row['version']} has not been run, so its cost is unknown; run it once, then price it",
+            409)
     row = await pool.fetchrow(
         """UPDATE procedures
            SET price_paise = $2, price_currency = $3, priced_by = $4, priced_at = now()

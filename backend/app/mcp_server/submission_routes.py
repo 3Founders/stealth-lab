@@ -226,6 +226,36 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
         # (owner's call, 2026-11-18), and a dead "try this instead" is worse than none.
         return await _answer(request, api.suggestions(pool, subject, request.path_params["submission_id"]))
 
+    @server.custom_route("/v1/goals/submissions/{submission_id}/related", methods=["GET", "OPTIONS"],
+                         include_in_schema=False)
+    async def submission_related(request: Request) -> Response:
+        """Related Ways for the rail, and the ones offered after the final output (both labelled honestly)."""
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        return await _answer(request, api.related_ways(pool, request.path_params["submission_id"]))
+
+    @server.custom_route("/v1/goals/submissions/{submission_id}/steps/cost", methods=["GET", "OPTIONS"],
+                         include_in_schema=False)
+    async def submission_step_cost(request: Request) -> Response:
+        """The price split per step, so a restart from step N is priced as steps N..end."""
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        return await _answer(request, api.step_costs(pool, request.path_params["submission_id"]))
+
+    @server.custom_route("/v1/goals/submissions/{submission_id}/steps/{order:int}/inputs",
+                         methods=["PUT", "OPTIONS"], include_in_schema=False)
+    async def submission_step_inputs(request: Request) -> Response:
+        """The author declares what a step asks the buyer for. Prompts stay immutable; inputs are the editable part."""
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        body = await _body(request)
+        return await _answer(request, api.set_step_inputs(
+            pool, subject, request.path_params["submission_id"], int(request.path_params["order"]),
+            body.get("inputs")))
+
     @server.custom_route("/v1/goals/submissions/{submission_id}/runs", methods=["POST", "OPTIONS"],
                          include_in_schema=False)
     async def submission_run(request: Request) -> Response:

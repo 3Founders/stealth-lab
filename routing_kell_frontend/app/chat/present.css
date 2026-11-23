@@ -1,0 +1,172 @@
+/* A Way running in a room, as a presentation.
+ *
+ * The main pane carries exactly one thing at a time: the inputs a run asks for, or step N of M. That is the point of
+ * the layout — a person is not reading a chat transcript, they are stepping through a procedure. So this stylesheet
+ * spends its whitespace on one column and keeps every other affordance (rails, buttons) quiet.
+ */
+
+.pr {
+  display: grid;
+  gap: 20px;
+  max-width: 52em;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+  color: var(--ink);
+}
+
+.pr-panel { display: grid; gap: 16px; }
+
+.pr-h {
+  font-size: 20px;
+  font-weight: 500;
+  margin: 0;
+  line-height: 1.35;
+}
+
+.pr-muted { color: var(--grey); font-size: 14.5px; line-height: 1.6; margin: 0; }
+.pr-small { font: inherit; font-size: 13px; background: none; border: 0; color: var(--grey); cursor: pointer; padding: 2px 6px; }
+.pr-small:hover { color: var(--ink); text-decoration: underline; }
+.pr-err { color: var(--ink); font-size: 14px; border-left: 2px solid var(--rule-strong); padding-left: 10px; margin: 0; }
+
+/* The inputs. This is the whole first screen: no chat, no log, no step list competing for attention. */
+.pr-inputs { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; }
+.pr-inputs label { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 15px; font-weight: 500; }
+.pr-which { font-size: 12px; font-weight: 400; color: var(--grey); }
+.pr-inputs input, .pr-restart textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 15px;
+  padding: 10px 12px;
+  margin-top: 6px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.pr-restart textarea { resize: vertical; line-height: 1.55; }
+.pr-help { display: block; font-size: 13px; color: var(--grey); margin-top: 4px; }
+
+.pr-cta {
+  justify-self: start;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 10px 22px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--surface);
+  cursor: pointer;
+}
+.pr-cta:disabled { opacity: .45; cursor: default; }
+
+.pr-plan { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.pr-plan li { display: grid; grid-template-columns: 2em 1fr auto; gap: 10px; align-items: baseline; font-size: 14.5px; }
+.pr-price { font-variant-numeric: tabular-nums; color: var(--grey); font-size: 13px; }
+
+.pr-progress { font-size: 13px; color: var(--grey); letter-spacing: .02em; margin: 0; }
+
+/* Each finished step: the number, its title, and what it produced. The redo control is present but quiet, so it
+   cannot be pressed by accident and does not invite it. */
+.pr-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; }
+.pr-step { display: grid; gap: 8px; padding-bottom: 20px; border-bottom: 1px solid var(--rule); }
+.pr-step:last-child { border-bottom: 0; }
+.pr-step header { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.pr-step header b { font-weight: 500; font-size: 15.5px; flex: 1 1 auto; }
+.pr-n { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--grey); border: 1px solid var(--rule); border-radius: 999px; padding: 0 7px; }
+
+.pr-out {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 0;
+  max-height: 26em;
+  overflow: auto;
+}
+
+.pr-restart, .pr-files, .pr-after {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.pr-restart h3, .pr-files h3, .pr-after h3 { margin: 0; font-size: 14px; font-weight: 500; letter-spacing: .01em; }
+.pr-restart label { display: grid; gap: 6px; font-size: 13.5px; color: var(--grey); }
+
+.pr-files ul, .pr-after ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.pr-file { font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 8px 12px; cursor: pointer; color: var(--ink); width: 100%; text-align: left; }
+.pr-file:hover { border-color: var(--rule-strong); }
+.pr-after li { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.pr-after a { color: var(--ink); text-decoration: none; }
+.pr-after a:hover { text-decoration: underline; }
+
+@media (max-width: 640px) {
+  .pr { padding: 16px 14px 48px; }
+  .pr-step header { gap: 6px; }
+}
+
+/* ---- the shell: a minimised left rail, the procedure in the middle, other Ways on the right ---- */
+.present-shell {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 280px;
+  gap: 24px;
+  align-items: start;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 20px 20px 80px;
+  min-height: 100vh;
+}
+.present-shell[data-rail="open"] { grid-template-columns: 220px minmax(0, 1fr) 280px; }
+
+.present-left { position: sticky; top: 20px; }
+.present-toggle {
+  font: inherit; font-size: 15px; width: 30px; height: 30px; display: grid; place-items: center;
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer;
+}
+.present-toggle:hover { border-color: var(--rule-strong); }
+.present-rooms { margin-top: 12px; display: grid; gap: 8px; }
+.present-rail-h { margin: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
+.present-rooms ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.present-rooms a {
+  display: block; font-size: 13.5px; color: var(--grey); text-decoration: none;
+  padding: 5px 8px; border-radius: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.present-rooms a:hover { background: var(--surface); color: var(--ink); }
+.present-rooms a[data-current] { background: var(--surface); color: var(--ink); font-weight: 500; }
+
+.present-main { min-width: 0; }
+
+.present-right { position: sticky; top: 20px; display: grid; gap: 14px; }
+.present-card {
+  border: 1px solid var(--rule); border-radius: 8px; padding: 14px; background: var(--surface); display: grid; gap: 10px;
+}
+.present-card h2 { margin: 0; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); font-weight: 500; }
+.present-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.present-card li a { font-size: 13.5px; color: var(--ink); text-decoration: none; line-height: 1.4; }
+.present-card li a:hover { text-decoration: underline; }
+
+/* The advertising slot. Labelled as a placeholder, never dressed as a real sponsor. */
+.present-ad { border-style: dashed; }
+.present-ad-h { margin: 0; font-size: 13px; font-weight: 500; }
+.present-ad-link { font-size: 13px; color: var(--grey); }
+.present-ad-link:hover { color: var(--ink); }
+
+@media (max-width: 1100px) {
+  .present-shell, .present-shell[data-rail="open"] { grid-template-columns: 44px minmax(0, 1fr); }
+  .present-right { display: none; }
+}
+@media (max-width: 700px) {
+  .present-shell, .present-shell[data-rail="open"] { grid-template-columns: minmax(0, 1fr); padding: 12px 12px 60px; }
+  .present-left { position: static; }
+}
+
+/* What a restart was charged. Stated, because a person who paid twice should see why. */
+.pr-charge { margin: 0; font-size: 13.5px; color: var(--ink); border-left: 2px solid var(--rule-strong); padding-left: 10px; }

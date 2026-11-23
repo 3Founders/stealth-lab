@@ -13,6 +13,8 @@ two decisions made in conversation that those documents did not record.
 | **`measurement.md`** | what a run records; why `llm_spend` needs a `run_id` before anything can be priced from a run | ❌ designed, not built |
 | **`caps.md`** | why output caps are pricing parameters, why ours were invented, what replaces them | ⚠️ seeds built; learned caps not built |
 | **`open_questions.md`** | the ten decisions still open, each with a proposed default | — |
+| **`next_pass_plan.md`** | the plan for the unmeasured-price gate and attribution, written before the code, plus what actually happened | ✅ built |
+| **`presentation_rooms.md`** | a Way running in a Room as a presentation: inputs first, per-step price, restart from the middle | ✅ mostly built; `start` missing |
 | **`what_was_done.md`** | what this session built, where it improves on the record, and what is still missing | ✅ built (purchase/run path, Way page) |
 
 ---
@@ -33,15 +35,17 @@ two decisions made in conversation that those documents did not record.
 ## The build order
 
 ```
-A. attribution   llm_spend.run_id + step_order; way_runs.cost_usd     -> unblocks everything
-B. measurement   per-step n / p50 / p90 / p99, refusing below n=10
-C. pricing       measured floor + author's chosen price + realized margin
-D. learned caps  p99 × 1.5 once there is a distribution
-E. first-run ceiling  a hard spend limit that fails loudly
+A. attribution   llm_spend.run_id + step_order; way_runs.cost_usd     ✅ built (db/224, 225)
+B. measurement   per-step n / p50 / p90 / p99, refusing below n=10    ✅ per-run cost built; percentiles not yet
+C. pricing       measured floor + author's chosen price + realized margin   ⬜ next
+D. learned caps  p99 × 1.5 once there is a distribution                     ⬜
+E. first-run ceiling  a hard spend limit that fails loudly                  ⬜
 ```
 
-A and B are prerequisites for C–E. Nothing in A changes behaviour for any existing path: both columns are nullable
-and there is no backfill.
+A is done. The gate that refuses to price a Way nobody has run is done too — `set_price` returns 409 with
+*"run it once, then price it"*. What is **not** done: measuring the ₹1 Way for real, and everything from C down.
+See `next_pass_plan.md` § "What actually happened" for the three discoveries that changed that plan, including a
+real cost that rounded to zero paise.
 
 ---
 
