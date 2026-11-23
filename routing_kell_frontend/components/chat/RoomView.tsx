@@ -1078,34 +1078,37 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
   }, []);
   /**
-   * Whether the middle pane is this Way's run instead of the conversation.
+   * Whether this room is the Way's room — a DERIVED fact, not state.
    *
-   * True while the room is showing its run: arriving with `?way=` (the Way page and the paid page both do), or when
-   * the room reports it has a run at all. It starts true for a `?way=` arrival so the pane never flashes an empty
-   * conversation first, and `WayRunPanel` sets it false via `onNothing` if there is no Way after all.
-   *
-   * Only the room the URL asked for starts as a Way. Keyed on `[roomWayId, room]` it re-armed itself on EVERY room
-   * change, so switching to General still drew the Way panel and the room could not be left (2026-11-23).
+   * It used to be state written by two effects and by `onNothing`, and the two fought: the `info` effect reset it to
+   * `room === wayRoomName` while the panel set it false, so the pane and the chat replaced each other forever
+   * (owner, 2026-11-23: "it is oscillating between chat and this step interface"). A value that can be computed from
+   * the room's name must be computed, never stored.
    */
-  const [roomIsWay, setRoomIsWay] = useState(() => Boolean(roomWayId));
+  const [wayRoomName, setWayRoomName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!roomWayId) { setWayRoomName(null); return; }
+    if (wayRoomName !== null) return;
+    const resolved = wantedRoomId ? Object.keys(info).find((n) => info[n]?.id === wantedRoomId) : room;
+    if (resolved) setWayRoomName(resolved);
+  }, [roomWayId, room, wantedRoomId, wayRoomName, info]);
+
+  /**
+   * The server said this room has no Way. Stored per room so a later room is unaffected, and so it can never
+   * oscillate with `roomIsWay`: once a room is known not to be a Way, it stays that way for this visit.
+   */
+  const [waySaysNoWayRooms, setWaySaysNoWayRooms] = useState<Record<string, true>>({});
+  const waySaysNoWay = Boolean(waySaysNoWayRooms[room])
+  const markNotAWay = useCallback(() => {
+    setWaySaysNoWayRooms((p) => (p[room] ? p : { ...p, [room]: true }))
+  }, [room])
+
+  const roomIsWay = Boolean(roomWayId) && wayRoomName !== null && room === wayRoomName && !waySaysNoWay;
+
   /** The person asked to chat in a Way's room. Reset when they change rooms, so another room gets its own default. */
   const [wayChatOpen, setWayChatOpen] = useState(false);
   useEffect(() => { setWayChatOpen(false); }, [room]);
   const showWayPanel = roomIsWay && !wayChatOpen;
-  /** The device's name for the room that arrived with `?way=`, once sync has resolved it. */
-  const [wayRoomName, setWayRoomName] = useState<string | null>(null);
-  useEffect(() => {
-    if (!roomWayId) { setRoomIsWay(false); return; }
-    if (wayRoomName === null) {
-      const resolved = wantedRoomId ? Object.keys(info).find((n) => info[n]?.id === wantedRoomId) : room;
-      if (resolved) { setWayRoomName(resolved); setRoomIsWay(room === resolved); }
-      // Not resolved yet: claim the pane ONLY if there is no ?room= to wait for, or we are already in it. Setting
-      // it true for "whatever room happens to be open" is what kept General looking like a Way.
-      else setRoomIsWay(Boolean(roomWayId) && !wantedRoomId);
-      return;
-    }
-    setRoomIsWay(room === wayRoomName);
-  }, [roomWayId, room, wantedRoomId, wayRoomName, info]);
 
   /**
    * Arriving from `/chat?room=<id>`: switch to that room once sync has told us its name.
@@ -1880,7 +1883,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             roomId={info[room]?.id || wantedRoomId || undefined}
             wayId={roomWayId || undefined}
             title={shownName(room)}
-            onNothing={() => setRoomIsWay(false)}
+            onNothing={markNotAWay}
             onShowChat={() => setWayChatOpen(true)}
           />
         )}
