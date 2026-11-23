@@ -170,7 +170,8 @@ export default function WayRunPanel({ roomId, wayId }: { roomId?: string; wayId?
       {(view.state === "running" || view.state === "done" || view.state === "failed") && (
         <div className="dg-run-panel">
           <div className="dg-run-progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-            <span style={{ width: `${pct}%` }} />
+            {/* scaleX, not width: a width change repaints every frame (docs/ios_animation.md §6 rule 1). */}
+            <span style={{ transform: `scaleX(${pct / 100})` }} />
           </div>
           <p className="dg-rail-muted">{done} of {total || "?"} steps done</p>
           <ol className="dg-run-steps">

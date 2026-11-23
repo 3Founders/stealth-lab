@@ -7,7 +7,12 @@
 /* The room's right rail (components/chat/RoomRail.tsx): other Ways for this goal, and a labelled ad slot. It is a
    third column of dg-shell, hidden below 1100px where the middle pane needs the width. */
 .dg-rail { display: grid; gap: 12px; align-content: start; padding: 14px 14px 14px 0; width: 280px; overflow-y: auto; }
-.dg-rail-card { border: 1px solid var(--rule); border-radius: 10px; padding: 12px; background: var(--surface); display: grid; gap: 8px; }
+/* Enters like every other small surface: 8px rise on the smooth spring variable, so the linear() fallback applies
+   (docs/ios_animation.md §4.6 and §9 checklist steps 1-3). */
+.dg-rail-card { border: 1px solid var(--rule); border-radius: 10px; padding: 12px; background: var(--surface); display: grid; gap: 8px;
+  animation: dg-rise var(--dg-smooth-d, .5s) var(--dg-smooth, cubic-bezier(.22, 1, .36, 1)) both; }
+.dg-rail-card:nth-child(2) { animation-delay: 40ms; }
+.dg-rail-card:nth-child(3) { animation-delay: 80ms; }
 .dg-rail-card h2 { margin: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); font-weight: 500; }
 .dg-rail-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
 .dg-rail-card li { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
@@ -1815,15 +1820,33 @@ span.dg-replyq { cursor: default; }
 .dg-run-panel { display: grid; gap: 9px; }
 .dg-rail-h { margin: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); }
 .dg-run-progress { height: 4px; border-radius: 999px; background: var(--rule); overflow: hidden; }
-.dg-run-progress span { display: block; height: 100%; background: var(--ink); transition: width .4s ease; }
+/* `transform`, not `width`: a width transition is a layout change every frame (docs/ios_animation.md §6 rule 1).
+   scaleX with a left origin gives the same bar for nothing. */
+.dg-run-progress span {
+  display: block; height: 100%; width: 100%; background: var(--ink);
+  transform-origin: left center; transform: scaleX(0);
+  transition: transform var(--dg-smooth-d, .5s) var(--dg-smooth, cubic-bezier(.22, 1, .36, 1));
+}
 .dg-run-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
 .dg-run-steps li { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; color: var(--grey); line-height: 1.4; }
 .dg-run-steps li[data-done] { color: var(--ink); }
 .dg-run-steps li[data-running] { color: var(--ink); font-weight: 500; }
-.dg-run-steps li[data-running] .dg-run-n { animation: dg-run-pulse 1.4s ease-in-out infinite; }
+.dg-run-steps li[data-running] .dg-run-n {
+  animation: dg-run-pulse 1.4s var(--dg-smooth, cubic-bezier(.22, 1, .36, 1)) infinite;
+}
 .dg-run-n { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; border: 1px solid var(--rule); border-radius: 999px; padding: 0 6px; flex-shrink: 0; }
 @keyframes dg-run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .dg-run-steps li[data-running] .dg-run-n { animation: none; } }
+/* Reduced motion means none (docs/ios_animation.md §6 rule 6). The blanket `.dg-page *` rule covers most of this,
+   but the rail's entrance and the progress transition are named here so the intent survives a selector change. */
+@media (prefers-reduced-motion: reduce) {
+  .dg-rail-card, .dg-rail-card:nth-child(2), .dg-rail-card:nth-child(3) { animation: none; }
+  .dg-run-progress span { transition: none; }
+}
+/* Nothing here blurs today; stated so a future glass card in the rail follows the §5 rule rather than inventing one. */
+@media (prefers-reduced-transparency: reduce) {
+  .dg-rail-card { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface); }
+}
 
 .dg-run-inputs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .dg-run-inputs label { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; font-weight: 500; }
