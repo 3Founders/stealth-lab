@@ -1061,6 +1061,22 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       return "";
     }
   }, []);
+
+  /**
+   * The room the URL asked for (`/chat?room=<server room id>&way=<submission id>`), or "" for none.
+   *
+   * This used to be ignored: only `?way=` was read, so every link from the Way page and the paid page landed in
+   * whatever room was last open, with a run panel pointed at the wrong room. Rooms are keyed by NAME on this device
+   * while the URL carries the server's room id, so the name is found through `info` once sync has filled it in.
+   */
+  const wantedRoomId = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return new URLSearchParams(window.location.search).get("room") || "";
+    } catch {
+      return "";
+    }
+  }, []);
   /**
    * Whether the middle pane is this Way's run instead of the conversation.
    *
@@ -1070,6 +1086,21 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
    */
   const [roomIsWay, setRoomIsWay] = useState(() => Boolean(roomWayId));
   useEffect(() => { setRoomIsWay(Boolean(roomWayId)); }, [roomWayId, room]);
+
+  /**
+   * Arriving from `/chat?room=<id>`: switch to that room once sync has told us its name.
+   *
+   * Runs until it lands (sync is a few seconds behind a fresh page load) and then stops matching, because `room`
+   * now equals the name it wanted. If the id never appears -- a room from another device, or a deleted one -- the
+   * person stays where they are rather than being shown a room that does not exist.
+   */
+  useEffect(() => {
+    if (!wantedRoomId) return;
+    const name = Object.keys(info).find((n) => info[n]?.id === wantedRoomId);
+    if (!name || name === room) return;
+    // A room the server lists but this device has not named yet: add it before switching, or the switch is ignored.
+    setRoomList((l) => (l.rooms.includes(name) ? { ...l, current: name } : { rooms: [...l.rooms, name], current: name }));
+  }, [wantedRoomId, info, room]);
   // A room shows "no messages yet" only once its history could have arrived: saved on this device, or from the account (a few seconds at
   // most). Before, every room said "No messages in General yet" for about 3 s and then filled in (2026-11-05).
   const [waited, setWaited] = useState<Record<string, boolean>>({});

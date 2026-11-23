@@ -20,6 +20,10 @@ import "./chat.css";
 export default function ChatPage() {
   // undefined = still resolving (Supabase's session read is async): never flash the signed-out notice at a signed-in visitor.
   const [session, setSession] = useState<Session | null | undefined>(undefined);
+  // The room and the Way ride in the query string. Read after mount, never during render: reading `window` while
+  // rendering would disagree with the server's HTML and break hydration.
+  const [here, setHere] = useState("/chat");
+  useEffect(() => { setHere(`/chat${window.location.search}`); }, []);
 
   useEffect(() => {
     let live = true;
@@ -41,7 +45,12 @@ export default function ChatPage() {
         {session === null && (
           <div className="empty" role="status">
             <b>Sign in to use Rooms.</b>
-            <p>It is available to signed-in accounts. <Link href="/sign-in?redirect=/chat" style={{ textDecoration: "underline" }}>Sign in</Link>.</p>
+            <p>
+              It is available to signed-in accounts.{" "}
+              {/* Keep the room and the Way across sign-in. A bare `/chat` drops `?room=…&way=…`, so the person
+                  comes back to an empty room with no run and no way to find the one they came for. */}
+              <Link href={`/sign-in?redirect=${encodeURIComponent(here)}`} style={{ textDecoration: "underline" }}>Sign in</Link>.
+            </p>
           </div>
         )}
         {session && (

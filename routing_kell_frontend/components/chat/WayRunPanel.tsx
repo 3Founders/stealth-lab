@@ -70,6 +70,8 @@ export default function WayRunPanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** The Way to start. The room knows it even when the URL did not say, so the server's answer wins over `?way=`. */
+  const wayForRun = view?.submission_id || wayId || ""
 
   const load = useCallback(async () => {
     if (!roomId) return
@@ -111,12 +113,16 @@ export default function WayRunPanel({
 
   async function start() {
     if (!roomId) return
+    if (!wayForRun) {
+      setError("this room does not name the Way it should run — open it from the Way's page")
+      return
+    }
     setBusy(true)
     setError(null)
     try {
       await call(`/v1/rooms/${encodeURIComponent(roomId)}/run/start`, {
         method: "POST",
-        body: { submission_id: wayId, values },
+        body: { submission_id: wayForRun, values },
       })
       await load()
     } catch (e) {
@@ -160,9 +166,7 @@ export default function WayRunPanel({
 
       {view?.state === "needs_inputs" && (
         <div className="dg-way-inputs">
-          <p className="dg-way-note">
-            {view.inputs.length} answer{view.inputs.length === 1 ? "" : "s"} before it can start.
-          </p>
+          <h3 className="dg-way-sec">What it needs from you</h3>
           <ul>
             {view.inputs.map((i) => (
               <li key={`${i.step}.${i.key}`}>
@@ -184,31 +188,39 @@ export default function WayRunPanel({
       )}
 
       {total > 0 && (
-        <ol className="dg-way-steps">
-          {steps.map((s) => {
-            const st = stateOf(s.order)
-            const price = s.price_high_paise ? rupees(s.price_high_paise) : ""
-            return (
-              <li key={s.order} data-state={st} data-human={s.is_human ? "true" : "false"}>
-                <span className="dg-way-n" aria-hidden="true">{st === "done" ? "✓" : s.order}</span>
-                <span className="dg-way-title">{s.title}</span>
-                {s.is_human && <span className="dg-way-kind">you</span>}
-                {price && st === "waiting" && <span className="dg-way-price">{price}</span>}
-              </li>
-            )
-          })}
-        </ol>
+        <div className="dg-way-list">
+          <h3 className="dg-way-sec">Steps</h3>
+          <ol className="dg-way-steps">
+            {steps.map((s) => {
+              const st = stateOf(s.order)
+              const price = s.price_high_paise ? rupees(s.price_high_paise) : ""
+              const wrote = outputs.find((o) => o.order === s.order)
+              return (
+                <li key={s.order} data-state={st} data-human={s.is_human ? "true" : "false"}>
+                  <span className="dg-way-n" aria-hidden="true">{st === "done" ? "✓" : s.order}</span>
+                  <span className="dg-way-col">
+                    <span className="dg-way-title">{s.title}</span>
+                    {/* The step's own output, in place: what "see the steps and outputs" means for a long run. */}
+                    {wrote?.output && <span className="dg-way-out-step">{wrote.output}</span>}
+                  </span>
+                  {s.is_human && <span className="dg-way-kind">you</span>}
+                  {price && st === "waiting" && <span className="dg-way-price">{price}</span>}
+                </li>
+              )
+            })}
+          </ol>
+        </div>
       )}
 
-      {view?.state !== "running" && !finished && (
+      {/* Start is the one action. It is never disabled without saying why -- an unclickable button with no reason
+          is what sent the owner looking for a different screen. */}
+      {!running && !finished && (
         <div className="dg-way-act">
-          <button type="button" className="dg-way-start" disabled={busy || !view} onClick={() => void start()}>
+          <button type="button" className="dg-way-start" disabled={busy} onClick={() => void start()}>
             {busy ? "Starting…" : view?.state === "needs_inputs" ? "Start with these answers" : "Start"}
           </button>
           <p className="dg-way-note">
-            {view?.state === "needs_inputs"
-              ? "A human step pauses the run and waits for you."
-              : "It runs one step at a time; a human step pauses and waits for you."}
+            {view ? "A human step pauses the run and waits for you." : "Reading this Way — Start opens when it has loaded."}
           </p>
         </div>
       )}

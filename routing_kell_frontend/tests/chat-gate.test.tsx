@@ -36,7 +36,23 @@ describe("Chat sign-in gate", () => {
     await mount();
     expect(host!.textContent).toContain("Sign in to use Rooms");
     expect(host!.querySelector('[data-testid="room"]')).toBeNull();
-    expect(host!.querySelector('a[href="/sign-in?redirect=/chat"]')).not.toBeNull();
+    expect(host!.querySelector('a[href="/sign-in?redirect=%2Fchat"]')).not.toBeNull();   // bare /chat when there is no query
+  });
+  it("signed out with a room in the URL: the sign-in keeps the room and the Way", async () => {
+    // The way someone reaches a Way's run is /chat?room=<id>&way=<id>. Sending them to a bare /chat after sign-in
+    // drops both, so they land in an empty room -- which is exactly what the owner reported (2026-11-23).
+    const real = window.location;
+    Object.defineProperty(window, "location", { configurable: true, value: { ...real, search: "?room=abc&way=def" } });
+    try {
+      current = null;
+      await mount();
+      const link = host!.querySelector("a")!;
+      const target = new URL(link.getAttribute("href")!, "https://kell.example");
+      expect(target.pathname).toBe("/sign-in");
+      expect(target.searchParams.get("redirect")).toBe("/chat?room=abc&way=def");
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: real });
+    }
   });
   it("while the session is still resolving: neither the notice nor the room", async () => {
     current = "pending";
