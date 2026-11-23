@@ -121,6 +121,20 @@ async def _tool_runnable(pool: Any, value: str) -> Optional[str]:
     return None
 
 
+def _locator(raw: Any) -> dict:
+    """A stored locator as {type, value}, or {} for none. Rows written while store.submit JSON-encoded the locator itself
+    (on top of the pool's jsonb codec) hold it as a string, the string "null" for none; reading that as a dict made
+    check_step raise and left the whole submission in review."""
+    for _ in range(2):
+        if not isinstance(raw, str):
+            break
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
 async def check_step(pool: Any, step: dict, *, client: Optional[httpx.AsyncClient] = None) -> dict:
     """-> {"ok": bool, "problems": [...], "notes": [...]} for one step."""
     from app.services.screening import redact_document_text
@@ -141,7 +155,7 @@ async def check_step(pool: Any, step: dict, *, client: Optional[httpx.AsyncClien
     if secrets:
         problems.append("the step contains what looks like a key, token or password; remove it (kell supplies "
                         "credentials by name, never in a step)")
-    loc = step.get("locator") or {}
+    loc = _locator(step.get("locator"))
     kind, value = loc.get("type"), str(loc.get("value") or "")
     if kind == "url":
         why = _bare_search(value) or await _reachable(value, client)

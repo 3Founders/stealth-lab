@@ -135,7 +135,7 @@ async def submit(pool: Any, owner_id: str, sub: Submission) -> dict:
                                                   goal_id, created_goal, procedure_row_id, goal_match, produces)
                VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8::uuid, $9, $10::uuid, $11::jsonb, $12::jsonb)""",
             submission_id, step.order, step.kind, step.title, step.description, step.prompt,
-            json.dumps(step.locator), way["goal_id"], way["created_goal"],
+            step.locator, way["goal_id"], way["created_goal"],     # the pool's jsonb codec encodes it; None -> NULL
             way["procedure_row_id"], json.dumps(way["goal_match"]),
             json.dumps(step.produces) if step.produces else None)
         steps.append({**step.as_dict(), **way, "status": "reviewing"})
