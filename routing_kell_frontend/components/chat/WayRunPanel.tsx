@@ -97,6 +97,8 @@ export default function WayRunPanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState("")
+  /** "Run again" on a finished room: reveal the inputs (and Start) even though the last run is done. */
+  const [showAgain, setShowAgain] = useState(false)
   /** The file open for reading: its name, and its text once it has arrived. */
   const [openFile, setOpenFile] = useState<string | null>(null)
   const [openText, setOpenText] = useState<string>("")
@@ -222,7 +224,7 @@ export default function WayRunPanel({
         )}
       </header>
 
-      {view?.state === "needs_inputs" && (
+      {(view?.state === "needs_inputs" || (showAgain && view?.inputs?.length)) && (
         <section className="dg-way-block">
           <h2>What it needs from you</h2>
           <ul className="dg-way-inputs">
@@ -280,10 +282,10 @@ export default function WayRunPanel({
         </section>
       )}
 
-      {!running && !paused && !finished && (
+      {(showAgain || (!running && !paused && !finished)) && (
         <div className="dg-way-act">
           <button type="button" className="dg-way-start" disabled={busy || !view} onClick={() => void start()}>
-            {busy ? "Starting…" : view?.state === "needs_inputs" ? "Start with these answers" : "Start"}
+            {busy ? "Starting…" : view?.state === "needs_inputs" || showAgain ? "Start with these answers" : "Start"}
           </button>
           <p className="dg-way-note">
             {view ? "A human step pauses the run and waits for you." : "Reading this Way — Start opens when it has loaded."}
@@ -292,9 +294,21 @@ export default function WayRunPanel({
       )}
 
       {finished && (
-        <p className="dg-way-note">
-          {view?.state === "done" ? "Finished." : "Stopped with a failure — the steps above show how far it got."}
-        </p>
+        <div className="dg-way-act">
+          <p className="dg-way-note">
+            {view?.state === "done" ? "Finished." : "Stopped with a failure — the steps above show how far it got."}
+          </p>
+          {/* A finished room could never run again from the UI, and its declared inputs were never shown: the form
+              is rendered for needs_inputs only, while readiness returns them whatever the state. */}
+          <button
+            type="button"
+            className="dg-way-start"
+            disabled={busy}
+            onClick={() => { setShowAgain(true); }}
+          >
+            Run again
+          </button>
+        </div>
       )}
 
       {error && <p className="dg-way-error" role="alert">{error}</p>}

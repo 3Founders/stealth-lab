@@ -1,4 +1,5 @@
 import { getAccessToken } from "@/lib/session";
+import { MCP_ORIGIN } from "@/lib/connector";
 
 export const API_URL = (process.env.NEXT_PUBLIC_KEL_API_URL || "").replace(/\/$/, "");
 
@@ -45,9 +46,12 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<Api
  * page can show — a silent failure here is the buyer being told their paid file does not exist.
  */
 export async function downloadArtifact(url: string, filename: string): Promise<void> {
-  if (!API_URL) throw new Error("the download endpoint is not configured");
+  // `API_URL` (NEXT_PUBLIC_KEL_API_URL) is unset in production: the site talks to MCP_ORIGIN, which always has a
+  // value. Refusing when API_URL was empty is why every download said "the download endpoint is not configured"
+  // (2026-11-23) -- the button was right, the base URL was the wrong one.
+  const base = API_URL || MCP_ORIGIN;
   const token = await getAccessToken();
-  const target = url.startsWith("http") ? url : `${API_URL}${url}`;
+  const target = url.startsWith("http") ? url : `${base}${url}`;
   const res = await fetch(target, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
   if (res.status === 402) throw new Error("this Way has not been bought on this account");
   if (res.status === 401) throw new Error("sign in again to download this file");
