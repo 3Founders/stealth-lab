@@ -132,8 +132,11 @@ export default function WayRunPanel({
     }
   }
 
-  if (!roomId) { onNothing?.(); return null }
-  if (view && view.state === "no_way") { onNothing?.(); return null }
+  // No room id yet is a WAITING state, not a "not a Way" state: `info` arrives from sync a few seconds after a cold
+  // load, so bailing out here bounced the person back to the conversation ("Loading messages…") and they never
+  // reached the Way at all. Only the server's own "no_way" answer means this room is not a Way.
+  const noWay = view?.state === "no_way"
+  useEffect(() => { if (noWay) onNothing?.() }, [noWay, onNothing])
 
   const done = outputs.length
   const total = steps.length || 0

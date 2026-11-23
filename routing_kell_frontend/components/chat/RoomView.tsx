@@ -1835,7 +1835,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             never left staring at a blank pane. */}
         {roomIsWay && (
           <WayRunPanel
-            roomId={info[room]?.id}
+            // Fall back to the id in the URL: `info` is filled by sync a few seconds behind a cold load, and an
+            // undefined id here would blank the pane and bounce the person back to the conversation.
+            roomId={info[room]?.id || wantedRoomId || undefined}
             wayId={roomWayId || undefined}
             title={shownName(room)}
             onNothing={() => setRoomIsWay(false)}
