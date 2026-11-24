@@ -103,7 +103,106 @@ def test_a_way_with_no_inputs_is_ready_but_still_waits_for_start():
     assert out["run"] is None, "ready is not started"
 
 
+class _PaidPool(FakePool):
+    """A room on a Way with an explicit price and an explicit purchase standing.
+
+    The base fake answers any unknown `fetchval` with 1, which would read as a 1-paise Way -- so price and purchase
+    are stated here rather than inherited, or every test below would pass for the wrong reason.
+
+    Both ids are real UUIDs on purpose: procedure_billing._uuid returns None for anything else, and a None parent
+    id silently reads as "no purchase" rather than failing.
+    """
+
+    def __init__(self, *, price_paise, purchase, run=None, steps=None):
+        # The room must name the Way `start` is asked to run, or `start` refuses at its first check instead.
+        super().__init__(run=run, steps=steps or [], room={"id": "room-1", "way": "sub-1"})
+        self.price_paise = price_paise
+        self.purchase = purchase
+
+    async def fetchval(self, sql, *args):
+        if "price_paise FROM procedures" in sql:
+            return self.price_paise
+        if "parent_procedure_id::text FROM goal_submissions" in sql:
+            return PROC
+        return await super().fetchval(sql, *args)
+
+    async def fetch(self, sql, *args):
+        if "procedure_purchases" in sql:
+            if self.purchase is None:
+                return []
+            # purchase_status reads status/consumed_at/expires_at per row.
+            return [{"status": "paid",
+                     "consumed_at": None if self.purchase == "paid" else "2026-11-24T00:00:00+00:00",
+                     "expires_at": None}]
+        return await super().fetch(sql, *args)
+
+
+def _finished():
+    return {"id": "run-1", "status": "done", "next_step": 6, "owner_id": BUYER, "waiting": None}
+
+
+# A real UUID: procedure_billing._uuid returns None for anything else, which would silently read as "no purchase".
+BUYER = "0e2a3067-4ddd-4fef-831b-0bdb68343104"
+PROC = "01a1f4b9-ea5c-7e3d-a2e3-d0774d22980c"
+
+
+def test_a_spent_one_run_way_does_not_offer_another_run():
+    """The bug: a paid Way whose only output was produced still offered Start, which the licence gate refuses.
+
+    `way_runs.start` raises ProcedureAlreadyUsed, which the room route did not catch, so pressing it was a 500 and
+    the person sat on the step surface with nothing to do. readiness now says plainly that no run is possible.
+    """
+    pool = _PaidPool(price_paise=10000, purchase="used", run=_finished())
+    out = asyncio.run(rr.readiness(pool, room_id="room-1", submission_id="sub-1", owner_id=BUYER))
+    assert out["purchase"] == "used"
+    assert out["can_run"] is False
+
+
+def test_an_unbought_output_on_a_paid_way_can_run():
+    pool = _PaidPool(price_paise=10000, purchase="paid", run=_finished())
+    out = asyncio.run(rr.readiness(pool, room_id="room-1", submission_id="sub-1", owner_id=BUYER))
+    assert out["purchase"] == "paid"
+    assert out["can_run"] is True
+
+
+def test_a_paid_way_with_no_purchase_at_all_cannot_run():
+    """Not signed in (or never bought): the gate refuses, so the pane must not draw a Start that cannot work."""
+    pool = _PaidPool(price_paise=10000, purchase=None, run=_finished())
+    out = asyncio.run(rr.readiness(pool, room_id="room-1", submission_id="sub-1", owner_id=None))
+    assert out["purchase"] == "nobody"
+    assert out["can_run"] is False
+
+
+def test_a_free_way_can_always_run_again():
+    """A free Way has no licence, so a finished run is only a fact, not an exhausted budget."""
+    pool = _PaidPool(price_paise=None, purchase=None, run=_finished())
+    out = asyncio.run(rr.readiness(pool, room_id="room-1", submission_id="sub-1", owner_id=BUYER))
+    assert out["purchase"] == "none"
+    assert out["can_run"] is True
+
+
+def test_a_free_way_can_run_even_when_nobody_is_signed_in():
+    pool = _PaidPool(price_paise=None, purchase=None, run=_finished())
+    out = asyncio.run(rr.readiness(pool, room_id="room-1", submission_id="sub-1", owner_id=None))
+    assert out["can_run"] is True
+
+
 # --- required inputs -------------------------------------------------------------------------------------
+
+def test_a_spent_one_run_way_refuses_start_before_reaching_the_gate():
+    """The refusal must be a sentence, not the gate's exception escaping as a 500.
+
+    `way_runs.start` raises ProcedureAlreadyUsed for a spent purchase; that is not a RoomRunError, so the room route
+    could not turn it into a message and the pane showed nothing. `start` now answers first, in the room's words.
+    """
+    pool = _PaidPool(price_paise=10000, purchase="used", run=None, steps=[])
+    with pytest.raises(rr.RoomRunError) as exc:
+        asyncio.run(rr.start(pool, room_id="room-1", submission_id="sub-1", supplied={}, owner_id=BUYER))
+    assert exc.value.status_code == 402
+    assert "buy another output" in str(exc.value)
+    # Refused before any run was written: a person who cannot run is never charged for one.
+    assert not any("INSERT INTO way_runs" in sql for sql, _ in pool.writes)
+
 
 def test_a_missing_required_input_is_named():
     needed = [{"step": 1, "key": "topic", "required": True, "label": "Topic"}]

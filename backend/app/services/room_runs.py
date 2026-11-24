@@ -86,6 +86,10 @@ async def prepare(pool: Any, *, owner_sub: str, submission_id: str) -> dict[str,
 async def _live_run(pool: Any, room_id: str) -> Optional[dict[str, Any]]:
     """The room's most recent run, with what the pane and `resume` need to act on it.
 
+    Despite the name this deliberately returns a FINISHED run too: `readiness` needs to know a run exists and how
+    it ended in order to say "done"/"failed", and `start` refuses a second run only when one is still in flight
+    (it checks `status` itself). What a caller must not assume is that a non-None answer means "work happening".
+
     `waiting` is what names the paused step (a run stopped on a person is indistinguishable from a stuck one
     without it), and `owner_id` is what `resume` checks before letting anyone continue it.
     """
@@ -238,6 +242,21 @@ async def start(
     if missing:
         raise RoomRunError(f"these inputs are needed first: {', '.join(missing)}", 400)
 
+    # Answer the licence question here, in the room's own words, BEFORE `way_runs.start` reaches its gate. The gate
+    # raises ProcedureAlreadyUsed, which is not a RoomRunError, so the route would let it through as a 500 and the
+    # pane would show nothing actionable. Checking first means a spent purchase reads as the plain sentence below.
+    purchase, price = await _purchase_standing(pool, room_id=str(room_id), submission_id=str(submission_id),
+                                               owner_id=None if owner_id is None else str(owner_id))
+    if price and purchase == "used":
+        raise RoomRunError(
+            "this output was already produced and this Way is paid per output; buy another output from the Way's "
+            "page to run it again", 402)
+    if price and purchase == "nobody":
+        raise RoomRunError("sign in to run this Way: it is paid per output", 401)
+    if price and purchase != "paid":
+        raise RoomRunError("this Way is paid per output and there is no unbought output for you; "
+                           "buy one from the Way's page", 402)
+
     from app.execution import way_runs
 
     row = await pool.fetchrow(
@@ -259,22 +278,69 @@ async def start(
             "inputs": needed}
 
 
-async def readiness(pool: Any, *, room_id: str, submission_id: str) -> dict[str, Any]:
-    """What the main pane should show: the inputs to ask for, or the running steps."""
+async def readiness(pool: Any, *, room_id: str, submission_id: str,
+                    owner_id: Optional[str] = None) -> dict[str, Any]:
+    """What the main pane should show: the inputs to ask for, or the running steps.
+
+    Also answers *whether another run is possible at all*, which the pane cannot work out for itself. A one-run
+    Way is bought once and produces one output (docs/procedure_billing.md, db/217), so a finished run on a paid
+    Way whose purchases are spent must NOT offer "Run again" -- pressing it would call way_runs.start, hit the
+    licence gate and raise ProcedureAlreadyUsed, which the room route does not catch. The person then sits on the
+    step surface with no way forward, which is what "it still goes to that page" was (owner, 2026-11-24).
+
+    `purchase` is the buyer's standing on THIS version: none | paid | used | refunded. `can_run` means a Start
+    would be accepted right now. A free Way is always runnable; a paid one only while an output is unbought.
+    """
     needed = await inputs_needed(pool, submission_id=submission_id)
     live = await _live_run(pool, room_id)
+
+    purchase, price = await _purchase_standing(pool, room_id=room_id, submission_id=submission_id,
+                                               owner_id=owner_id)
+    # A free Way (no price) is always runnable. A priced one only with an unbought output, and only for a signed-in
+    # buyer -- 'nobody' and 'used' are both refusals the licence gate would make, so `can_run` mirrors it exactly.
+    can_run = purchase == "paid" if price else True
+
     if live and live["status"] not in ("cancelled",):
         # Pass the run's own status through instead of collapsing the waiting states into "running": the pane needs
         # to tell a run that is working from one paused on a person (2026-11-23 -- a paused run rendered as finished).
         state = live["status"] if live["status"] in ("waiting_human", "waiting_session", "done", "failed") else "running"
         return {"state": state, "run": live, "inputs": needed, "waiting": live.get("waiting"),
-                "submission_id": str(submission_id)}
+                "submission_id": str(submission_id), "purchase": purchase, "can_run": can_run,
+                "price_paise": price}
     if needed:
         return {"state": "needs_inputs", "run": None, "inputs": needed,
-                "submission_id": str(submission_id)}
+                "submission_id": str(submission_id), "purchase": purchase, "can_run": can_run,
+                "price_paise": price}
     # No declared inputs: the person still presses Start, because a run must never begin from a page they landed on.
     return {"state": "ready", "run": None, "inputs": [],
-            "submission_id": str(submission_id)}
+            "submission_id": str(submission_id), "purchase": purchase, "can_run": can_run,
+            "price_paise": price}
+
+
+async def _purchase_standing(pool: Any, *, room_id: str, submission_id: str,
+                             owner_id: Optional[str]) -> tuple[str, Optional[int]]:
+    """(purchase status for this buyer on this version, price in paise).
+
+    A room knows the Way it runs but not who is looking; the route passes the signed-in subject. Without one, the
+    answer is "none": the pane then shows the normal Start, and the licence gate still refuses at the one place
+    that matters rather than this function inventing a refusal.
+    """
+    from app.services import procedure_billing as pb
+
+    parent = await pool.fetchval(
+        "SELECT parent_procedure_id::text FROM goal_submissions WHERE id = $1::uuid", str(submission_id))
+    if not parent:
+        return "none", None
+    price = await pool.fetchval(
+        "SELECT price_paise FROM procedures WHERE id::text = $1 AND t_invalid IS NULL", str(parent))
+    if not price or int(price) <= 0:
+        return "none", None
+    if not owner_id:
+        # A priced Way and nobody signed in: the licence gate refuses this, so say so rather than letting the pane
+        # draw a Start that is guaranteed to fail.
+        return "nobody", int(price)
+    status = await pb.purchase_status(pool, procedure_row_id=parent, buyer_user_id=str(owner_id))
+    return status, int(price)
 
 
 async def resume(pool: Any, *, room_id: str, note: str, owner_id: str) -> dict[str, Any]:

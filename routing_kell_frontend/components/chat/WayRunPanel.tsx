@@ -34,6 +34,12 @@ type RunState = {
   inputs: InputDef[]
   submission_id?: string
   waiting?: { kind?: string; order?: number; title?: string; description?: string } | null
+  /** This buyer's standing on this version: none | paid | used | refunded | nobody (priced, not signed in). */
+  purchase?: "none" | "paid" | "used" | "refunded" | "nobody"
+  /** Whether a Start would be accepted now. False on a paid Way whose one output was already produced. */
+  can_run?: boolean
+  /** The version's price in paise, or null for a free Way. */
+  price_paise?: number | null
 }
 type Output = { order: number; title: string; output: string }
 type FileOut = { name: string; size_bytes?: number; media_type?: string; text?: boolean; url: string }
@@ -143,6 +149,8 @@ export default function WayRunPanel({
 
   const noWay = view?.state === "no_way"
   useEffect(() => { if (noWay) onNothing?.() }, [noWay, onNothing])
+  /** Whether a Start would be accepted. Defaults to true so an older server, or a free Way, keeps working. */
+  const canRun = view?.can_run !== false
 
   async function start() {
     if (!roomId) return
@@ -282,7 +290,7 @@ export default function WayRunPanel({
         </section>
       )}
 
-      {(showAgain || (!running && !paused && !finished)) && (
+      {(showAgain || (!running && !paused && !finished)) && canRun && (
         <div className="dg-way-act">
           <button type="button" className="dg-way-start" disabled={busy || !view} onClick={() => void start()}>
             {busy ? "Starting…" : view?.state === "needs_inputs" || showAgain ? "Start with these answers" : "Start"}
@@ -298,16 +306,20 @@ export default function WayRunPanel({
           <p className="dg-way-note">
             {view?.state === "done" ? "Finished." : "Stopped with a failure — the steps above show how far it got."}
           </p>
-          {/* A finished room could never run again from the UI, and its declared inputs were never shown: the form
-              is rendered for needs_inputs only, while readiness returns them whatever the state. */}
-          <button
-            type="button"
-            className="dg-way-start"
-            disabled={busy}
-            onClick={() => { setShowAgain(true); }}
-          >
-            Run again
-          </button>
+          {canRun ? (
+            /* A finished room could never run again from the UI, and its declared inputs were never shown: the form
+               is rendered for needs_inputs only, while readiness returns them whatever the state. */
+            <button type="button" className="dg-way-start" disabled={busy} onClick={() => { setShowAgain(true); }}>
+              Run again
+            </button>
+          ) : (
+            /* A one-run Way produces one output per purchase (db/217). Once it is spent, "Run again" would call the
+               licence gate and be refused, so the honest next step is another output, said where the button was. */
+            <p className="dg-way-note">
+              This Way is paid per output, and this output was already produced. Buy another output on the Way&apos;s
+              page to run it again — the files above stay here.
+            </p>
+          )}
         </div>
       )}
 

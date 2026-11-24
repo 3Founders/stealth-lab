@@ -187,7 +187,7 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
             "SELECT way_submission_id::text AS way FROM rooms WHERE id = $1::uuid AND deleted_at IS NULL", str(rid))
         if room is None or not room["way"]:
             return _json(request, {"state": "no_way", "run": None, "inputs": []})
-        out = await rr.readiness(pool, room_id=str(rid), submission_id=room["way"])
+        out = await rr.readiness(pool, room_id=str(rid), submission_id=room["way"], owner_id=subject)
         return _json(request, out)
 
     @server.custom_route("/v1/rooms/{room_id}/run/start", methods=["POST", "OPTIONS"], include_in_schema=False)
@@ -206,6 +206,14 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
                                  supplied=values, owner_id=subject)
         except rr.RoomRunError as exc:
             return _error(request, str(exc), exc.status_code)
+        except Exception as exc:  # noqa: BLE001 -- the licence gate's refusals are named, not generic 500s
+            # way_runs.start raises ProcedureAlreadyUsed / ProcedureNotPurchased / ProcedureInUse when its gate
+            # refuses. They are not RoomRunError, so without this a spent purchase answered 500 and the pane had
+            # nothing to show. Translate by name so this file does not import the billing module's hierarchy.
+            name = type(exc).__name__
+            if name in ("ProcedureAlreadyUsed", "ProcedureNotPurchased", "ProcedureInUse"):
+                return _error(request, str(exc), 402)
+            raise
         return _json(request, out)
 
     @server.custom_route("/v1/rooms/{room_id}/run/restart", methods=["POST", "OPTIONS"], include_in_schema=False)
