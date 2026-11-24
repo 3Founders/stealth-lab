@@ -1968,7 +1968,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <span className="dim">Replying to {replyingTo.sender.handle === HUMAN.handle ? "yourself" : nameOf(replyingTo.sender.handle)}:</span> <span className="dg-queued-text">{quoteText(replyingTo.payload.text)}</span>
             <button type="button" aria-label="Cancel the reply" title="Cancel the reply" onClick={() => setReplyingTo(null)}>×</button>
           </div>)}
-        <Composer onEscape={replyingTo ? () => setReplyingTo(null) : editing ? () => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); } : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} procedureMode={procMode} onProcedureMode={chooseProcMode} />
+        <Composer onEscape={replyingTo ? () => setReplyingTo(null) : editing ? () => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); } : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} procedureMode={procMode} onProcedureMode={chooseProcMode} onAddAgent={() => { setAdding(true); setFormError(""); }} />
         </>)}
       </section>
       {/* The room's right rail: other Ways for this goal, and a labelled advertising slot (owner, 2026-11-23: the

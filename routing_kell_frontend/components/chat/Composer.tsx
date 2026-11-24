@@ -17,11 +17,13 @@ import { fileKind, formatSize, whyNotFile } from "@/lib/chat/files";
 const MAX_MESSAGE = 8000;
 const wordCount = (t: string): number => (t.trim() ? t.trim().split(/\s+/).length : 0);
 
-export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true, draft, onEscape, procedureMode, onProcedureMode }: { handles: string[]; agentHandles?: string[];
+export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true, draft, onEscape, procedureMode, onProcedureMode, onAddAgent }: { handles: string[]; agentHandles?: string[];
   /** Escape in the box when no suggestion list is open (cancels a reply). */
   onEscape?: () => void;
   /** Direct / Auto / Ask: how a prompt is handled before the model runs (the rooms' procedure picker). */
   procedureMode?: "direct" | "auto" | "ask"; onProcedureMode?: (mode: "direct" | "auto" | "ask") => void;
+  /** Opens "+ Add agent". Absent in a Way's room, where the conversation is not what the person came for. */
+  onAddAgent?: () => void;
   /** Puts text in the box (a new `n` replaces what is there): "Ask Kell to revise", a suggestion. */
   draft?: { text: string; n: number }; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
   const [text, setText] = useState("");
@@ -215,6 +217,14 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
       />
       <div className="dg-composer-meta">
       {text.trim() && <span className="dg-count" aria-live="off">{wordCount(text)} {wordCount(text) === 1 ? "word" : "words"}{text.length >= MAX_MESSAGE - 1000 ? ` · ${text.length} / ${MAX_MESSAGE}` : ""}</span>}
+        {/* "+ Add agent" in the middle pane, not only the sidebar: the person is already looking here, and the
+            composer's own placeholder has always advertised /add-agent. A word button, not an icon, so it reads
+            as an action rather than another tool in the row (labels must not change width on hover). */}
+        {onAddAgent && (
+          <button type="button" className="dg-addagent" onClick={onAddAgent} title="Add a model assistant to this room">
+            + Add agent
+          </button>
+        )}
         <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); if (ref.current) ref.current.style.height = ""; ref.current?.focus(); }} aria-pressed={big} aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
       </button>
