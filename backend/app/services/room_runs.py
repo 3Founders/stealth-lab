@@ -234,7 +234,12 @@ async def start(
         str(room_id))
     if room is None or room["way"] != str(submission_id):
         raise RoomRunError("this room is not for that Way", 404)
-    if await _live_run(pool, str(room_id)) is not None:
+    # Only work in flight blocks a start. `_live_run` also returns a FINISHED run (readiness needs that), so testing
+    # it for None refused every second purchase: the person bought another output, came back to the one room this
+    # (owner, Way) is allowed, and was told "already running" by a run that ended hours ago (proven 2026-11-24 --
+    # the licence gate allowed the run while this check refused it).
+    in_flight = await _live_run(pool, str(room_id))
+    if in_flight is not None and in_flight["status"] not in ("done", "failed", "cancelled"):
         raise RoomRunError("this Way is already running in this room", 409)
 
     needed = await inputs_needed(pool, submission_id=str(submission_id))
@@ -304,8 +309,13 @@ async def readiness(pool: Any, *, room_id: str, submission_id: str,
         # Pass the run's own status through instead of collapsing the waiting states into "running": the pane needs
         # to tell a run that is working from one paused on a person (2026-11-23 -- a paused run rendered as finished).
         state = live["status"] if live["status"] in ("waiting_human", "waiting_session", "done", "failed") else "running"
+        # A finished run and an unbought output together mean the room is showing LAST run's files while a new run
+        # is available -- the re-buyer's case. `state` stays "done" so the files stay where they are; this flag is
+        # what tells the pane to offer Start above them. Without it the person pays again and sees "Finished".
+        finished = state in ("done", "failed")
         return {"state": state, "run": live, "inputs": needed, "waiting": live.get("waiting"),
                 "submission_id": str(submission_id), "purchase": purchase, "can_run": can_run,
+                "can_start_again": bool(finished and can_run),
                 "price_paise": price}
     if needed:
         return {"state": "needs_inputs", "run": None, "inputs": needed,

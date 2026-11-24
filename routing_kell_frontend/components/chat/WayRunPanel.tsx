@@ -38,6 +38,8 @@ type RunState = {
   purchase?: "none" | "paid" | "used" | "refunded" | "nobody"
   /** Whether a Start would be accepted now. False on a paid Way whose one output was already produced. */
   can_run?: boolean
+  /** A finished run is on screen AND another run is available (the re-buyer's case). */
+  can_start_again?: boolean
   /** The version's price in paise, or null for a free Way. */
   price_paise?: number | null
 }
@@ -304,7 +306,13 @@ export default function WayRunPanel({
       {finished && (
         <div className="dg-way-act">
           <p className="dg-way-note">
-            {view?.state === "done" ? "Finished." : "Stopped with a failure — the steps above show how far it got."}
+            {view?.state === "done"
+              ? view?.can_start_again
+                /* The person bought another output and came back to this same room (one room per owner and Way):
+                   the files below are the previous output, and a new run is ready. */
+                ? "Finished. This is the output you already have — the run below will produce a new one."
+                : "Finished."
+              : "Stopped with a failure — the steps above show how far it got."}
           </p>
           {canRun ? (
             /* A finished room could never run again from the UI, and its declared inputs were never shown: the form

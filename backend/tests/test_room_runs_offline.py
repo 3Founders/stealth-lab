@@ -189,6 +189,30 @@ def test_a_free_way_can_run_even_when_nobody_is_signed_in():
 
 # --- required inputs -------------------------------------------------------------------------------------
 
+def test_a_finished_run_does_not_block_a_second_purchase_from_starting():
+    """A room is unique per (owner, Way), so a person who buys another output comes back to the SAME room.
+
+    That room already holds their finished run, and `_live_run` returns finished runs too (readiness needs them).
+    Testing it for None refused every second purchase with "already running" while the licence gate allowed it.
+    """
+    pool = _PaidPool(price_paise=10000, purchase="paid", run=_finished())
+    # The fake stops inside way_runs.start (it does not model that module); what matters here is that the ROOM
+    # refused nothing and reached it. A 409 would have stopped us before any run was written.
+    with pytest.raises(Exception) as exc:
+        asyncio.run(rr.start(pool, room_id="room-1", submission_id="sub-1", supplied={}, owner_id=BUYER))
+    assert not isinstance(exc.value, rr.RoomRunError) or exc.value.status_code != 409, str(exc.value)
+
+
+def test_a_run_still_in_flight_does_block_a_second_start():
+    """The other side of the same check: two live runs on one room would spend two purchases on one output."""
+    pool = _PaidPool(price_paise=10000, purchase="paid",
+                     run={"id": "run-1", "status": "running", "next_step": 3, "owner_id": BUYER, "waiting": None})
+    with pytest.raises(rr.RoomRunError) as exc:
+        asyncio.run(rr.start(pool, room_id="room-1", submission_id="sub-1", supplied={}, owner_id=BUYER))
+    assert exc.value.status_code == 409
+    assert not any("INSERT INTO way_runs" in sql for sql, _ in pool.writes)
+
+
 def test_a_spent_one_run_way_refuses_start_before_reaching_the_gate():
     """The refusal must be a sentence, not the gate's exception escaping as a 500.
 
