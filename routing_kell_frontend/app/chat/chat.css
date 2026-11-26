@@ -31,16 +31,27 @@
   transition: transform var(--dg-smooth-d, .5s) var(--dg-smooth, cubic-bezier(.22, 1, .36, 1));
 }
 
-/* One step per slide: the deck IS the step surface (owner, 2026-11-26: "for each step, there should be slide").
-   The slide is the page -- title, its own output, its own files -- and the rail under it is how a person goes back
-   to a step already seen. Centred from the top like the rest of the pane, on the site's tokens: no new sizes. */
-.dg-way-deck { display: grid; gap: 18px; }
-.dg-way-slide { display: grid; gap: 14px; align-content: start; text-align: left;
-  padding: 22px 24px 26px; border: 1px solid var(--rule); border-radius: var(--dg-r-btn, 12px);
-  background: var(--dg-glass, var(--surface)); box-shadow: var(--dg-lift, 0 2px 10px rgba(0, 0, 0, .07));
-  min-height: 240px; }
-/* A step stopped on a person carries the site's accent, the same signal the list used for `review`. */
-.dg-way-slide[data-state="review"] { border-color: var(--yellow); }
+/* One step per slide, in a horizontal track (owner, 2026-11-26: "this has vertical scroll, we need horizontal, and
+   in the bottom there must be steps"). The frame is a fixed window: nothing pans or zooms inside it, and the track
+   slides by exactly one frame per step, so moving is a single transform. Only transform animates (docs/ios_animation.md
+   §6 rule 1); the curve is the repo's smooth spring, with the Apple ease as the literal fallback. */
+.dg-way-deck { display: grid; gap: 0; min-height: 0; }
+.dg-way-track-frame { position: relative; overflow: hidden; min-height: 320px; }
+.dg-way-track {
+  display: flex; height: 100%; max-height: 52vh;
+  transition: transform var(--dg-smooth-d, .5s) var(--dg-smooth, cubic-bezier(.22, 1, .36, 1));
+  will-change: transform;
+}
+.dg-way-slide {
+  flex: 0 0 100%; min-width: 0; box-sizing: border-box;
+  display: grid; gap: 14px; align-content: start; text-align: left;
+  padding: 6px 24px 18px; overflow-y: auto; overscroll-behavior: contain;
+}
+/* A step off the track is not drawn: it cannot be reached by tab or read out, and it costs nothing to paint. */
+.dg-way-slide:not([data-current]) { visibility: hidden; }
+.dg-way-slide[data-current] { visibility: visible; }
+/* A step stopped on a person carries the site's accent, the same signal the strip uses for `review`. */
+.dg-way-slide[data-state="review"] .dg-way-slide-title { color: var(--ink); }
 .dg-way-slide-top { display: flex; align-items: center; gap: 10px; }
 .dg-way-slide-count { margin-left: auto; font-size: 12.5px; color: var(--grey); font-variant-numeric: tabular-nums; }
 .dg-way-slide-title { margin: 0; font: inherit; font-size: 19px; font-weight: 500; line-height: 1.35; color: var(--ink); }
@@ -49,27 +60,65 @@
 .dg-way-slide-out { margin: 0; font-size: 14.5px; line-height: 1.65; color: var(--grey);
   overflow-wrap: anywhere; max-width: 62ch; }
 .dg-way-slide-out > :first-child { margin-top: 0; }
-.dg-way-slide-out pre { max-height: 46vh; overflow: auto; }
-.dg-way-slide-files { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px;
+.dg-way-slide-out pre { max-height: 40vh; overflow: auto; }
+.dg-way-slide-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px;
   font-size: 13px; color: var(--grey); }
-.dg-way-slide-files li { display: inline-flex; gap: 8px; align-items: baseline; }
-.dg-way-deck-nav { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.dg-way-slide-files > li { display: grid; gap: 8px; }
+.dg-way-slide-files .dg-way-filerow { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+/* The viewer: a fixed frame, never panned or zoomed. Every kind of file sits inside it, so the deck's geometry does
+   not change with the file (owner, 2026-11-26: "unmovable and unpannable ... a viewer for each step's outputs"). */
+.dg-way-viewimg { display: block; max-width: 100%; max-height: 42vh; object-fit: contain;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+.dg-way-viewpdf, .dg-way-viewframe { display: block; width: 100%; height: 42vh; border: 1px solid var(--rule);
+  border-radius: 8px; background: var(--surface); }
+.dg-way-viewsrc { margin: 0; max-height: 42vh; overflow: auto; padding: 12px 14px; border: 1px solid var(--rule);
+  border-radius: 8px; background: var(--surface); font-size: 12.5px; line-height: 1.55;
+  white-space: pre; tab-size: 2; }
+.dg-way-viewtable { max-height: 42vh; overflow: auto; border: 1px solid var(--rule); border-radius: 8px; }
+.dg-way-viewtable table { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+.dg-way-viewtable th, .dg-way-viewtable td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--rule);
+  white-space: nowrap; }
+.dg-way-viewtable th { position: sticky; top: 0; background: var(--dg-glass-strong, var(--surface)); font-weight: 500; }
+.dg-way-viewerr { margin: 0; font-size: 13.5px; color: var(--ink); border-left: 2px solid var(--ink); padding-left: 12px; }
+
+/* The steps, along the bottom. Numbered tabs that scroll sideways, the current one raised on the site's yellow: the
+   strip is what tells you how far through a Way you are, so it never scrolls out of view with the slide. */
+.dg-way-strip { display: flex; align-items: center; gap: 10px; padding: 12px 0 2px;
+  border-top: 1px solid var(--rule); }
+.dg-way-strip-list { list-style: none; margin: 0; padding: 2px 2px 6px; display: flex; gap: 8px;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; flex: 1; min-width: 0; scroll-behavior: smooth; }
+.dg-way-strip-list li { flex: none; }
+.dg-way-tab {
+  font: inherit; display: inline-flex; align-items: center; gap: 7px; max-width: 220px;
+  padding: 6px 11px; border: 1px solid var(--rule-strong); border-radius: 999px; background: var(--dg-glass, var(--surface));
+  color: var(--text-2); cursor: pointer; white-space: nowrap;
+  transition: background-color var(--dg-micro-d, .16s) var(--dg-micro, ease),
+    border-color var(--dg-micro-d, .16s) var(--dg-micro, ease),
+    color var(--dg-micro-d, .16s) var(--dg-micro, ease),
+    transform var(--dg-micro-d, .16s) var(--dg-micro, ease);
+}
+.dg-way-tab:hover { border-color: var(--ink); color: var(--ink); transform: translateY(-1px); }
+.dg-way-tab:active { transform: scale(.97); }
+.dg-way-tab[aria-current="step"] { background: var(--yellow); border-color: var(--yellow); color: var(--on-yellow, #171717); font-weight: 500; }
+.dg-way-tab[aria-current="step"] .dg-way-tab-n { border-color: currentColor; }
+.dg-way-tab[data-state="review"] { border-color: var(--yellow); }
+.dg-way-tab-n { flex: none; width: 18px; height: 18px; display: inline-grid; place-items: center;
+  font-size: 10.5px; line-height: 1; border: 1px solid var(--rule-strong); border-radius: 999px; }
+.dg-way-tab-t { overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
 .dg-way-arrow { font: inherit; font-size: 16px; line-height: 1; width: 34px; height: 34px; display: inline-grid;
   place-items: center; padding: 0; border: 1px solid var(--rule-strong); border-radius: 999px; background: none;
-  color: var(--ink); cursor: pointer; }
+  color: var(--ink); cursor: pointer; flex: none; }
 .dg-way-arrow:hover:not(:disabled) { background: var(--yellow); border-color: var(--yellow); color: #171717; }
 .dg-way-arrow:disabled { color: var(--rule-strong); cursor: default; }
-/* The rail: one dot per step, so the length of the Way is visible at a glance and any step is one click away. */
-.dg-way-rail { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
-.dg-way-rail button { width: 10px; height: 10px; padding: 0; border-radius: 999px; border: 1px solid var(--rule-strong);
-  background: none; cursor: pointer; transition: background-color var(--dg-micro-d, .16s) var(--dg-micro, ease),
-  border-color var(--dg-micro-d, .16s) var(--dg-micro, ease), transform var(--dg-micro-d, .16s) var(--dg-micro, ease); }
-.dg-way-rail button:hover { transform: scale(1.25); border-color: var(--ink); }
-.dg-way-rail button[data-state="done"] { background: var(--ink); border-color: var(--ink); }
-.dg-way-rail button[data-state="running"] { background: var(--yellow); border-color: var(--ink); }
-.dg-way-rail button[data-state="review"] { background: var(--yellow); border-color: var(--ink); }
-.dg-way-rail button[aria-current="step"] { box-shadow: 0 0 0 2px var(--dg-glass, var(--surface)), 0 0 0 3px var(--ink); }
-@media (prefers-reduced-motion: reduce) { .dg-way-rail button { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .dg-way-track, .dg-way-tab, .dg-way-strip-list { transition: none; }
+  .dg-way-tab:hover { transform: none; }
+}
+@media (max-width: 760px) {
+  .dg-way-track { max-height: none; }
+  .dg-way-slide { padding: 4px 14px 14px; }
+  .dg-way-tab { max-width: 150px; }
+}
 
 .dg-way-steps { list-style: none; margin: 0; padding: 0; display: grid; }.dg-way-steps li { display: flex; gap: 14px; align-items: baseline; padding: 11px 0;
   font-size: 15px; line-height: 1.5; color: var(--grey); border-top: 1px solid var(--rule); }

@@ -77,6 +77,97 @@ async function fetchText(url: string): Promise<string> {
   return await res.text()
 }
 
+/**
+ * One file, shown in place, fixed and unpannable: an image, a PDF, an HTML page, or text laid out by its own kind.
+ *
+ * The bytes come from `/v1/goals/runs/<id>/artifacts/<name>?mode=view`, which answers with the file's real media type
+ * and `Content-Disposition: inline`. Nothing here is fetched twice: text is fetched by `viewFile` (so it can be shown
+ * as markdown or CSV), while images, PDFs and HTML are handed to the browser by URL, which lets it use its own viewer
+ * and keeps a paid file out of this component's memory.
+ */
+function FileViewer({ file, text, error }: { file: FileOut; text: string; error: string | null }) {
+  const src = `${file.url}${file.url.includes("?") ? "&" : "?"}mode=view`
+  const type = (file.media_type || "").toLowerCase()
+
+  if (error) return <p className="dg-way-viewerr" role="alert">This file could not be read: {error}</p>
+
+  if (type.startsWith("image/")) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img className="dg-way-viewimg" src={src} alt={file.name} />
+  }
+  if (type === "application/pdf") {
+    return <embed className="dg-way-viewpdf" src={src} type="application/pdf" title={file.name} />
+  }
+  if (type === "text/html") {
+    // The same sandbox the room uses for an agent's page: it cannot read this tab, the room or the account.
+    return (
+      <iframe className="dg-way-viewframe" title={file.name} src={src}
+              sandbox="allow-scripts allow-forms allow-modals allow-popups" referrerPolicy="no-referrer" />
+    )
+  }
+  if (!file.text) {
+    return (
+      <p className="dg-way-note">
+        {file.name} cannot be shown in the page. Use Download to open it.
+      </p>
+    )
+  }
+  if (!text) return <p className="dg-way-note" aria-busy="true">Reading {file.name}…</p>
+
+  if (type === "text/csv") return <CsvTable text={text} />
+  if (type === "application/json") {
+    try {
+      return <pre className="dg-way-viewsrc"><code>{JSON.stringify(JSON.parse(text), null, 2)}</code></pre>
+    } catch {
+      return <pre className="dg-way-viewsrc"><code>{text}</code></pre>   // not valid JSON: show it as it came
+    }
+  }
+  if (type === "text/markdown") return <div className="dg-way-slide-out"><Markdown text={text} /></div>
+  return <pre className="dg-way-viewsrc"><code>{text}</code></pre>
+}
+
+/**
+ * A CSV as a table. Deliberately a small reader, not a CSV library: Way outputs are machine-written, so quoted commas
+ * and doubled quotes are handled and anything stranger falls back to the raw text rather than guessing.
+ */
+function CsvTable({ text }: { text: string }) {
+  const rows = parseCsv(text)
+  if (!rows.length) return <pre className="dg-way-viewsrc"><code>{text}</code></pre>
+  const [head, ...body] = rows
+  return (
+    <div className="dg-way-viewtable">
+      <table>
+        <thead><tr>{head.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
+        <tbody>
+          {body.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ""
+  let quoted = false
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i += 1 }
+      else if (ch === '"') quoted = false
+      else cell += ch
+      continue
+    }
+    if (ch === '"') { quoted = true; continue }
+    if (ch === ",") { row.push(cell); cell = ""; continue }
+    if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; continue }
+    if (ch !== "\r") cell += ch
+  }
+  if (cell.length || row.length) { row.push(cell); rows.push(row) }
+  return rows.filter((r) => r.some((c) => c.trim().length > 0))
+}
+
 function kb(n?: number): string {
   if (n == null) return ""
   return n < 1024 ? `${n} B` : `${Math.max(1, Math.round(n / 1024))} KB`
@@ -202,6 +293,10 @@ export default function WayRunPanel({
   async function viewFile(f: FileOut) {
     if (openFile === f.name) { setOpenFile(null); return }
     setOpenFile(f.name); setOpenText(""); setOpenErr(null)
+    // Images, PDFs and HTML are handed to the browser by URL, so only text-like files are read into memory here.
+    const type = (f.media_type || "").toLowerCase()
+    const byUrl = type.startsWith("image/") || type === "application/pdf" || type === "text/html" || !f.text
+    if (byUrl) return
     try {
       // `?mode=view` answers with the bytes inline. The download route redirects to a presigned storage URL, which
       // fetch() cannot read cross-origin (no CORS headers from the bucket), so View would fail without this.
@@ -275,6 +370,15 @@ export default function WayRunPanel({
 
   const idx = at != null ? Math.max(0, steps.findIndex((s) => s.order === at)) : 0
   const slide = steps[idx]
+  // Keep the current step's tab visible in the bottom strip as the deck moves: with sixteen steps the strip scrolls
+  // sideways, and the one you are on must not be the one you cannot see.
+  const stripRef = useRef<HTMLOListElement | null>(null)
+  useEffect(() => {
+    const el = stripRef.current?.querySelector<HTMLElement>('[aria-current="step"]')
+    // Optional call: `scrollIntoView` is absent in some embedded webviews and in jsdom, and a missing scroll helper
+    // must never take the pane down with it.
+    el?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+  }, [idx])
   const go = (n: number) => {
     if (!steps.length) return
     setDriven(true)
@@ -292,11 +396,6 @@ export default function WayRunPanel({
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [idx, steps.length])
-
-  const slideFiles = slide ? files.filter((f) => {
-    const wrote = outputs.find((o) => o.order === slide.order)
-    return wrote?.files?.some((x) => x.name === f.name)
-  }) : []
 
   return (
     <section className="dg-way-main" aria-label={title ? `${title}: steps and run` : "Way run"}>
@@ -342,70 +441,84 @@ export default function WayRunPanel({
 
       {total > 0 && slide && (
         <section className="dg-way-deck" aria-roledescription="carousel" aria-label="The steps">
-          {/* One step fills the pane. The rail below is how you go back to a step you have already seen; the
-              arrows move one at a time and the keyboard follows them. */}
-          <article
-            className="dg-way-slide"
-            data-state={stateOf(slide.order)}
-            data-human={slide.is_human ? "true" : "false"}
-            aria-label={`Step ${idx + 1} of ${total}: ${slide.title}`}
-          >
-            <div className="dg-way-slide-top">
-              <span className="dg-way-n" aria-hidden="true">{stateOf(slide.order) === "done" ? "✓" : slide.order}</span>
-              <span className="dg-way-slide-count">{idx + 1} / {total}</span>
-              {slide.is_human && <span className="dg-way-kind">you</span>}
-              {stateOf(slide.order) === "review" && <span className="dg-way-kind" data-tone="review">waiting</span>}
-            </div>
-            <h2 className="dg-way-slide-title">{slide.title}</h2>
-            {(() => {
-              const wrote = outputs.find((o) => o.order === slide.order)
-              // Rendered with the room's own markdown, not as one pre-wrapped blob: a step's output is JSON, code
-              // fences and prose, and 28,923 characters of that in a single paragraph is not readable -- which is
-              // half of "I'm not able to see previous output".
-              if (wrote?.output) return <div className="dg-way-slide-out"><Markdown text={wrote.output} /></div>
-              // Distinguish "this step has not written yet" from "its text did not reach this page". They look
-              // identical on screen otherwise, and the second is a bug: the run HAS the output (the room endpoint
-              // returns it), so saying "no output yet" would be false and would hide a real failure.
-              if (outputs.length > 0 || outputsError) {
+          {/* A horizontal track: every step is laid out side by side and the track slides, so moving between steps is
+              one transform, not a re-render of different content. Nothing here pans or zooms -- the frame is fixed and
+              a step's output is VIEWED inside it (owner, 2026-11-26: "unmovable and unpannable, we should just have a
+              viewer for each step's outputs"). Only transform and opacity animate (docs/ios_animation.md §6). */}
+          <div className="dg-way-track-frame">
+            <div className="dg-way-track" style={{ transform: `translate3d(-${idx * 100}%, 0, 0)` }}>
+              {steps.map((s, i) => {
+                const wrote = outputs.find((o) => o.order === s.order)
+                const current = i === idx
                 return (
-                  <p className="dg-way-slide-out dg-way-note">
-                    {outputsError
-                      ? `This run's text could not be read: ${outputsError}`
-                      : "This step's text did not load. The run has it — press Run again, or reload the page."}
-                  </p>
+                  <article
+                    key={s.order}
+                    className="dg-way-slide"
+                    data-state={stateOf(s.order)}
+                    data-human={s.is_human ? "true" : "false"}
+                    data-current={current ? "true" : undefined}
+                    // A step off-screen is hidden from the reader and from tab order, but stays mounted so the track
+                    // can slide: unmounting would make the move a jump.
+                    aria-hidden={current ? undefined : true}
+                    aria-label={`Step ${i + 1} of ${total}: ${s.title}`}
+                  >
+                    <div className="dg-way-slide-top">
+                      <span className="dg-way-n" aria-hidden="true">{stateOf(s.order) === "done" ? "✓" : s.order}</span>
+                      <span className="dg-way-slide-count">{i + 1} / {total}</span>
+                      {s.is_human && <span className="dg-way-kind">you</span>}
+                      {stateOf(s.order) === "review" && <span className="dg-way-kind" data-tone="review">waiting</span>}
+                    </div>
+                    <h2 className="dg-way-slide-title">{s.title}</h2>
+                    {wrote?.output
+                      ? <div className="dg-way-slide-out"><Markdown text={wrote.output} /></div>
+                      : outputs.length > 0 || outputsError
+                        ? <p className="dg-way-slide-out dg-way-note">
+                            {outputsError
+                              ? `This run's text could not be read: ${outputsError}`
+                              : "This step's text did not load. The run has it — press Run again, or reload the page."}
+                          </p>
+                        : <p className="dg-way-slide-out dg-way-note">
+                            {stateOf(s.order) === "running" ? "Working on this step now…"
+                              : stateOf(s.order) === "review" ? "This step waits for you." : "No output from this step yet."}
+                          </p>}
+                    {(wrote?.files?.length ?? 0) > 0 && (
+                      // The step's files are listed here, by name; opening one happens in Files below, so there is
+                      // exactly one viewer per file and the slide stays a slide.
+                      <ul className="dg-way-slide-files">
+                        {wrote!.files!.map((f) => (
+                          <li key={f.name}><span className="dg-way-fname">{f.name}</span><span className="dg-way-fsize">{kb(f.size_bytes)}</span></li>
+                        ))}
+                      </ul>
+                    )}
+                  </article>
                 )
-              }
-              return (
-                <p className="dg-way-slide-out dg-way-note">
-                  {stateOf(slide.order) === "running" ? "Working on this step now…"
-                    : stateOf(slide.order) === "review" ? "This step waits for you." : "No output from this step yet."}
-                </p>
-              )
-            })()}
-            {slideFiles.length > 0 && (
-              <ul className="dg-way-slide-files">
-                {slideFiles.map((f) => (
-                  <li key={f.name}><span className="dg-way-fname">{f.name}</span><span className="dg-way-fsize">{kb(f.size_bytes)}</span></li>
-                ))}
-              </ul>
-            )}
-          </article>
+              })}
+            </div>
+          </div>
 
-          <div className="dg-way-deck-nav">
+          {/* The steps, along the bottom: numbered, named, and one click from any step. This is where the Way's shape
+              lives -- the slide is always one step, so the strip is what tells you how far through you are. */}
+          <nav className="dg-way-strip" aria-label="Steps">
             <button type="button" className="dg-way-arrow" onClick={() => go(idx - 1)} disabled={idx === 0} aria-label="Previous step">←</button>
-            <ol className="dg-way-rail" aria-label="Jump to a step">
+            <ol className="dg-way-strip-list" ref={stripRef}>
               {steps.map((s, i) => (
                 <li key={s.order}>
                   <button
-                    type="button" aria-current={i === idx ? "step" : undefined}
-                    aria-label={`Step ${s.order}: ${s.title}`} title={`Step ${s.order}: ${s.title}`}
-                    data-state={stateOf(s.order)} onClick={() => go(i)}
-                  />
+                    type="button"
+                    className="dg-way-tab"
+                    aria-current={i === idx ? "step" : undefined}
+                    data-state={stateOf(s.order)}
+                    onClick={() => go(i)}
+                    title={`Step ${s.order}: ${s.title}`}
+                  >
+                    <span className="dg-way-tab-n">{stateOf(s.order) === "done" ? "✓" : s.order}</span>
+                    <span className="dg-way-tab-t">{s.title}</span>
+                  </button>
                 </li>
               ))}
             </ol>
             <button type="button" className="dg-way-arrow" onClick={() => go(idx + 1)} disabled={idx === steps.length - 1} aria-label="Next step">→</button>
-          </div>
+          </nav>
         </section>
       )}
 
@@ -481,13 +594,7 @@ export default function WayRunPanel({
                       <button type="button" onClick={() => void downloadOne(f)}>Download</button>
                     </span>
                   </div>
-                  {open && (
-                    <div className="dg-way-fileview">
-                      {openErr ? <p className="dg-way-error">{openErr}</p>
-                        : openText ? <pre>{openText}</pre>
-                        : <p className="dg-way-note">Reading…</p>}
-                    </div>
-                  )}
+                  {open && <FileViewer file={f} text={openText} error={openErr} />}
                 </li>
               )
             })}

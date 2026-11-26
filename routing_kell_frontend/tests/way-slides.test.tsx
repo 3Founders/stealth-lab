@@ -60,27 +60,47 @@ async function mount(run: unknown = RUN, full: unknown = FULL) {
   await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
 }
 
-const slideTitle = () => host!.querySelector(".dg-way-slide-title")?.textContent;
-const rail = () => [...host!.querySelectorAll(".dg-way-rail button")] as HTMLButtonElement[];
+const current = () => host!.querySelector(".dg-way-slide[data-current]");
+const slideTitle = () => current()?.querySelector(".dg-way-slide-title")?.textContent;
+const tabs = () => [...host!.querySelectorAll(".dg-way-tab")] as HTMLButtonElement[];
+/** Which step the track is translated to, as a percentage offset. */
+const trackOffset = () => (host!.querySelector(".dg-way-track") as HTMLElement | null)?.style.transform;
 
 describe("a Way shows one step per slide", () => {
-  it("shows a single step, not the whole list at once", async () => {
+  it("puts the steps in a horizontal track with one step in view", async () => {
     await mount();
-    const titles = [...host!.querySelectorAll(".dg-way-slide-title")].map((e) => e.textContent);
-    expect(titles).toHaveLength(1);
-    expect(host!.querySelector(".dg-way-deck")).not.toBeNull();
+    // Every step is laid out side by side (that is what lets the track slide rather than jump), and exactly one is
+    // the current, visible one.
+    const all = [...host!.querySelectorAll(".dg-way-slide")];
+    expect(all).toHaveLength(3);
+    expect(host!.querySelectorAll(".dg-way-slide[data-current]")).toHaveLength(1);
+    expect(host!.querySelector(".dg-way-track-frame")).not.toBeNull();
+    expect(trackOffset()).toContain("translate3d");
+  });
+
+  it("has the steps along the bottom, one tab each, named", async () => {
+    await mount();
+    expect(tabs()).toHaveLength(3);
+    expect(tabs().map((t) => t.querySelector(".dg-way-tab-t")?.textContent)).toEqual(
+      ["Scope the talk", "Draft the argument", "Build the slides"],
+    );
+    // The strip comes after the track in the DOM, so it sits along the bottom.
+    const deck = host!.querySelector(".dg-way-deck")!;
+    const kids = [...deck.children].map((e) => e.className);
+    expect(kids[0]).toContain("dg-way-track-frame");
+    expect(kids[1]).toContain("dg-way-strip");
   });
 
   it("opens on the last step that finished", async () => {
     await mount();
     expect(slideTitle()).toBe("Build the slides");
-    expect(host!.querySelector(".dg-way-slide-count")!.textContent).toBe("3 / 3");
+    expect(current()!.querySelector(".dg-way-slide-count")!.textContent).toBe("3 / 3");
   });
 
   it("shows that step's own text and its own files on the slide", async () => {
     await mount();
-    expect(host!.querySelector(".dg-way-slide-out")!.textContent).toContain("The deck was built.");
-    const names = [...host!.querySelectorAll(".dg-way-slide-files .dg-way-fname")].map((e) => e.textContent);
+    expect(current()!.querySelector(".dg-way-slide-out")!.textContent).toContain("The deck was built.");
+    const names = [...current()!.querySelectorAll(".dg-way-slide-files .dg-way-fname")].map((e) => e.textContent);
     expect(names).toEqual(["talk_deck.md"]);
   });
 
@@ -88,19 +108,21 @@ describe("a Way shows one step per slide", () => {
     await mount();
     const [prev, next] = [...host!.querySelectorAll(".dg-way-arrow")] as HTMLButtonElement[];
     expect(next.disabled).toBe(true);
+    expect(trackOffset()).toContain("-200%");                    // on step 3 of 3
     await act(async () => { prev.click(); });
     expect(slideTitle()).toBe("Draft the argument");
+    expect(trackOffset()).toContain("-100%");
     await act(async () => { prev.click(); });
     expect(slideTitle()).toBe("Scope the talk");
+    expect(trackOffset()).toContain("-0%");
     expect(prev.disabled).toBe(true);
   });
 
-  it("the rail jumps straight to a step", async () => {
+  it("the bottom strip jumps straight to a step", async () => {
     await mount();
-    expect(rail()).toHaveLength(3);
-    await act(async () => { rail()[0].click(); });
+    await act(async () => { tabs()[0].click(); });
     expect(slideTitle()).toBe("Scope the talk");
-    expect(rail()[0].getAttribute("aria-current")).toBe("step");
+    expect(tabs()[0].getAttribute("aria-current")).toBe("step");
   });
 
   it("opens on a step that has real work on it, not on a one-line sign-off", async () => {
@@ -116,7 +138,7 @@ describe("a Way shows one step per slide", () => {
       ],
     });
     expect(slideTitle()).toBe("Draft the argument");
-    expect(host!.querySelector(".dg-way-slide-count")!.textContent).toBe("2 / 3");
+    expect(current()!.querySelector(".dg-way-slide-count")!.textContent).toBe("2 / 3");
   });
 
   it("still opens on the last step when nothing is more than a line", async () => {
@@ -138,7 +160,7 @@ describe("a Way shows one step per slide", () => {
       { ...FULL, outputs: [FULL.outputs[0]] },
     );
     expect(slideTitle()).toBe("Draft the argument");
-    expect(host!.querySelector(".dg-way-slide")!.getAttribute("data-state")).toBe("review");
+    expect(current()!.getAttribute("data-state")).toBe("review");
   });
 
   it("never says 'no output yet' for a step the run DID write", async () => {
