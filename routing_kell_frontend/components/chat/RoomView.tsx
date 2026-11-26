@@ -1898,6 +1898,16 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         </header>
         {tempRef.current.has(room) && <div className="dg-temp-note" role="status">Temporary chat: not saved, not synced, and gone when you close this page.</div>}
         {paused && <div className="dg-banner" role="status">Paused. Agents in this tab will not be woken until you resume.</div>}
+        {/* Why sync stopped, in the engine's own words. "Not syncing" alone left a browser error indistinguishable from
+            an outage or a bad token (owner, 2026-11-26: "Failed to fetch (mcp.kell.org.in) this is still coming up").
+            The message is the server's sentence when it answered, and the browser's otherwise. */}
+        {sync.status === "error" && sync.error && (
+          <div className="dg-banner" role="alert" data-tone="error">
+            Not syncing: {sync.error}
+            {" "}
+            <button type="button" className="dg-banner-retry" onClick={() => engineRef.current?.kick()}>Try again</button>
+          </div>
+        )}
 
         {/* A room that belongs to a Way is the Way: the middle pane is its steps and its Start button, and the
             conversation (empty, and not what the person came for) is not drawn. Owner, 2026-11-23: "move the start

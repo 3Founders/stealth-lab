@@ -53,12 +53,22 @@ async function call<T>(path: string, init?: { method?: string; body?: unknown })
   const headers: Record<string, string> = { Accept: "application/json" }
   if (token) headers.Authorization = `Bearer ${token}`
   if (init?.body !== undefined) headers["Content-Type"] = "application/json"
-  const res = await fetch(`${MCP_ORIGIN}${path}`, {
-    method: init?.method || "GET",
-    headers,
-    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
-    cache: "no-store",
-  })
+  let res: Response
+  try {
+    // The same request shape the rooms API uses (rooms-api.ts): no cookies, no referrer, no store. A bare fetch here
+    // was the one call in the room that could fail with the browser's raw "Failed to fetch" and say nothing useful
+    // (owner, 2026-11-26).
+    res = await fetch(`${MCP_ORIGIN}${path}`, {
+      method: init?.method || "GET",
+      headers,
+      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+      cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+    })
+  } catch (err) {
+    // A rejected fetch means the request never reached the server: blocked, offline, or the origin refused. Say which
+    // host, so it is actionable, and never pretend it was the server answering.
+    throw new Error(`Could not reach the keळ server at ${MCP_ORIGIN} — check your connection and try again.`)
+  }
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(String(body?.error?.message || body?.error || `the server answered ${res.status}`))
   return body as T
@@ -68,11 +78,16 @@ async function call<T>(path: string, init?: { method?: string; body?: unknown })
 async function fetchText(url: string): Promise<string> {
   const token = await getAccessToken()
   const target = url.startsWith("http") ? url : `${MCP_ORIGIN}${url}`
-  const res = await fetch(target, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    redirect: "follow",
-    cache: "no-store",
-  })
+  let res: Response
+  try {
+    res = await fetch(target, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      redirect: "follow",
+      cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+    })
+  } catch {
+    throw new Error(`could not reach ${MCP_ORIGIN} for ${url} — the request never got an answer`)
+  }
   if (!res.ok) throw new Error(`the file could not be read (${res.status})`)
   return await res.text()
 }

@@ -1364,6 +1364,14 @@ span.dg-replyq { cursor: default; }
 .dg-composer .dg-addagent:hover:not(:disabled) { background: var(--yellow); border-color: var(--yellow); color: var(--on-yellow, #171717); }
 @media (max-width: 760px) { .dg-composer .dg-composer-meta { right: 12px; } }
 
+/* A sync failure says why, in the engine's words, and offers one retry. The old status pill said "Not syncing" and
+   nothing else, so a blocked request looked the same as an outage or an expired session. */
+.dg-banner[data-tone="error"] { border-left: 2px solid var(--ink); }
+.dg-banner-retry { font: inherit; font-size: 12.5px; margin-left: 8px; padding: 2px 10px; border: 1px solid var(--rule-strong);
+  border-radius: 999px; background: none; color: var(--ink); cursor: pointer;
+  transition: background-color var(--dg-micro-d, .16s) var(--dg-micro, ease), border-color var(--dg-micro-d, .16s) var(--dg-micro, ease); }
+.dg-banner-retry:hover { background: var(--yellow); border-color: var(--yellow); color: var(--on-yellow, #171717); }
+
 /* Two kinds of room, told apart before it is opened: a room that runs a Way ("steps") and an ordinary chat. The badge
    is the same quiet outline as the step labels, and it never changes width on hover so the row cannot shift. */
 .dg-page .dg-room-kind { flex: none; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey);
