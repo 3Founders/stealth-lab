@@ -76,7 +76,7 @@ const msg = (id: string, room: string, text: string, t: number, over: Partial<Gr
   id, roomId: room, sender: me, recipients: ["@all"], payload: { text }, timestamp: t, depthCounter: 0, ...over,
 });
 
-function device(server: FakeServer, sub: string, labels: string[]) {
+function device(server: FakeServer, sub: string, labels: string[], opts: { keepRemoved?: boolean } = {}) {
   const history = new HistoryStore(mapStore(), sub);
   const got: Array<[string, string[]]> = [];
   const notices: string[] = [];
@@ -87,7 +87,9 @@ function device(server: FakeServer, sub: string, labels: string[]) {
     api: server.as(sub), history, labels: () => labelsNow,
     hooks: {
       onMessages: (l, ms) => got.push([l, ms.map((m) => m.payload.text)]),
-      onRooms: (c) => { changes.push(c); for (const a of c.added) labelsNow.push(a.label); for (const r of c.removed) labelsNow.splice(labelsNow.indexOf(r), 1); },
+      // `keepRemoved` mirrors RoomView: a room the server stops listing is NEVER erased here, only its id mapping is
+      // dropped, so the person keeps their history and sync can re-link it (that is the whole point of the copy).
+      onRooms: (c) => { changes.push(c); for (const a of c.added) labelsNow.push(a.label); if (!opts.keepRemoved) for (const r of c.removed) labelsNow.splice(labelsNow.indexOf(r), 1); },
       onNotice: (_l, t) => notices.push(t), onState: (s) => states.push(s),
     },
   });
@@ -215,6 +217,48 @@ describe("people and rooms", () => {
     await alice.engine.syncNow(); await bob.engine.syncNow();
     expect(alice.changes.at(-1)!.removed).toEqual(["#general"]);
     expect(bob.changes.at(-1)!.removed).toEqual(["#general-2"]);
+  });
+
+  it("a room the server stops listing, then lists again, is re-linked rather than duplicated", async () => {
+    // The owner deleted a Way's room and it was restored, or a redeploy briefly hid it. The device keeps its copy (it is
+    // never erased), drops the id mapping, and the room comes back. It must be adopted under its OWN name, not added a
+    // second time as "#general-2" -- which is what told the person their own room "was not found on your account".
+    const s = new FakeServer();
+    const alice = device(s, "alice", ["#general"], { keepRemoved: true });
+    await alice.send("#general", msg("12121212-1212-4212-8212-121212121212", "#general", "kept here", 1000));
+    await alice.engine.syncNow();
+    const id = [...s.rooms.keys()][0];
+
+    const kept = s.rooms.get(id)!;                                     // the server room disappears for a pass
+    s.rooms.delete(id);
+    await alice.engine.syncNow();
+    expect(alice.changes.at(-1)!.removed).toEqual(["#general"]);
+    // RoomView keeps the room: `removed` only drops the id mapping, it never erases the local copy.
+    expect(alice.labels).toEqual(["#general"]);
+
+    s.rooms.set(id, kept);                                              // and comes back
+    await alice.engine.syncNow();
+    // eslint-disable-next-line no-console
+    console.log("CHANGES", JSON.stringify(alice.changes.map((c) => ({ added: c.added.map((a) => a.label), removed: c.removed }))), "LABELS", JSON.stringify(alice.labels));
+    expect(alice.changes.at(-1)!.added).toEqual([]);                    // no second room, no "#general-2"
+    expect(alice.labels).toEqual(["#general"]);
+  });
+
+  it("keeps the local room's own label when the server's title differs", async () => {
+    // The device made "#my-report" and the server stored the slug it normalised to, "#my-report-1". A restore must
+    // re-link under the label the person already has, not mint another room beside it.
+    const s = new FakeServer();
+    const alice = device(s, "alice", ["#kept-name"], { keepRemoved: true });
+    await alice.send("#kept-name", msg("13131313-1313-4313-8313-131313131313", "#kept-name", "hello", 1000));
+    await alice.engine.syncNow();
+    const id = [...s.rooms.keys()][0];
+    const room = s.rooms.get(id)!;
+    room.title = "#server-title";                                      // the server's title is not the local label
+
+    await alice.engine.syncNow();
+    // eslint-disable-next-line no-console
+    console.log("DIFF LABELS", JSON.stringify(alice.labels), "ADDED", JSON.stringify(alice.changes.map((c) => c.added.map((a) => a.label))));
+    expect(alice.labels).toContain("#kept-name");
   });
 
   it("an agent's message keeps its handle and depth, and people are shown by name", () => {

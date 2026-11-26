@@ -674,7 +674,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           // only ever something you do yourself (the Remove button).
           for (const r of c.removed) {
             if (deletedRooms.current.delete(r)) continue;   // this tab just deleted it: no "kept a copy" notice
-            push(roomRef.current, { kind: "notice", id: crypto.randomUUID(), text: `${r} was not found on your account. Your copy here is kept and will sync again.`, t: Date.now() });
+            // Said in words the person can act on: which copy, why, and what to do. The old line ("was not found on
+            // your account") read like an error and named the room by its slug, so it was neither true of the Way's
+            // own room nor clear about what had happened (owner, 2026-11-26).
+            push(roomRef.current, {
+              kind: "notice", id: crypto.randomUUID(),
+              text: `The server no longer has this room (${infoRef.current[r]?.display_name || roomName(r)}), so this copy stays on this device only. `
+                + `Its history is safe. If it is a duplicate of a room you still have, remove this one with Remove.`,
+              t: Date.now(),
+            });
           }
           setInfo((p) => ({ ...p, ...c.info }));
         },
