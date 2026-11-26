@@ -115,7 +115,10 @@ export default function WayRunPanel({
   const wayForRun = view?.submission_id || wayId || ""
 
   const load = useCallback(async () => {
-    if (!roomId) return
+    // No server id yet (sync is a few seconds behind a cold load): wait for the next pass rather than drawing a run
+    // panel that can never load. The main pane treats a missing id as "not a Way" after a moment, so this cannot
+    // leave the person staring at "Reading this Way…" forever.
+    if (!roomId) { setView(null); return }
     try {
       const r = await call<RunState>(`/v1/rooms/${encodeURIComponent(roomId)}/run`)
       setView(r)
@@ -142,6 +145,16 @@ export default function WayRunPanel({
   }, [roomId])
 
   useEffect(() => { void load() }, [load])
+
+  // A room the server calls "execution" but whose id has not arrived cannot be read. Give sync a few seconds, then say
+  // so rather than hanging: the caller lets go and the conversation returns, which is better than a blank pane.
+  const [gaveUp, setGaveUp] = useState(false)
+  useEffect(() => {
+    if (roomId) { setGaveUp(false); return }
+    const t = setTimeout(() => setGaveUp(true), 8000)
+    return () => clearTimeout(t)
+  }, [roomId])
+  useEffect(() => { if (gaveUp) onNothing?.() }, [gaveUp, onNothing])
 
   useEffect(() => {
     if (view?.state !== "running") return

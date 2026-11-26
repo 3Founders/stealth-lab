@@ -1086,12 +1086,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
   }, []);
   /**
-   * Whether this room is the Way's room — a DERIVED fact, not state.
-   *
-   * It used to be state written by two effects and by `onNothing`, and the two fought: the `info` effect reset it to
-   * `room === wayRoomName` while the panel set it false, so the pane and the chat replaced each other forever
-   * (owner, 2026-11-23: "it is oscillating between chat and this step interface"). A value that can be computed from
-   * the room's name must be computed, never stored.
+   * The room the URL asked for, once sync has resolved it to this device's name. `?way=` arriving is a hint that this
+   * is a Way's room, never the proof: the room row's own `kind` is.
    */
   const [wayRoomName, setWayRoomName] = useState<string | null>(null);
   useEffect(() => {
@@ -1100,6 +1096,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const resolved = wantedRoomId ? Object.keys(info).find((n) => info[n]?.id === wantedRoomId) : room;
     if (resolved) setWayRoomName(resolved);
   }, [roomWayId, room, wantedRoomId, wayRoomName, info]);
+
+  /** What the SERVER says this room is. Sync fills `info` a few seconds after a cold load. */
+  const roomKindIsExecution = info[room]?.kind === "execution"
 
   /**
    * The server said this room has no Way. Stored per room so a later room is unaffected, and so it can never
@@ -1111,7 +1110,20 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     setWaySaysNoWayRooms((p) => (p[room] ? p : { ...p, [room]: true }))
   }, [room])
 
-  const roomIsWay = Boolean(roomWayId) && wayRoomName !== null && room === wayRoomName && !waySaysNoWay;
+  /**
+   * Whether this room shows the run instead of the conversation.
+   *
+   * Two independent facts make it true, and either is enough:
+   *   * the server says the room runs a Way (`kind`), which is what the sidebar badge also reads, so the badge and the
+   *     pane can never disagree; or
+   *   * the address arrived from a Way's page with `?way=` and named this room.
+   *
+   * It used to be the second alone. That drew the chat for every Way room opened from the sidebar -- the room was
+   * badged "steps" and then showed a conversation with nothing in it (owner, 2026-11-26). `waySaysNoWay` still wins:
+   * if `/run` answers that this room has no Way after all, the pane lets go and the conversation returns.
+   */
+  const roomIsWay = !waySaysNoWay
+    && (roomKindIsExecution || (Boolean(roomWayId) && wayRoomName !== null && room === wayRoomName));
 
   /** The person asked to chat in a Way's room. Reset when they change rooms, so another room gets its own default. */
   const [wayChatOpen, setWayChatOpen] = useState(false);
@@ -1894,9 +1906,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             never left staring at a blank pane. */}
         {showWayPanel && (
           <WayRunPanel
-            // Fall back to the id in the URL: `info` is filled by sync a few seconds behind a cold load, and an
-            // undefined id here would blank the pane and bounce the person back to the conversation.
-            roomId={info[room]?.id || wantedRoomId || undefined}
+            // The engine already knows this room's server id (it maps names to ids for every sync call), and `info`
+            // fills a few seconds after a cold load. `wantedRoomId` is the last resort, for the arrival URL.
+            roomId={info[room]?.id || engineRef.current?.roomId(room) || wantedRoomId || undefined}
             wayId={roomWayId || undefined}
             title={shownName(room)}
             onNothing={markNotAWay}
