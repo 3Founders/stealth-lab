@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { MCP_ORIGIN } from "@/lib/connector"
 import { getAccessToken } from "@/lib/session"
 import { downloadArtifact } from "@/lib/api"
+import Markdown from "@/components/chat/Markdown"
 
 type InputDef = { step: number; step_title: string; key: string; label: string; required: boolean; help: string }
 type StepDef = { order: number; title: string; price_low_paise: number; price_high_paise: number; is_human?: boolean }
@@ -107,6 +108,8 @@ export default function WayRunPanel({
   const [note, setNote] = useState("")
   /** "Run again" on a finished room: reveal the inputs (and Start) even though the last run is done. */
   const [showAgain, setShowAgain] = useState(false)
+  /** Why the run's outputs could not be read, when they could not. Kept apart from `error` so it is not lost. */
+  const [outputsError, setOutputsError] = useState<string | null>(null)
   /** The file open for reading: its name, and its text once it has arrived. */
   const [openFile, setOpenFile] = useState<string | null>(null)
   const [openText, setOpenText] = useState<string>("")
@@ -123,16 +126,23 @@ export default function WayRunPanel({
       const r = await call<RunState>(`/v1/rooms/${encodeURIComponent(roomId)}/run`)
       setView(r)
       if (r.run?.run_id) {
-        const full = await call<{
-          outputs?: Output[]
-          artifacts?: FileOut[]
-          artifacts_refused?: Refused[]
-          download_all?: string
-        }>(`/v1/goals/runs/${encodeURIComponent(r.run.run_id)}`)
-        setOutputs(full.outputs || [])
-        setFiles(full.artifacts || [])
-        setRefused(full.artifacts_refused || [])
-        setDownloadAllUrl(full.download_all || "")
+        // Loaded separately from the state, so a failure here cannot hide the run's state too: before, one throw
+        // left `outputs` empty and every slide said "No output from this step yet" over a run that had all of them.
+        try {
+          const full = await call<{
+            outputs?: Output[]
+            artifacts?: FileOut[]
+            artifacts_refused?: Refused[]
+            download_all?: string
+          }>(`/v1/goals/runs/${encodeURIComponent(r.run.run_id)}`)
+          setOutputs(full.outputs || [])
+          setFiles(full.artifacts || [])
+          setRefused(full.artifacts_refused || [])
+          setDownloadAllUrl(full.download_all || "")
+          setOutputsError(null)
+        } catch (e) {
+          setOutputsError(String((e as Error)?.message || e))
+        }
       }
       if (r.submission_id) {
         void call<{ steps: StepDef[] }>(`/v1/goals/submissions/${encodeURIComponent(r.submission_id)}/steps/cost`)
@@ -243,10 +253,22 @@ export default function WayRunPanel({
   // Only a position the RUN decided counts. `steps[0]` is a placeholder for "nothing has loaded yet"; latching it
   // would freeze the deck on step 1 and never move to the step the run is actually on once the list arrives
   // (found by tests/way-slides.test.tsx -- the slide opened on step 1 of a finished run).
+  //
+  // A finished run opens on its LAST SUBSTANTIVE step, not simply its last: step 16 of the academic-talk Way is a
+  // 158-character "Rehearsed once. Approved." while step 15 holds 5.9k characters of the gate report. Landing on the
+  // sign-off made the deck look empty and hid the work behind arrows nobody knew to press (owner, 2026-11-26:
+  // "I'm not able to see previous output, it is just saying you've got an output"). A "substantive" step is one whose
+  // text is more than a line or two; if none qualify, the last one is used as before.
+  const SUBSTANTIVE_CHARS = 400
+  const lastWithWork = (() => {
+    for (let i = outputs.length - 1; i >= 0; i -= 1) {
+      if ((outputs[i].output || "").trim().length >= SUBSTANTIVE_CHARS) return outputs[i].order
+    }
+    return outputs.length ? outputs[outputs.length - 1].order : undefined
+  })()
   const settled = paused ? view?.waiting?.order
     : running ? steps[done]?.order
-    : outputs.length ? outputs[outputs.length - 1].order
-    : undefined
+    : lastWithWork
   useEffect(() => {
     if (!driven && settled != null) setAt(settled)
   }, [driven, settled])
@@ -337,7 +359,22 @@ export default function WayRunPanel({
             <h2 className="dg-way-slide-title">{slide.title}</h2>
             {(() => {
               const wrote = outputs.find((o) => o.order === slide.order)
-              if (wrote?.output) return <p className="dg-way-slide-out">{wrote.output}</p>
+              // Rendered with the room's own markdown, not as one pre-wrapped blob: a step's output is JSON, code
+              // fences and prose, and 28,923 characters of that in a single paragraph is not readable -- which is
+              // half of "I'm not able to see previous output".
+              if (wrote?.output) return <div className="dg-way-slide-out"><Markdown text={wrote.output} /></div>
+              // Distinguish "this step has not written yet" from "its text did not reach this page". They look
+              // identical on screen otherwise, and the second is a bug: the run HAS the output (the room endpoint
+              // returns it), so saying "no output yet" would be false and would hide a real failure.
+              if (outputs.length > 0 || outputsError) {
+                return (
+                  <p className="dg-way-slide-out dg-way-note">
+                    {outputsError
+                      ? `This run's text could not be read: ${outputsError}`
+                      : "This step's text did not load. The run has it — press Run again, or reload the page."}
+                  </p>
+                )
+              }
               return (
                 <p className="dg-way-slide-out dg-way-note">
                   {stateOf(slide.order) === "running" ? "Working on this step now…"

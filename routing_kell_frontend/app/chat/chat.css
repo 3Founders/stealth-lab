@@ -44,10 +44,12 @@
 .dg-way-slide-top { display: flex; align-items: center; gap: 10px; }
 .dg-way-slide-count { margin-left: auto; font-size: 12.5px; color: var(--grey); font-variant-numeric: tabular-nums; }
 .dg-way-slide-title { margin: 0; font: inherit; font-size: 19px; font-weight: 500; line-height: 1.35; color: var(--ink); }
-/* The step's own text: real prose, so it is left-aligned and allowed to wrap at a readable measure rather than
-   being clamped to three lines as the list item was. */
+/* The step's own text: real prose, so it is left-aligned and allowed to wrap at a readable measure. It is rendered
+   with the room's markdown (fences, JSON, headings all stay legible), so the rules apply to what is inside. */
 .dg-way-slide-out { margin: 0; font-size: 14.5px; line-height: 1.65; color: var(--grey);
-  white-space: pre-wrap; overflow-wrap: anywhere; max-width: 62ch; }
+  overflow-wrap: anywhere; max-width: 62ch; }
+.dg-way-slide-out > :first-child { margin-top: 0; }
+.dg-way-slide-out pre { max-height: 46vh; overflow: auto; }
 .dg-way-slide-files { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px;
   font-size: 13px; color: var(--grey); }
 .dg-way-slide-files li { display: inline-flex; gap: 8px; align-items: baseline; }

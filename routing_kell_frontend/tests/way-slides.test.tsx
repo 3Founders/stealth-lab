@@ -103,6 +103,34 @@ describe("a Way shows one step per slide", () => {
     expect(rail()[0].getAttribute("aria-current")).toBe("step");
   });
 
+  it("opens on a step that has real work on it, not on a one-line sign-off", async () => {
+    // Step 16 of the academic-talk run is "Rehearsed once. Approved." (158 chars) while step 15 holds the gate report.
+    // Landing on the sign-off made the deck look empty (owner, 2026-11-26: "I'm not able to see previous output").
+    const long = "x".repeat(2000);
+    await mount(RUN, {
+      ...FULL,
+      outputs: [
+        { order: 1, title: "Scope the talk", output: long },
+        { order: 2, title: "Draft the argument", output: long },
+        { order: 3, title: "Build the slides", output: "Rehearsed once. Approved." },
+      ],
+    });
+    expect(slideTitle()).toBe("Draft the argument");
+    expect(host!.querySelector(".dg-way-slide-count")!.textContent).toBe("2 / 3");
+  });
+
+  it("still opens on the last step when nothing is more than a line", async () => {
+    await mount(RUN, {
+      ...FULL,
+      outputs: [
+        { order: 1, title: "Scope the talk", output: "ok" },
+        { order: 2, title: "Draft the argument", output: "ok" },
+        { order: 3, title: "Build the slides", output: "ok" },
+      ],
+    });
+    expect(slideTitle()).toBe("Build the slides");
+  });
+
   it("opens on the step a paused run is waiting for", async () => {
     await mount(
       { ...RUN, state: "waiting_human", run: { run_id: "run-1", status: "waiting_human" },
@@ -111,5 +139,35 @@ describe("a Way shows one step per slide", () => {
     );
     expect(slideTitle()).toBe("Draft the argument");
     expect(host!.querySelector(".dg-way-slide")!.getAttribute("data-state")).toBe("review");
+  });
+
+  it("never says 'no output yet' for a step the run DID write", async () => {
+    // The owner's report: "I'm not able to see previous output, it is just saying you've got an output". Every step
+    // here has text, so every step must show it -- not a placeholder.
+    await mount();
+    for (let i = 0; i < 3; i += 1) {
+      const text = host!.querySelector(".dg-way-slide-out")!.textContent || "";
+      expect(text).not.toContain("No output from this step yet");
+      expect(text.trim().length).toBeGreaterThan(0);
+      const [, next] = [...host!.querySelectorAll(".dg-way-arrow")] as HTMLButtonElement[];
+      if (next.disabled) break;
+      await act(async () => { next.click(); });
+    }
+  });
+
+  it("says the run's text could not be read when that call fails, instead of pretending nothing was written", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/goals/runs/")) return { ok: false, status: 403, json: async () => ({ error: "not yours" }) } as unknown as Response;
+      const body = u.includes("/steps/cost") ? { steps: STEPS } : u.endsWith("/run") ? RUN : FULL;
+      return { ok: true, json: async () => body } as unknown as Response;
+    }));
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    await act(async () => { root!.render(<WayRunPanel roomId="room-1" wayId="way-1" title="A talk" />); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    const text = host!.querySelector(".dg-way-slide-out")!.textContent || "";
+    expect(text).toContain("could not be read");
+    expect(text).toContain("not yours");
+    expect(text).not.toContain("No output from this step yet");
   });
 });
