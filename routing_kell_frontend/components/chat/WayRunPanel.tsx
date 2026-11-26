@@ -43,7 +43,7 @@ type RunState = {
   /** The version's price in paise, or null for a free Way. */
   price_paise?: number | null
 }
-type Output = { order: number; title: string; output: string }
+type Output = { order: number; title: string; output: string; files?: FileOut[] }
 type FileOut = { name: string; size_bytes?: number; media_type?: string; text?: boolean; url: string }
 type Refused = { name: string; why: string }
 
@@ -214,6 +214,55 @@ export default function WayRunPanel({
     return "waiting"
   }
 
+  /* ---- One step per slide -------------------------------------------------------------------------------
+   *
+   * The steps were a single vertical list: sixteen rows you scrolled through, each a title and a truncated
+   * output. The owner asked for a slide per step (2026-11-26: "for each step, there should be slide"), so the
+   * surface is now a deck you move through -- one step filling the pane, with its own text and files on it.
+   *
+   * `at` is the step ORDER, not an array index, so it survives the step list arriving after the run (cost is
+   * fetched separately) and stays right if an order is ever skipped. It follows the run while nobody has driven
+   * it: the step working, else the one waiting on a person, else the last one done. Once the person uses the
+   * arrows it is theirs until they leave, so a poll every 3s cannot yank the slide out from under them.
+   */
+  const [at, setAt] = useState<number | null>(null)
+  const [driven, setDriven] = useState(false)
+  // Only a position the RUN decided counts. `steps[0]` is a placeholder for "nothing has loaded yet"; latching it
+  // would freeze the deck on step 1 and never move to the step the run is actually on once the list arrives
+  // (found by tests/way-slides.test.tsx -- the slide opened on step 1 of a finished run).
+  const settled = paused ? view?.waiting?.order
+    : running ? steps[done]?.order
+    : outputs.length ? outputs[outputs.length - 1].order
+    : undefined
+  useEffect(() => {
+    if (!driven && settled != null) setAt(settled)
+  }, [driven, settled])
+
+  const idx = at != null ? Math.max(0, steps.findIndex((s) => s.order === at)) : 0
+  const slide = steps[idx]
+  const go = (n: number) => {
+    if (!steps.length) return
+    setDriven(true)
+    setAt(steps[Math.min(steps.length - 1, Math.max(0, n))].order)
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!steps.length) return
+      // Never steal an arrow from the message box or an input, and never from a dialog.
+      const t = e.target as HTMLElement | null
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
+      if (e.key === "ArrowRight") { go(idx + 1); e.preventDefault() }
+      if (e.key === "ArrowLeft") { go(idx - 1); e.preventDefault() }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [idx, steps.length])
+
+  const slideFiles = slide ? files.filter((f) => {
+    const wrote = outputs.find((o) => o.order === slide.order)
+    return wrote?.files?.some((x) => x.name === f.name)
+  }) : []
+
   return (
     <section className="dg-way-main" aria-label={title ? `${title}: steps and run` : "Way run"}>
       {/* No headline: the room's own header already names it (owner, 2026-11-23). The progress line stays, because
@@ -256,26 +305,57 @@ export default function WayRunPanel({
         </section>
       )}
 
-      {total > 0 && (
-        <section className="dg-way-block">
-          <h2>Steps</h2>
-          <ol className="dg-way-steps">
-            {steps.map((s) => {
-              const st = stateOf(s.order)
-              const wrote = outputs.find((o) => o.order === s.order)
+      {total > 0 && slide && (
+        <section className="dg-way-deck" aria-roledescription="carousel" aria-label="The steps">
+          {/* One step fills the pane. The rail below is how you go back to a step you have already seen; the
+              arrows move one at a time and the keyboard follows them. */}
+          <article
+            className="dg-way-slide"
+            data-state={stateOf(slide.order)}
+            data-human={slide.is_human ? "true" : "false"}
+            aria-label={`Step ${idx + 1} of ${total}: ${slide.title}`}
+          >
+            <div className="dg-way-slide-top">
+              <span className="dg-way-n" aria-hidden="true">{stateOf(slide.order) === "done" ? "✓" : slide.order}</span>
+              <span className="dg-way-slide-count">{idx + 1} / {total}</span>
+              {slide.is_human && <span className="dg-way-kind">you</span>}
+              {stateOf(slide.order) === "review" && <span className="dg-way-kind" data-tone="review">waiting</span>}
+            </div>
+            <h2 className="dg-way-slide-title">{slide.title}</h2>
+            {(() => {
+              const wrote = outputs.find((o) => o.order === slide.order)
+              if (wrote?.output) return <p className="dg-way-slide-out">{wrote.output}</p>
               return (
-                <li key={s.order} data-state={st} data-human={s.is_human ? "true" : "false"}>
-                  <span className="dg-way-n" aria-hidden="true">{st === "done" ? "✓" : s.order}</span>
-                  <span className="dg-way-col">
-                    <span className="dg-way-title">{s.title}</span>
-                    {wrote?.output && <span className="dg-way-out-step">{wrote.output}</span>}
-                  </span>
-                  {s.is_human && <span className="dg-way-kind">you</span>}
-                  {st === "review" && <span className="dg-way-kind" data-tone="review">waiting</span>}
-                </li>
+                <p className="dg-way-slide-out dg-way-note">
+                  {stateOf(slide.order) === "running" ? "Working on this step now…"
+                    : stateOf(slide.order) === "review" ? "This step waits for you." : "No output from this step yet."}
+                </p>
               )
-            })}
-          </ol>
+            })()}
+            {slideFiles.length > 0 && (
+              <ul className="dg-way-slide-files">
+                {slideFiles.map((f) => (
+                  <li key={f.name}><span className="dg-way-fname">{f.name}</span><span className="dg-way-fsize">{kb(f.size_bytes)}</span></li>
+                ))}
+              </ul>
+            )}
+          </article>
+
+          <div className="dg-way-deck-nav">
+            <button type="button" className="dg-way-arrow" onClick={() => go(idx - 1)} disabled={idx === 0} aria-label="Previous step">←</button>
+            <ol className="dg-way-rail" aria-label="Jump to a step">
+              {steps.map((s, i) => (
+                <li key={s.order}>
+                  <button
+                    type="button" aria-current={i === idx ? "step" : undefined}
+                    aria-label={`Step ${s.order}: ${s.title}`} title={`Step ${s.order}: ${s.title}`}
+                    data-state={stateOf(s.order)} onClick={() => go(i)}
+                  />
+                </li>
+              ))}
+            </ol>
+            <button type="button" className="dg-way-arrow" onClick={() => go(idx + 1)} disabled={idx === steps.length - 1} aria-label="Next step">→</button>
+          </div>
         </section>
       )}
 

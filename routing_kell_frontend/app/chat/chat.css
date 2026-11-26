@@ -31,8 +31,45 @@
   transition: transform var(--dg-smooth-d, .5s) var(--dg-smooth, cubic-bezier(.22, 1, .36, 1));
 }
 
-.dg-way-steps { list-style: none; margin: 0; padding: 0; display: grid; }
-.dg-way-steps li { display: flex; gap: 14px; align-items: baseline; padding: 11px 0;
+/* One step per slide: the deck IS the step surface (owner, 2026-11-26: "for each step, there should be slide").
+   The slide is the page -- title, its own output, its own files -- and the rail under it is how a person goes back
+   to a step already seen. Centred from the top like the rest of the pane, on the site's tokens: no new sizes. */
+.dg-way-deck { display: grid; gap: 18px; }
+.dg-way-slide { display: grid; gap: 14px; align-content: start; text-align: left;
+  padding: 22px 24px 26px; border: 1px solid var(--rule); border-radius: var(--dg-r-btn, 12px);
+  background: var(--dg-glass, var(--surface)); box-shadow: var(--dg-lift, 0 2px 10px rgba(0, 0, 0, .07));
+  min-height: 240px; }
+/* A step stopped on a person carries the site's accent, the same signal the list used for `review`. */
+.dg-way-slide[data-state="review"] { border-color: var(--yellow); }
+.dg-way-slide-top { display: flex; align-items: center; gap: 10px; }
+.dg-way-slide-count { margin-left: auto; font-size: 12.5px; color: var(--grey); font-variant-numeric: tabular-nums; }
+.dg-way-slide-title { margin: 0; font: inherit; font-size: 19px; font-weight: 500; line-height: 1.35; color: var(--ink); }
+/* The step's own text: real prose, so it is left-aligned and allowed to wrap at a readable measure rather than
+   being clamped to three lines as the list item was. */
+.dg-way-slide-out { margin: 0; font-size: 14.5px; line-height: 1.65; color: var(--grey);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-width: 62ch; }
+.dg-way-slide-files { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px;
+  font-size: 13px; color: var(--grey); }
+.dg-way-slide-files li { display: inline-flex; gap: 8px; align-items: baseline; }
+.dg-way-deck-nav { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.dg-way-arrow { font: inherit; font-size: 16px; line-height: 1; width: 34px; height: 34px; display: inline-grid;
+  place-items: center; padding: 0; border: 1px solid var(--rule-strong); border-radius: 999px; background: none;
+  color: var(--ink); cursor: pointer; }
+.dg-way-arrow:hover:not(:disabled) { background: var(--yellow); border-color: var(--yellow); color: #171717; }
+.dg-way-arrow:disabled { color: var(--rule-strong); cursor: default; }
+/* The rail: one dot per step, so the length of the Way is visible at a glance and any step is one click away. */
+.dg-way-rail { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.dg-way-rail button { width: 10px; height: 10px; padding: 0; border-radius: 999px; border: 1px solid var(--rule-strong);
+  background: none; cursor: pointer; transition: background-color var(--dg-micro-d, .16s) var(--dg-micro, ease),
+  border-color var(--dg-micro-d, .16s) var(--dg-micro, ease), transform var(--dg-micro-d, .16s) var(--dg-micro, ease); }
+.dg-way-rail button:hover { transform: scale(1.25); border-color: var(--ink); }
+.dg-way-rail button[data-state="done"] { background: var(--ink); border-color: var(--ink); }
+.dg-way-rail button[data-state="running"] { background: var(--yellow); border-color: var(--ink); }
+.dg-way-rail button[data-state="review"] { background: var(--yellow); border-color: var(--ink); }
+.dg-way-rail button[aria-current="step"] { box-shadow: 0 0 0 2px var(--dg-glass, var(--surface)), 0 0 0 3px var(--ink); }
+@media (prefers-reduced-motion: reduce) { .dg-way-rail button { transition: none; } }
+
+.dg-way-steps { list-style: none; margin: 0; padding: 0; display: grid; }.dg-way-steps li { display: flex; gap: 14px; align-items: baseline; padding: 11px 0;
   font-size: 15px; line-height: 1.5; color: var(--grey); border-top: 1px solid var(--rule); }
 .dg-way-steps li:first-child { border-top: 0; }
 .dg-way-steps li[data-state="done"] { color: var(--ink); }
