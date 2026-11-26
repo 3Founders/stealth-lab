@@ -1313,6 +1313,14 @@ span.dg-replyq { cursor: default; }
 .dg-composer .dg-addagent:hover:not(:disabled) { background: var(--yellow); border-color: var(--yellow); color: var(--on-yellow, #171717); }
 @media (max-width: 760px) { .dg-composer .dg-composer-meta { right: 12px; } }
 
+/* Two kinds of room, told apart before it is opened: a room that runs a Way ("steps") and an ordinary chat. The badge
+   is the same quiet outline as the step labels, and it never changes width on hover so the row cannot shift. */
+.dg-page .dg-room-kind { flex: none; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey);
+  border: 1px solid var(--rule-strong); border-radius: 999px; padding: 1px 7px 0; line-height: 1.6; margin-left: 6px; }
+.dg-page .dg-room[aria-current="page"] .dg-room-kind { color: var(--ink); border-color: var(--ink); }
+.dg-head-kind { flex: none; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey);
+  border: 1px solid var(--rule-strong); border-radius: 999px; padding: 2px 9px 0; line-height: 1.6; }
+
 /* "Only this room" in the search bar: a small switch. */
 .dg-search-here { display: inline-flex; align-items: center; gap: 8px; justify-self: start; padding: 4px 10px 4px 6px; border: 0; border-radius: 999px; background: color-mix(in srgb, currentColor 6%, transparent); color: inherit; font: inherit; font-size: 12.5px; cursor: pointer; transition: background-color .2s; }
 .dg-search-here:hover { background: color-mix(in srgb, currentColor 11%, transparent); }

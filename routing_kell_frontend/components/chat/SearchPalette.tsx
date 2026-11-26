@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { roomName } from "@/components/chat/bare";
 import { useSlideHighlight } from "@/components/chat/useSlideHighlight";
 import { searchMessages, snippet } from "@/lib/chat/search";
@@ -9,8 +9,10 @@ import type { GroupMessage } from "@/lib/chat/types";
  * Search the rooms on this device (Cmd+K or Ctrl+K). Type words; every word has to appear. Up and Down choose, Enter opens the room
  * at that message, Escape closes. With nothing typed it lists your rooms. Messages are read from this device only.
  */
-export default function SearchPalette({ open, onClose, rooms, currentRoom, load, onPick }: {
+export default function SearchPalette({ open, onClose, rooms, currentRoom, load, onPick, nameOfRoom }: {
   open: boolean; onClose: () => void; rooms: string[]; currentRoom: string;
+  /** How a room is shown and searched: the human title a Way's room carries, else the slug's own name. */
+  nameOfRoom?: (room: string) => string;
   load: () => Promise<Array<{ room: string; m: GroupMessage }>>;
   onPick: (room: string, id: string | null) => void;
 }) {
@@ -32,11 +34,12 @@ export default function SearchPalette({ open, onClose, rooms, currentRoom, load,
   }, [open, load]);
 
   const hits = useMemo(() => (all ? searchMessages(all, q, { room: here ? currentRoom : undefined, limit: 30 }) : []), [all, q, here, currentRoom]);
+  const label = useCallback((r: string) => (nameOfRoom ? nameOfRoom(r) : roomName(r)), [nameOfRoom]);
   // Rooms whose name matches come first, then the messages that match; with nothing typed, every room.
   const roomRows = useMemo(() => {
     const t = q.trim().toLowerCase();
-    return t ? rooms.filter((r) => roomName(r).toLowerCase().includes(t)) : rooms;
-  }, [q, rooms]);
+    return t ? rooms.filter((r) => label(r).toLowerCase().includes(t)) : rooms;
+  }, [q, rooms, label]);
   const count = roomRows.length + (q.trim() ? hits.length : 0);
   const idx = Math.min(active, Math.max(0, count - 1));
 
@@ -60,12 +63,12 @@ export default function SearchPalette({ open, onClose, rooms, currentRoom, load,
           role="combobox" aria-expanded aria-controls={listId} aria-activedescendant={count ? `${listId}-${idx}` : undefined} aria-autocomplete="list" autoComplete="off"
         />
         <button type="button" role="switch" aria-checked={here} className="dg-search-here" onClick={() => { setHere(!here); setActive(0); }}>
-          <span className="dg-switch" aria-hidden="true"><i /></span>Only {roomName(currentRoom)}
+          <span className="dg-switch" aria-hidden="true"><i /></span>Only {label(currentRoom)}
         </button>
         <ul id={listId} role="listbox" className="dg-search-list" ref={slide('li[role="option"]')}>
           {roomRows.map((r, i) => (
             <li key={r} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx} onMouseDown={(e) => { e.preventDefault(); pick(i); }}>
-              <b>{roomName(r)}</b><span className="dim small">Open room</span>
+              <b>{label(r)}</b><span className="dim small">Open room</span>
             </li>
           ))}
           {q.trim() !== "" && hits.map((h, k) => { const i = roomRows.length + k; return (

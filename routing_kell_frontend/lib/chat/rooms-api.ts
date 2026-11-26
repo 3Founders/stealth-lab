@@ -12,6 +12,8 @@ export interface ServerRoom {
   /** The human title, when the room has one (a Way's room does). `title` is a slug by DB constraint, so it cannot
    *  carry spaces; this is what a person should read. */
   display_name?: string | null;
+  /** What kind of room it is: "execution" runs a Way (it opens on the step-by-step page), "chat" is conversation. */
+  kind?: "chat" | "execution";
   last_read_seq?: number; unread?: number; members?: number;
   last?: { handle: string; kind: "person" | "agent"; preview: string; at: string } | null;
 }

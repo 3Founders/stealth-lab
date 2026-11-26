@@ -1547,10 +1547,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const exportRoom = () => {
     const lines = (lineStore.current[room] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : []));
     if (!lines.length) return note("There is nothing in this room to export yet.");
-    const md = [`# ${roomName(room)}`, "", ...lines.flatMap((m) => [`**${nameOf(m.sender.handle)}** · ${new Date(m.timestamp).toLocaleString()}`, "", m.payload.text, ""])].join("\n");
+    const md = [`# ${shownName(room)}`, "", ...lines.flatMap((m) => [`**${nameOf(m.sender.handle)}** · ${new Date(m.timestamp).toLocaleString()}`, "", m.payload.text, ""])].join("\n");
     const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
     const a = document.createElement("a");
-    a.href = url; a.download = `${roomName(room).toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`;
+    a.href = url; a.download = `${shownName(room).toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`;
     document.body.appendChild(a); a.click(); a.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
     note("Saved this room as a Markdown file.");
@@ -1684,7 +1684,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ul className="dg-rooms">
           {roomList.rooms.map((r) => (
             <li key={r}>
-              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}>{tempRef.current.has(r) ? "Temporary" : cap(r.slice(1))}{tempRef.current.has(r) && <span className="dg-badge">not saved</span>}{r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}</button>
+              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}>
+                {tempRef.current.has(r) ? "Temporary" : shownName(r)}
+                {/* A room that runs a Way is an execution room: it opens on the step-by-step page, not the chat. Marked
+                    in the list so the two kinds are told apart before opening one (owner, 2026-11-26). */}
+                {info[r]?.kind === "execution" && <span className="dg-room-kind" title="Runs a Way: steps, not a chat">steps</span>}
+                {tempRef.current.has(r) && <span className="dg-badge">not saved</span>}
+                {r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}
+              </button>
             </li>
           ))}
         </ul>
@@ -1743,7 +1750,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
         {synced && (
           <>
-            <h2>People in {roomName(room)}</h2>
+            <h2>People in {shownName(room)}</h2>
             <ul className="dg-members">
               {members.filter((m) => m.kind === "person").map((m) => (
                 <li key={m.sub ?? m.agent_id}>
@@ -1840,7 +1847,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         </div>,
         document.body,
       )}
-      {searchOpen && <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />}
+      {searchOpen && <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} nameOfRoom={shownName} load={loadForSearch} onPick={pickSearch} />}
       {manageOpen && (
         <ManageRooms
           open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
@@ -1848,7 +1855,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           roomId={(label) => engineRef.current?.roomId(label) ?? info[label]?.id} onDissolve={(label) => deleteRoom(label)} onCreate={createRoomNamed}
         />
       )}
-      <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
+      <section className="dg-main" aria-label={`Room ${shownName(room)}`}>
         <header className="dg-head">          <HamburgerMenu onTemporary={newTemporary} onSubmitWay={() => setSubmitOpen(true)} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r),
               onRead: (id) => setNotes((p) => p.filter((n) => n.id !== id)),
@@ -1858,6 +1865,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <span aria-hidden="true">▤</span> <span>Open sidebar</span>
           </button>
           <h1>{shownName(room)}</h1>
+          {roomIsWay && <span className="dg-head-kind" title="This room runs a Way">Steps</span>}
           <button type="button" className="dg-canvas-btn" aria-pressed={canvasOpen} aria-label={canvasOpen ? "Close the canvas" : "Open the canvas"} title="Canvas" onClick={() => setCanvasOpen((o) => !o)}>
             <CanvasIcon size={18} />
             {(info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length) > 0 && <span className="dg-canvas-dot" aria-hidden="true" />}
@@ -1904,7 +1912,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 )}
                 {items.length === 0 && streamingHere.length === 0 && !kellHere && roomReady && (
                   <div className="dg-empty">
-                    <p>No messages in {roomName(room)} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}In a room with just you, a message with no mention goes to <b>kell</b>; add your own agents with <b>+ Add agent</b>.</p>
+                    <p>No messages in {shownName(room)} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}In a room with just you, a message with no mention goes to <b>kell</b>; add your own agents with <b>+ Add agent</b>.</p>
                     <div className="dg-empty-prompts">
                       {["Ask kell what it can do here", "Say hello to the room", "Ask kell to start a task"].map((p) => (
                         <button key={p} type="button" className="btn-line dg-mini" onClick={() => setDraft((d) => ({ text: p, n: d.n + 1 }))}>{p}</button>

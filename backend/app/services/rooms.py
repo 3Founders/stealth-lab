@@ -132,6 +132,11 @@ def _room_json(row: Any, extra: Optional[dict[str, Any]] = None) -> dict[str, An
            # shown as "#create-a-research-report-in-neurips-format-2". None for an ordinary room, which keeps the
            # client's existing behaviour of prettifying the slug.
            "display_name": row["display_name"] if "display_name" in row.keys() else None,
+           # Which kind of room this is, so the client can show it before it is opened (owner, 2026-11-26: "there's
+           # no difference between a chat room and an execution room"). A room that runs a Way has `way_submission_id`
+           # set; an ordinary room does not. This is derived from the row, not a new stored flag: the Way IS the
+           # difference, and a second column could disagree with it.
+           "kind": "execution" if ("way_submission_id" in row.keys() and row["way_submission_id"]) else "chat",
            "created_at": _iso(row["created_at"]), "last_seq": row["next_seq"]}
     out.update(extra or {})
     return out

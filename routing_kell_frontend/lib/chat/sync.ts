@@ -29,8 +29,8 @@ export interface RoomsChange {
   added: Array<{ label: string; id: string; title: string; role: "owner" | "admin" | "member" }>;
   removed: string[];
   /** Per room label: what the list says about it right now. `display_name` is the human title a Way's room carries
-   *  (`title` is a slug by DB constraint, so it cannot hold spaces). */
-  info: Record<string, { id: string; unread: number; members: number; last: ServerRoom["last"] | null; role: "owner" | "admin" | "member"; display_name?: string | null }>;
+   *  (`title` is a slug by DB constraint, so it cannot hold spaces); `kind` says whether the room runs a Way. */
+  info: Record<string, { id: string; unread: number; members: number; last: ServerRoom["last"] | null; role: "owner" | "admin" | "member"; display_name?: string | null; kind?: "chat" | "execution" }>;
 }
 
 export interface SyncHooks {
@@ -297,7 +297,7 @@ export class SyncEngine {
     const labelOf = new Map(Object.entries(this.map).map(([l, id]) => [id, l]));
     for (const r of rooms) {
       const label = labelOf.get(r.id);
-      if (label) change.info[label] = { id: r.id, unread: r.unread ?? 0, members: r.members ?? 1, last: r.last ?? null, role: r.role, display_name: r.display_name ?? null };
+      if (label) change.info[label] = { id: r.id, unread: r.unread ?? 0, members: r.members ?? 1, last: r.last ?? null, role: r.role, display_name: r.display_name ?? null, kind: r.kind ?? "chat" };
     }
     await this.save();
     if (change.added.length || change.removed.length || Object.keys(change.info).length) this.d.hooks.onRooms(change);
