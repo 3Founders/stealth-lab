@@ -228,19 +228,31 @@ export default function ExecutionDeck({ id, onBack, onOpenChat, full = false, on
           {total > 0 ? `${done} of ${total} steps done · ` : ""}{statusLine}
         </p>
         <span className="dk-exec-actions">
+          {/* Icons, each named by its tooltip and its accessible label (owner, 2026-11-28). */}
+          {onBack && (
+            <button type="button" className="dk-exec-ic" onClick={onBack} aria-label="Back to chats" title="Back to chats">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+          )}
+          {ex && onOpenChat && (
+            <button type="button" className="dk-exec-ic" onClick={() => onOpenChat(ex.directory)} aria-label="Open its folder" title="Open its folder">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+            </button>
+          )}
           {onToggleFull && (
-            <button type="button" className="dg-way-swap dk-exec-full" aria-pressed={full} onClick={onToggleFull}
-              title={full ? "Leave full screen (Esc)" : "Full screen"}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <button type="button" className="dk-exec-ic" aria-pressed={full} onClick={onToggleFull}
+              aria-label={full ? "Exit full screen" : "Full screen"} title={full ? "Exit full screen (Esc)" : "Full screen"}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 {full
                   ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
                   : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
               </svg>
-              {full ? "Exit full screen" : "Full screen"}
             </button>
           )}
-          {onBack && <button type="button" className="dg-way-swap" onClick={onBack}>Back to chats</button>}
-          {ex && onOpenChat && <button type="button" className="dg-way-swap" onClick={() => onOpenChat(ex.directory)}>Open its folder</button>}
           {live && <button type="button" className="dg-way-swap" disabled={busy} onClick={() => void act("cancel")}>Stop</button>}
         </span>
         {total > 0 && (

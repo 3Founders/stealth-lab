@@ -1756,9 +1756,17 @@ button.dk-sess-group { cursor: pointer; }
 .dk-exec .dg-way-track-frame { overflow: hidden; }
 
 /* The deck's own actions: a row that wraps instead of overflowing a narrow column. */
-.dk-exec-actions { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-.dk-exec-full { display: inline-flex; align-items: center; gap: 6px; }
-.dk-exec-full[aria-pressed="true"] { color: var(--ink); border-color: var(--rule-strong); }
+.dk-exec-actions { display: inline-flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; }
+/* Round icon buttons, the same footprint as the app's own head icons; Stop stays a word, since it ends the run. */
+.dk-exec-ic { all: unset; box-sizing: border-box; width: 32px; height: 32px; display: inline-grid; place-items: center;
+  border-radius: 999px; color: var(--grey); cursor: pointer;
+  transition: background-color var(--dg-micro-d, .16s) var(--dg-micro, ease), color var(--dg-micro-d, .16s) var(--dg-micro, ease),
+    transform var(--dg-micro-d, .16s) var(--dg-micro, ease); }
+.dk-exec-ic:hover { background: var(--soft); color: var(--ink); }
+.dk-exec-ic:active { transform: scale(.94); }
+.dk-exec-ic:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.dk-exec-ic[aria-pressed="true"] { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .dk-exec-ic { transition: none; } .dk-exec-ic:active { transform: none; } }
 .dk-exec-fulltitle { margin: 0; font-size: 20px; font-weight: 500; line-height: 1.3; color: var(--ink); text-align: center; }
 /* Download is a link, View a button: one look and one footprint for both, so the pair sits on one baseline. */
 .dk-exec .dg-way-facts { align-items: center; }
