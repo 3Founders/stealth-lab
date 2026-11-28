@@ -899,7 +899,7 @@ async def start(pool: Any, way_id: str, *, owner_id: str, input: str = "", mode:
         """INSERT INTO way_runs (procedure_row_id, owner_id, input, mode, plan, room_id, step_inputs)
            VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6::uuid, $7::jsonb)
            RETURNING id::text""", way["id"], owner_id, input or "", mode, _jsonable(plan),
-        room_id or None, _jsonable(dict(step_inputs)) if step_inputs else None)
+        room_id or None, _jsonable(dict(step_inputs or {})))  # NOT NULL DEFAULT '{}': an explicit NULL is refused
     # (room_id and step_inputs are written here, before any step runs. A room used to add them after start() had
     # returned, so the first steps of an inline run never saw what the person supplied.)
     if purchase:

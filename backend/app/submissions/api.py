@@ -431,14 +431,13 @@ async def step_costs(pool: Any, submission_id: str) -> dict:
     A restart from step N re-runs only steps N..end, so the per-step split is what makes that restart priceable
     at all (`cost_estimate.per_step_prices` / `suffix_from`).
     """
-    row = await pool.fetchrow(
-        "SELECT steps FROM goal_submissions WHERE id::text = $1", str(submission_id))
-    if row is None:
+    # A Way's steps live in goal_submission_steps (goal_submissions has no `steps` column).
+    if await pool.fetchval("SELECT 1 FROM goal_submissions WHERE id::text = $1", str(submission_id)) is None:
         raise intake.SubmissionError("no such Way", 404)
-    steps = row["steps"]
-    if isinstance(steps, str):
-        import json as _json
-        steps = _json.loads(steps)
+    rows = await pool.fetch(
+        """SELECT step_order AS "order", kind, title, prompt, description, locator, produces
+           FROM goal_submission_steps WHERE submission_id::text = $1 ORDER BY step_order""", str(submission_id))
+    steps = [dict(r) for r in rows]
     from app.submissions.cost_estimate import per_step_prices
 
     prices = per_step_prices([s for s in (steps or []) if isinstance(s, dict)])
