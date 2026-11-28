@@ -54,7 +54,7 @@ type RunStep = {
   supplied?: Record<string, string>
   description?: string
 }
-type Sandbox = { provider: string; state: "starting" | "ready" | "ended" }
+type Sandbox = { provider: string; state: "starting" | "ready" | "ended" | "unavailable"; why?: string }
 /** A page of the deck: the run's inputs, one step, or the results. Steps keep their order as the key. */
 type Page = { key: string; kind: "inputs" | "step" | "results"; step?: StepDef }
 type FileOut = { name: string; size_bytes?: number; media_type?: string; text?: boolean; url: string }
@@ -526,7 +526,9 @@ export default function WayRunPanel({
                     aria-hidden={current ? undefined : true} aria-label="What this run produced">
                     <div className="dg-way-slide-top">
                       <span className="dg-way-kind">{view?.state === "done" ? "results" : "so far"}</span>
-                      {sandbox && <span className="dg-way-slide-count">ran in an isolated {sandbox.provider === "agent37" ? "Agent37" : sandbox.provider} sandbox</span>}
+                      {sandbox && <span className="dg-way-slide-count">{sandbox.state === "unavailable"
+                        ? "ran without a sandbox (none could be created)"
+                        : `ran in an isolated ${sandbox.provider === "agent37" ? "Agent37" : sandbox.provider} sandbox`}</span>}
                     </div>
                     <h2 className="dg-way-slide-title">
                       {view?.state === "done" ? "What this run produced" : view?.state === "failed" ? "What it produced before it stopped" : "What it has produced so far"}

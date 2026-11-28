@@ -298,6 +298,36 @@ async def start_run(pool: Any, owner_id: str, submission_id: str, input: str = "
     return await way_runs.start(pool, row["parent"], owner_id=owner_id, input=input, mode=mode, finder=finder)
 
 
+MAX_REPORT_BYTES = 30 * 1024 * 1024        # one report: the step's text plus its files, base64'd
+
+
+async def report_step(pool: Any, owner_id: str, run_id: str, *, output: Any = None, failed: str = "",
+                      files: Any = None) -> dict:
+    """A session (the desktop app) did the step its run waits on: its output, or why it failed, and the files it
+    wrote. Each file is [{name, b64}]; a name that is not a plain file name, bad base64 or an oversized file is a
+    refusal of the whole report, so a half-stored step never happens."""
+    import base64
+    import binascii
+
+    from app.execution import way_runs
+    from app.submissions import artifacts as art
+
+    decoded: list[tuple[str, bytes]] = []
+    for f in files if isinstance(files, list) else []:
+        if not isinstance(f, dict) or not isinstance(f.get("name"), str) or not isinstance(f.get("b64"), str):
+            raise runs.RunError("each file is {name, b64}")
+        try:
+            data = base64.b64decode(f["b64"], validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise runs.RunError(f"{f['name']} is not valid base64") from exc
+        if len(data) > art.MAX_ARTIFACT_BYTES:
+            raise runs.RunError(f"{f['name']} is over the {art.MAX_ARTIFACT_BYTES // (1024 * 1024)} MB limit for one file")
+        decoded.append((art.safe_name(f["name"]), data))
+    if len(decoded) > art.MAX_ARTIFACTS_PER_STEP:
+        raise runs.RunError(f"a step may hand back at most {art.MAX_ARTIFACTS_PER_STEP} files")
+    return await way_runs.report(pool, run_id, owner_id=owner_id, output=output, failed=failed, files=decoded)
+
+
 async def finish_step(pool: Any, owner_id: str, run_id: str, note: str = "") -> dict:
     """The person did what the run waits on. A run started before the Way executor continues on the older runner."""
     from app.execution import way_runs

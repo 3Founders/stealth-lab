@@ -15,7 +15,7 @@
 // cost more than it draws — the same judgment ProcedureGraph already records.
 import { useEffect, useState } from "react"
 import SubmitWayPanel from "@/components/SubmitWayPanel"
-import WayRunCanvas from "@/components/WayRunCanvas"
+
 import { submissionsApi } from "@/lib/submissions-client"
 import "./submitway.css"
 
@@ -68,6 +68,22 @@ function Rate({ successes, total }: { successes: number | null; total: number | 
 export default function WayPage({ id, onBack }: { id: string; onBack?: () => void }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" })
   const [improving, setImproving] = useState(false)
+  const [runInput, setRunInput] = useState("")
+  const [starting, setStarting] = useState(false)
+  const [runErr, setRunErr] = useState<string | null>(null)
+
+  /** Start an execution of this Way on this computer, then open it in the main window. */
+  async function runHere() {
+    if (load.kind !== "ok") return
+    setStarting(true); setRunErr(null)
+    try {
+      const r = await fetch("/api/executions", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "start", submissionId: load.way.id, title: load.way.goal_name, input: runInput }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j?.execution?.id) throw new Error(String(j?.error || `the app answered ${r.status}`))
+      window.location.href = `/?exec=${encodeURIComponent(j.execution.id)}`
+    } catch (e) { setRunErr(String((e as Error)?.message || e)); setStarting(false) }
+  }
 
   useEffect(() => {
     let live = true
@@ -215,10 +231,20 @@ export default function WayPage({ id, onBack }: { id: string; onBack?: () => voi
         <p className="dkw-small dkw-muted">A change that breaks a consumer of this Way is marked <b>Breaking</b> and says what breaks.</p>
       </section>
 
-      {/* 6a. Run it here: the same five kinds of message the website allows, as a canvas (components/WayRunCanvas). */}
+      {/* 6a. Run it here: an execution, on this computer (lib/executions.ts). Its steps open in the main window under
+          Executions, as pages, the same way the website shows a run; this app's engine does the AI steps. */}
       <section className="dkw-card">
         <h2>Run this Way</h2>
-        <WayRunCanvas submissionId={way.id} />
+        {runnable ? (
+          <form className="dkw-run" onSubmit={(e) => { e.preventDefault(); void runHere() }}>
+            <label htmlFor="dkw-run-input" className="dkw-small dkw-muted">What it is for (the task, in your words)</label>
+            <textarea id="dkw-run-input" value={runInput} onChange={(e) => setRunInput(e.target.value)} rows={3}
+              placeholder="e.g. a 12-minute conference talk from my paper on sparse routing" />
+            <button type="submit" className="dkw-cta" disabled={starting}>{starting ? "Starting…" : "Run on this computer"}</button>
+            {runErr && <p className="dkw-small" role="alert">{runErr}</p>}
+            <p className="dkw-small dkw-muted">The AI steps run here, in a folder of their own under Documents/kell/Runs; a step that needs you waits for your answer. The run and its files are kept with kell, as on the website.</p>
+          </form>
+        ) : <p className="dkw-muted">This Way is {status.label.toLowerCase()}, so it does not run yet.</p>}
       </section>
 
       {/* 6. Composition and dependents. */}

@@ -236,13 +236,40 @@ def test_a_website_run_sends_ai_steps_to_the_sandbox_and_keeps_every_file(monkey
 
     monkeypatch.setattr(rs, "run_ai_step", fake_ai)
     monkeypatch.setattr(wr, "_write_supplied", no_write)
-    run = {**_run(), "outputs": [{"order": 1, "title": "lit", "actor": "ai", "output": "body",
-                                  "files": [{"name": "lit.md"}]}]}
+    run = {**_run(), "sandbox": {"provider": "agent37", "id": "inst-1", "ready": True},
+           "outputs": [{"order": 1, "title": "lit", "actor": "ai", "output": "body", "files": [{"name": "lit.md"}]}]}
     step = {"order": 2, "kind": "prompt", "title": "TeX", "prompt": "Review the literature.", "imports": ["lit.md"],
             "produces": "main.tex"}
     out = asyncio.run(wr._run_by_kell(step, run))
     assert out.startswith("done") and "main.tex" in out
     assert run["_captured"] == [("main.tex", b"\\documentclass{article}")]
+
+
+def test_a_run_that_cannot_get_a_sandbox_runs_in_process_and_says_so(monkeypatch):
+    """Agent37 with no balance answers 402 (measured 2026-11-28): the run must go on, not fail at step 1."""
+    from app.execution import way_runs as wr
+
+    monkeypatch.setattr(rs, "wanted_for", lambda run: True)
+
+    class Broke(rs.Agent37):
+        def __init__(self):
+            pass
+
+        async def create(self, *, run_id):
+            raise rs.SandboxError("the run's sandbox could not be created (402): insufficient_balance")
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(rs, "Agent37", Broke)
+    run = _run()
+    step = {"order": 1, "kind": "prompt", "title": "s", "prompt": "do it"}
+    assert asyncio.run(wr._in_sandbox(step, run, None)) is None            # the caller runs it in-process
+    assert "402" in run["sandbox"]["unavailable"]
+    assert asyncio.run(wr._in_sandbox(step, run, None)) is None            # and never tries again in this run
+    v = wr.view({**run, "way_id": "w", "status": "running", "next_step": 1, "error": "", "waiting": None,
+                 "plan": [{**step, "model": None, "strict": False}]})
+    assert v["sandbox"]["state"] == "unavailable"
 
 
 def test_tool_steps_and_session_runs_never_touch_the_sandbox(monkeypatch):

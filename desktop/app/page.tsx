@@ -15,6 +15,7 @@ import ThemeToggle, { ThemeWatcher } from "@/components/ThemeToggle"
 import { useSpringScroll } from "@/components/chat/useSpringScroll"
 import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
+import ExecutionDeck from "@/components/ExecutionDeck"
 import { applyFont, readFont, saveFont } from "@/lib/font"
 import type { Delegation, DelegationStep, GoalOption, WayOption } from "@/lib/plan"
 import { planFromOption, recommendStepModel } from "@/lib/plan"
@@ -44,7 +45,7 @@ const IMPORT_SOURCES: { id: ImportSource; label: string; note: string }[] = [
   { id: "opencode", label: "OpenCode", note: "Chats started with the opencode CLI in this folder." },
 ]
 type KellDesktop = {
-  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void; showMenu?: () => void
+  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; showInFolder?: (path: string) => void; onMenu?: (cb: (what: string) => void) => () => void; showMenu?: () => void
   pickFiles?: () => Promise<string[]>; pathForFile?: (file: File) => string; openPath?: (path: string) => Promise<string>
   onQuick?: (cb: (text: string) => void) => () => void
   onFont?: (cb: (font: string) => void) => () => void; setFont?: (font: string) => void
@@ -558,6 +559,31 @@ export default function Home() {
   const [sessOpen, setSessOpen] = useState(false)
   // The left sidebar's two views (owner, 2026-11-14): the projects list, or one open project (its sessions, then files).
   const [sideView, setSideView] = useState<"projects" | "project">("projects")
+  // Two kinds of chat (owner, 2026-11-28): a chat, and an execution -- a Way run on this computer, shown as its steps
+  // (components/ExecutionDeck.tsx, lib/executions.ts). The sidebar lists one kind at a time; an open execution takes
+  // the middle column in place of the conversation.
+  const [chatKind, setChatKind] = useState<"chats" | "executions">("chats")
+  const [execId, setExecId] = useState<string | null>(null)
+  const [execs, setExecs] = useState<{ id: string; title: string; status: string; step?: number; startedAt: number }[]>([])
+  const loadExecs = useCallback(async () => {
+    try {
+      const r = await fetch("/api/executions", { cache: "no-store" })
+      const j = await r.json().catch(() => ({}))
+      if (Array.isArray(j?.executions)) setExecs(j.executions)
+    } catch { /* the list stays as it was */ }
+  }, [])
+  useEffect(() => {
+    // /?exec=<id> opens an execution (the Way page starts one and comes here).
+    const q = new URLSearchParams(window.location.search).get("exec")
+    if (q) { setChatKind("executions"); setExecId(q) }
+    void loadExecs()
+  }, [loadExecs])
+  const execLive = execs.some((x) => ["starting", "running", "needs_you"].includes(x.status))
+  useEffect(() => {
+    if (chatKind !== "executions" && !execLive) return
+    const t = setInterval(() => void loadExecs(), execLive ? 3000 : 10000)
+    return () => clearInterval(t)
+  }, [chatKind, execLive, loadExecs])
   const [showSessions, setShowSessions] = useState(true)
   const [showFiles, setShowFiles] = useState(true)
   // Import chats from other agents (Claude Code, Codex, OpenCode) into this project: the sessions the sidebar
@@ -2895,6 +2921,37 @@ export default function Home() {
               (routing_kell_frontend/app/chat/chat.css's .dg-side-scroll / .dg-me-wrap). */}
           <div className="dg-side-scroll" ref={sideScrollRef}>
 
+          <div className="dk-kinds" role="tablist" aria-label="Kind of chat">
+            <button type="button" role="tab" aria-selected={chatKind === "chats"} className="dk-kind"
+              onClick={() => { setChatKind("chats"); setExecId(null) }}>Chats</button>
+            <button type="button" role="tab" aria-selected={chatKind === "executions"} className="dk-kind"
+              onClick={() => { setChatKind("executions"); void loadExecs() }}>
+              Executions{execLive ? <span className="dk-kind-live" aria-label="one is running" /> : null}
+            </button>
+          </div>
+
+          {chatKind === "executions" ? (
+            <>
+              <div className="dk-sec-head"><h2>Executions</h2>{execs.length > 0 && <span className="dk-count">{execs.length}</span>}</div>
+              {execs.length === 0 ? (
+                <p className="dk-note">A Way run on this computer shows here. Open a Way and press Run on this computer.</p>
+              ) : (
+                <ul className="dk-execs" aria-label="Executions">
+                  {execs.map((x) => (
+                    <li key={x.id} data-here={execId === x.id || undefined}>
+                      <button type="button" className="dk-exec-row" onClick={() => setExecId(x.id)} title={x.title}>
+                        <span className="dk-exec-dot" data-state={x.status} aria-hidden="true" />
+                        <span className="nm">{x.title}</span>
+                        <small>{x.status === "running" ? `step ${x.step || "…"}` : x.status === "waiting_human" ? "needs you"
+                          : x.status === "needs_you" ? "permission" : x.status}</small>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (<>
+
           {/* Two views (owner, 2026-11-14): the projects you have opened, and once you open one, that project alone: its
               sessions, then its files, each folding away, with a way back to the projects. */}
           {sideView === "projects" || !directory ? (
@@ -3057,6 +3114,7 @@ export default function Home() {
               </div>
             </>
           )}
+          </>)}
           </div>
 
           <div className="dk-foot">
@@ -3145,7 +3203,7 @@ export default function Home() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>
               </button>
             )}
-            <h1>{project}</h1>
+            <h1>{execId ? (execs.find((x) => x.id === execId)?.title || "Execution") : project}</h1>
             <div className="dk-chips">
               {spend > 0 && <span className="dk-spend">${spend.toFixed(4)} this session</span>}
             </div>
@@ -3166,6 +3224,12 @@ export default function Home() {
             )}
           </header>
 
+          {execId ? (
+            <div className="dg-scroll dk-exec-scroll">
+              <ExecutionDeck id={execId} onBack={() => { setExecId(null); setChatKind("chats") }}
+                onOpenChat={(dir) => { void desktop()?.showInFolder?.(dir) }} />
+            </div>
+          ) : (<>
           <div className="dg-scroll"
             onPointerMove={(e) => {
               const r = e.currentTarget.getBoundingClientRect()
@@ -3778,6 +3842,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
             </button>
           </form>
+          </>)}
           {panel.used && (
             <BottomPanel directory={directory || ""} open={panel.open} tab={panel.tab}
               onTab={(tab) => setPanel((p) => ({ ...p, tab }))} onClose={() => setPanel((p) => ({ ...p, open: false }))}
@@ -3880,34 +3945,8 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                   </>)}
             </section>
           )}
-          {/* The procedure record, editable in the panel: the card open in the chat, else the best fit, else the chosen Way. */}
-          {/* The right sidebar is Submit a Way: written here, drafted here, or submitted for review. It replaced the
-              read-only Procedure record (2026-11-18, owner's call): one place to write a Way, and the same panel the
-              rooms use, so a Way looks the same wherever it is written. The record of the Way a turn is running is still
-              in the chat, as its card. */}
-          <section className="dk-proc" data-glass={glassGraph ? "on" : "off"} aria-label="Submit a Way">
-            <div className="dk-proc-head">
-              <span className="dk-proc-title">
-                <h2>Submit a Way</h2>
-                <InfoTip align="start" text="Write a new Way step by step. Drafts stay on this computer and run here; submitting sends it to kell's reviewer, which checks every step." />
-              </span>
-              <span className="dk-proc-actions">
-                <button type="button" className="dk-icon dk-icon-sm dk-proc-toggle" aria-pressed={glassGraph}
-                  aria-label={glassGraph ? "Turn the glass effect off" : "Turn the glass effect on"}
-                  title={glassGraph ? "Glass effect on" : "Glass effect off"} onClick={toggleGlassGraph}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-                    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M12 3.5l1.7 4.3 4.3 1.7-4.3 1.7L12 15.5l-1.7-4.3L6 9.5l4.3-1.7z" />
-                    <path d="M18.6 14.4l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
-                  </svg>
-                </button>
-              </span>
-            </div>
-            <div className="dk-proc-graph" key="submit">
-              <span className="dk-proc-aurora" aria-hidden="true" />
-              <SubmitWayPanel api={submissionsApi} compact />
-            </div>
-          </section>
+          {/* The Way bar that sat here (Submit a Way) was removed (owner, 2026-11-28): a Way is run as an execution
+              (the sidebar's Executions), and written or improved on its own page. */}
         </aside>
         <div className="dk-scrim-right" onClick={() => setRightOpen(false)} aria-hidden="true" />
       </div>

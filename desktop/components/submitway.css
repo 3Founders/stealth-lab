@@ -186,3 +186,8 @@
 .sw-proposal-who { font-size: .8em; color: var(--text-2); }
 @keyframes sw-proposal-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .sw-proposal { animation: none; } }
+/* Run this Way on this computer (components/WayPage.tsx): a task box and the CTA. */
+.dkw-run { display: grid; gap: 8px; }
+.dkw-run textarea { font: inherit; font-size: 14px; padding: 10px 12px; border: 1px solid var(--rule-strong); border-radius: 10px;
+  background: var(--surface); color: var(--ink); resize: vertical; }
+.dkw-run .dkw-cta { justify-self: start; }

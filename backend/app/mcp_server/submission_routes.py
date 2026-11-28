@@ -263,8 +263,11 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
         if early is not None:
             return early
         body = await _body(request)
+        # "session": the caller's own agent does the AI steps and reports each one (the desktop app runs them on the
+        # person's computer); anything else is the website's headless run.
+        mode = "session" if body.get("mode") == "session" else "headless"
         return await _answer(request, api.start_run(pool, subject, request.path_params["submission_id"],
-                                                    str(body.get("input") or "")))
+                                                    str(body.get("input") or ""), mode=mode))
 
     @server.custom_route("/v1/goals/runs", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def runs_mine(request: Request) -> Response:
@@ -302,6 +305,20 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any]) -> None:
         if early is not None:
             return early
         return await api.download_artifacts_zip(pool, subject, request.path_params["run_id"], request)
+
+    @server.custom_route("/v1/goals/runs/{run_id}/report", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def run_report(request: Request) -> Response:
+        """A session's result for the step its run waits on: {output} or {failed}, plus the files the step wrote as
+        [{name, b64}] (the desktop app's engine wrote them on the person's computer). Stored like a headless step's."""
+        subject, pool, early = await _begin(request)
+        if early is not None:
+            return early
+        if int(request.headers.get("content-length") or 0) > api.MAX_REPORT_BYTES:
+            return _error(request, "the step's files are too large to report in one go", 413)
+        body = await _body(request)
+        return await _answer(request, api.report_step(pool, subject, request.path_params["run_id"],
+                                                      output=body.get("output"), failed=str(body.get("failed") or ""),
+                                                      files=body.get("files")))
 
     @server.custom_route("/v1/goals/runs/{run_id}/done", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def run_done(request: Request) -> Response:

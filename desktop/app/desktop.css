@@ -1691,3 +1691,35 @@ button.dk-sess-group { cursor: pointer; }
   -webkit-backdrop-filter: none; backdrop-filter: none;
 }
 .dk-proc[data-glass="on"] .dk-proc-graph:has(> .sw) .dk-proc-aurora { opacity: 0; }
+/* Two kinds of chat (2026-11-28): Chats and Executions, a segmented switch at the top of the sidebar. The selected half
+   turns yellow on the micro spring; only colour, background and a press scale change, never layout
+   (docs/ios_animation.md section 6). */
+.dk-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; margin: 2px 6px 10px; padding: 3px;
+  border: 1px solid var(--rule-strong); border-radius: 999px; background: var(--dg-glass, var(--surface)); }
+.dk-kind { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 5px 10px; border-radius: 999px; font-size: 13px; color: var(--grey); cursor: pointer;
+  transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease), color var(--dg-micro-d, 160ms) var(--dg-micro, ease),
+    transform var(--dg-micro-d, 160ms) var(--dg-micro, ease); }
+.dk-kind:hover { color: var(--ink); }
+.dk-kind:active { transform: scale(.97); }
+.dk-kind[aria-selected="true"] { background: var(--yellow); color: var(--on-yellow, #171717); font-weight: 500; }
+.dk-kind:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.dk-kind-live { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: dk-agent-pulse 1.6s ease-in-out infinite; }
+.dk-execs { list-style: none; margin: 0 2px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.dk-execs li { border-radius: 8px; animation: dg-rise var(--dg-smooth-d, .5s) var(--dg-smooth, cubic-bezier(.22, 1, .36, 1)) both; }
+.dk-execs li:hover, .dk-execs li[data-here] { background: var(--soft, rgba(0,0,0,.05)); }
+.dk-exec-row { all: unset; box-sizing: border-box; width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: 8px; padding: 7px 8px; cursor: pointer; color: var(--ink); font-size: 14px; }
+.dk-exec-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-execs li[data-here] .nm { font-weight: 600; }
+.dk-exec-row small { font-size: 11.5px; color: var(--grey); white-space: nowrap; }
+.dk-exec-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--rule-strong); box-sizing: border-box; }
+.dk-exec-dot[data-state="running"], .dk-exec-dot[data-state="starting"] { border-color: var(--cobalt); animation: dk-agent-pulse 1.6s ease-in-out infinite; }
+.dk-exec-dot[data-state="waiting_human"], .dk-exec-dot[data-state="needs_you"] { background: var(--yellow); border-color: var(--yellow); }
+.dk-exec-dot[data-state="done"] { background: var(--cobalt); border-color: var(--cobalt); }
+.dk-exec-dot[data-state="failed"], .dk-exec-dot[data-state="cancelled"] { background: var(--ink); border-color: var(--ink); }
+/* The execution fills the middle column the way a chat does; its deck is centred at the website's measure. */
+.dk-exec-scroll { overflow-y: auto; padding: 18px 24px 24px; }
+@media (prefers-reduced-motion: reduce) {
+  .dk-kind, .dk-execs li, .dk-kind-live, .dk-exec-dot { transition: none; animation: none; }
+}

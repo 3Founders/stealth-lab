@@ -7,6 +7,8 @@ export function register() {
   void import("./lib/remote").then((m) => m.startRemote()).catch((err) => console.error("remote sessions did not start:", err))
   // scheduled tasks run by themselves (lib/schedules.ts), also while the window is closed to the tray
   void import("./lib/schedules").then((m) => m.startSchedules()).catch((err) => console.error("schedules did not start:", err))
+  // an execution that was mid-step when the app quit picks up again (lib/executions.ts); kell's server kept its run
+  void import("./lib/executions").then((m) => m.resumeExecutions()).catch((err) => console.error("executions did not resume:", err))
   const parent = Number(process.env.KELL_PARENT_PID || 0)
   if (!parent) return
   const g = globalThis as typeof globalThis & { __kellParentWatch?: unknown; __kellEngineState?: { child?: { kill(): void } } }

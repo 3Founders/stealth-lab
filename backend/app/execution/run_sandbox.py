@@ -66,13 +66,22 @@ def _key() -> str:
 
 
 def _public_api() -> str:
+    """Where the sandbox reaches this server's run route: KELL_RUN_GATEWAY_URL, else PUBLIC_API_URL, else the public
+    domain Railway gives this service (RAILWAY_PUBLIC_DOMAIN, mcp.kell.org.in in production)."""
+    own = (os.environ.get("KELL_RUN_GATEWAY_URL") or "").strip().rstrip("/")
+    if own:
+        return own
     try:
         from app.config import settings
 
         url = (settings.public_api_url or "").strip().rstrip("/")
     except Exception:  # noqa: BLE001
         url = ""
-    return url or (os.environ.get("PUBLIC_API_URL") or "").strip().rstrip("/")
+    url = url or (os.environ.get("PUBLIC_API_URL") or "").strip().rstrip("/")
+    if url:
+        return url
+    domain = (os.environ.get("RAILWAY_PUBLIC_DOMAIN") or "").strip().strip("/")
+    return f"https://{domain}" if domain else ""
 
 
 def enabled() -> bool:
