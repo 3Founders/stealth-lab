@@ -72,9 +72,12 @@ function FileViewer({ runId, file }: { runId: string; file: FileOut }) {
   return <pre className="dg-way-viewsrc">{text}</pre>
 }
 
-export default function ExecutionDeck({ id, onBack, onOpenChat }: {
+export default function ExecutionDeck({ id, onBack, onOpenChat, full = false, onToggleFull }: {
   id: string
   onBack?: () => void
+  /** Full screen: the side columns are gone and the deck has the whole display (the page owns the state). */
+  full?: boolean
+  onToggleFull?: () => void
   /** Open the engine chat this execution ran in (its full conversation, tool calls included). */
   onOpenChat?: (directory: string) => void
 }) {
@@ -160,14 +163,24 @@ export default function ExecutionDeck({ id, onBack, onOpenChat }: {
   const stripRef = useRef<HTMLOListElement | null>(null)
   // Keep the current tab in view by scrolling the strip itself. scrollIntoView would also scroll every scrollable
   // ancestor, and here that moved the whole middle column sideways.
-  useEffect(() => {
+  const keepTabInView = useCallback(() => {
     const strip = stripRef.current
     const tab = strip?.querySelector<HTMLElement>('[aria-current="step"]')
     if (!strip || !tab) return
     const left = tab.offsetLeft - strip.offsetLeft
     if (left < strip.scrollLeft) strip.scrollLeft = left - 8
     else if (left + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = left + tab.offsetWidth - strip.clientWidth + 8
-  }, [idx])
+  }, [])
+  useEffect(() => { keepTabInView() }, [idx, full, keepTabInView])
+  // The strip changes width with the window, full screen and the sidebars; the current tab stays in view through all of it.
+  const hasStrip = pages.length > 0
+  useEffect(() => {
+    const strip = stripRef.current
+    if (!strip || typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(() => keepTabInView())
+    ro.observe(strip)
+    return () => ro.disconnect()
+  }, [hasStrip, keepTabInView])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
@@ -207,12 +220,25 @@ export default function ExecutionDeck({ id, onBack, onOpenChat }: {
     : ex.status === "done" ? "finished" : ex.status === "cancelled" ? "cancelled" : "stopped"
 
   return (
-    <section className="dg-way-main dk-exec" aria-label={ex ? `${ex.title}: execution` : "Execution"}>
+    <section className="dg-way-main dk-exec" data-full={full ? "on" : undefined}
+      aria-label={ex ? `${ex.title}: execution` : "Execution"}>
       <header className="dg-way-head">
+        {full && ex && <h2 className="dk-exec-fulltitle">{ex.title}</h2>}
         <p className="dg-way-sub">
           {total > 0 ? `${done} of ${total} steps done · ` : ""}{statusLine}
         </p>
-        <span style={{ display: "inline-flex", gap: 8 }}>
+        <span className="dk-exec-actions">
+          {onToggleFull && (
+            <button type="button" className="dg-way-swap dk-exec-full" aria-pressed={full} onClick={onToggleFull}
+              title={full ? "Leave full screen (Esc)" : "Full screen"}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {full
+                  ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+                  : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
+              </svg>
+              {full ? "Exit full screen" : "Full screen"}
+            </button>
+          )}
           {onBack && <button type="button" className="dg-way-swap" onClick={onBack}>Back to chats</button>}
           {ex && onOpenChat && <button type="button" className="dg-way-swap" onClick={() => onOpenChat(ex.directory)}>Open its folder</button>}
           {live && <button type="button" className="dg-way-swap" disabled={busy} onClick={() => void act("cancel")}>Stop</button>}

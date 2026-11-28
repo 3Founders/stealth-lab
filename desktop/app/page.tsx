@@ -570,6 +570,22 @@ export default function Home() {
   // the middle column in place of the conversation.
   const [chatKind, setChatKind] = useState<"chats" | "executions">("chats")
   const [execId, setExecId] = useState<string | null>(null)
+  // Full screen for an execution (owner, 2026-11-28): both side columns leave and the window itself goes full screen,
+  // so the deck has the whole display. Esc (the browser's own exit), the button, or leaving the execution ends it.
+  const [execFull, setExecFull] = useState(false)
+  useEffect(() => { if (!execId) setExecFull(false) }, [execId])
+  useEffect(() => {
+    const doc = document as Document & { fullscreenElement: Element | null }
+    if (execFull && !doc.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => { /* focus mode still applies */ })
+    if (!execFull && doc.fullscreenElement) document.exitFullscreen?.().catch(() => {})
+  }, [execFull])
+  useEffect(() => {
+    const onChange = () => { if (!document.fullscreenElement) setExecFull(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setExecFull(false) }
+    document.addEventListener("fullscreenchange", onChange)
+    window.addEventListener("keydown", onKey)
+    return () => { document.removeEventListener("fullscreenchange", onChange); window.removeEventListener("keydown", onKey) }
+  }, [])
   const [execs, setExecs] = useState<{ id: string; title: string; status: string; step?: number; startedAt: number }[]>([])
   const loadExecs = useCallback(async () => {
     try {
@@ -2965,7 +2981,7 @@ export default function Home() {
         </div>
       )}
       <div className="dg-shell" ref={shellRef} hidden={pane !== "code"} data-left={leftOpen ? "open" : "closed"} data-right={rightOpen ? "open" : "closed"} data-menu={leftOpen ? "open" : "closed"}
-        data-resizing={resizing ?? undefined}
+        data-resizing={resizing ?? undefined} data-execfull={execId && execFull ? "on" : undefined}
         style={{ "--dk-left": `${widths.left}px`, "--dk-right": `${widths.right}px` } as React.CSSProperties}>
         <div className="dg-scrim" onClick={() => setLeftOpen(false)} aria-hidden="true" />
         <div className="dk-resize" data-side="left" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Drag to resize the project list"
@@ -3324,6 +3340,7 @@ export default function Home() {
           {execId ? (
             <div className="dg-scroll dk-exec-scroll">
               <ExecutionDeck id={execId} onBack={() => { setExecId(null); setChatKind("chats") }}
+                full={execFull} onToggleFull={() => setExecFull((v) => !v)}
                 onOpenChat={(dir) => { void desktop()?.showInFolder?.(dir) }} />
             </div>
           ) : (<>
