@@ -158,8 +158,15 @@ export default function ExecutionDeck({ id, onBack, onOpenChat }: {
     setAt(p.step ? p.step.n : p.key)
   }
   const stripRef = useRef<HTMLOListElement | null>(null)
+  // Keep the current tab in view by scrolling the strip itself. scrollIntoView would also scroll every scrollable
+  // ancestor, and here that moved the whole middle column sideways.
   useEffect(() => {
-    stripRef.current?.querySelector<HTMLElement>('[aria-current="step"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+    const strip = stripRef.current
+    const tab = strip?.querySelector<HTMLElement>('[aria-current="step"]')
+    if (!strip || !tab) return
+    const left = tab.offsetLeft - strip.offsetLeft
+    if (left < strip.scrollLeft) strip.scrollLeft = left - 8
+    else if (left + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = left + tab.offsetWidth - strip.clientWidth + 8
   }, [idx])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -277,7 +284,8 @@ export default function ExecutionDeck({ id, onBack, onOpenChat }: {
                 const i = steps.findIndex((x) => x.n === s.n)
                 const wrote = outputs.find((o) => o.order === s.n)
                 const st = stateOf(s.n)
-                const asks = s.kind === "human"
+                // A person's step: the run says so by kind, by who does it, or by who answered it (an older server sends only the latter two).
+                const asks = s.kind === "human" || s.by === "you" || wrote?.actor === "human"
                 const question = asks ? (s.description || (run?.waiting_on?.order === s.n ? run?.waiting_on?.description : "")) : ""
                 const gave = Object.entries(s.supplied || {})
                 const reads = (s.imports || []).filter(Boolean)

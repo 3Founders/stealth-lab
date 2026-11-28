@@ -1723,3 +1723,11 @@ button.dk-sess-group { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .dk-kind, .dk-execs li, .dk-kind-live, .dk-exec-dot { transition: none; animation: none; }
 }
+/* The deck in the desktop's middle column: the website centres it in a page column of its own; here it is pinned to the
+   column's width, or the track (every step side by side) would size the column to all its steps at once. */
+.dk-exec { width: 100%; max-width: 920px; margin: 0 auto; justify-items: stretch; text-align: left; min-width: 0;
+  grid-template-columns: minmax(0, 1fr); }
+.dk-exec .dg-way-head, .dk-exec .dg-way-deck, .dk-exec .dg-way-track-frame { width: 100%; min-width: 0; max-width: none; }
+.dk-exec .dg-way-deck { grid-template-columns: minmax(0, 1fr); }
+.dk-exec { overflow-x: hidden; }
+.dk-exec .dg-way-track-frame { overflow: hidden; }
