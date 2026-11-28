@@ -1,221 +1,315 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>kell for teams</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<title>kell: work, priced per task</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-html,body{margin:0;height:100%;background:#0b0e11;overflow:hidden;font-family:'DM Sans',Arial,sans-serif}
-#stage{position:fixed;left:50%;top:50%;width:1920px;height:1080px;transform-origin:0 0}
-.slide{position:absolute;left:0;top:0;width:1920px;height:1080px;box-sizing:border-box;overflow:hidden;opacity:0;visibility:hidden;transition:opacity .35s ease}
+:root{
+  --bg:#ffffff;
+  --card:#ffffff;
+  --ink:#111111;
+  --muted:#5f5f5f;
+  --soft:#8a8a8a;
+  --rule:#e7e3db;
+  --wash:#faf9f6;
+  --accent:#b45309;
+  --accent-soft:#fef3c7;
+  --green:#166534;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;color:var(--ink)}
+#stage{position:fixed;left:50%;top:50%;width:1920px;height:1080px;transform-origin:0 0;counter-reset:slide}
+.slide{position:absolute;inset:0;width:1920px;height:1080px;padding:104px 128px 132px;background:var(--bg);color:var(--ink);display:flex;flex-direction:column;gap:40px;justify-content:center;opacity:0;visibility:hidden;transition:opacity .3s ease;counter-increment:slide}
 .slide.on{opacity:1;visibility:visible}
+.slide::after{content:"kell · " counter(slide,decimal-leading-zero);position:absolute;left:128px;bottom:52px;font-size:18px;color:var(--soft);font-variant-numeric:tabular-nums}
 .slide h1,.slide h2,.slide h3,.slide p,.slide ul,.slide ol,.slide li{margin:0}
-.slide *{box-sizing:border-box}
-#bar{position:fixed;left:0;bottom:0;height:4px;background:#F2B134;transition:width .3s ease}
-#hint{position:fixed;right:16px;bottom:12px;color:#8C949C;font:14px 'DM Sans',sans-serif}
-#notes{position:fixed;left:0;right:0;bottom:0;max-height:30vh;overflow:auto;background:#101418ee;color:#F3F0E8;padding:16px 24px;font:18px/1.5 'DM Sans',sans-serif;display:none}
-@media print{html,body{overflow:visible;height:auto;background:#fff}#stage{position:static;transform:none!important;width:auto;height:auto}.slide{position:relative;opacity:1;visibility:visible;page-break-after:always}#bar,#hint,#notes{display:none}}
+h1{font-size:112px;line-height:1.02;font-weight:700;letter-spacing:-.045em}
+h2{font-size:64px;line-height:1.08;font-weight:700;letter-spacing:-.035em;max-width:1520px}
+h3{font-size:30px;line-height:1.2;font-weight:600;letter-spacing:-.015em}
+p{font-size:24px;line-height:1.45;color:var(--muted);max-width:1320px}
+.eyebrow{font-size:20px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.lede{font-size:30px;line-height:1.35;color:#333;max-width:1380px}
+.small{font-size:20px;line-height:1.45;color:var(--soft)}
+.slide .note{position:absolute;left:128px;right:128px;bottom:104px;font-size:20px;line-height:1.45;color:var(--soft);border-top:1px solid var(--rule);padding-top:18px;margin:0;max-width:1500px}
+.brand{font-size:30px;font-weight:800;letter-spacing:.18em;text-transform:uppercase}
+.pill{display:inline-flex;align-items:center;font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:7px 12px;width:max-content}
+.card{border:1px solid var(--rule);border-radius:16px;padding:30px;background:var(--card);display:flex;flex-direction:column;gap:14px;min-width:0}
+.card.wash{background:var(--wash)}
+.card.accent{border-color:#f0c36a;background:#fffaf0}
+.card h3{font-size:30px}
+.card p{font-size:22px;line-height:1.45}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.four{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.flow{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;align-items:stretch}
+.flow.five{grid-template-columns:repeat(5,1fr)}
+.step{border-top:3px solid var(--ink);padding-top:16px;display:flex;flex-direction:column;gap:8px}
+.step .n{font-size:13px;font-weight:700;letter-spacing:.14em;color:var(--accent)}
+.step h3{font-size:24px}
+.step p{font-size:18px;line-height:1.4}
+.econ{display:grid;grid-template-columns:1.05fr 1.95fr;gap:52px;align-items:center}
+.price{font-size:120px;font-weight:700;letter-spacing:-.06em;line-height:1}
+.price span{font-size:34px;font-weight:600;letter-spacing:-.02em;color:var(--soft)}
+.bar{height:30px;border-radius:9px;overflow:hidden;display:flex;margin:22px 0 10px;background:var(--wash)}
+.bar i{display:block;height:100%}
+.table{width:100%;border-collapse:collapse;font-size:22px}
+.table th{text-align:left;font-size:13px;letter-spacing:.13em;text-transform:uppercase;color:var(--soft);font-weight:700;padding:0 0 12px;border-bottom:1px solid var(--rule)}
+.table td{padding:15px 0;border-bottom:1px solid var(--rule);color:#222}
+.table td:last-child{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+.table tr:last-child td{border-bottom:0;padding-top:20px}
+.cover{justify-content:space-between;padding-top:96px}
+.cover-main{display:flex;flex-direction:column;gap:28px;max-width:1080px}
+.cover-foot{display:flex;justify-content:space-between;font-size:20px;color:var(--soft);max-width:1080px}
+.cover-art{position:absolute;top:0;right:0;bottom:0;width:680px;overflow:hidden}
+.cover-art img{display:block;width:100%;height:100%;object-fit:cover}
+.cover-art .fade{position:absolute;inset:0;background:linear-gradient(90deg,var(--bg) 0%,transparent 45%)}
+.credit{font-size:11px;line-height:1.3;color:#fff;background:rgba(0,0,0,.45);padding:3px 7px;border-radius:4px;letter-spacing:.02em;font-weight:500}
+.cover-art .credit{position:absolute;right:16px;bottom:14px;z-index:2}
+.band{position:relative;border-radius:18px;overflow:hidden;border:1px solid var(--rule);background:var(--wash)}
+.band img{display:block;width:100%;height:100%;object-fit:cover}
+.band .credit{position:absolute;right:12px;bottom:10px}
+.mini{display:grid;grid-template-columns:210px 1fr;gap:22px;align-items:center}
+.mini img{display:block;width:100%;height:150px;object-fit:cover;border-radius:10px}
+.credit-inline{font-size:10px;line-height:1.3;color:var(--soft);margin-top:6px}
+.quote{font-size:42px;line-height:1.25;font-weight:500;letter-spacing:-.02em;color:#222;max-width:1500px}
+.contact{font-size:26px;color:var(--ink);font-weight:600}
+.pdf-link{display:inline-flex;align-items:center;gap:6px;font-size:18px;font-weight:600;color:var(--accent);text-decoration:none;border-bottom:1px solid var(--accent);padding-bottom:2px;width:max-content;margin-top:2px}
+.pdf-link:hover{color:var(--ink);border-color:var(--ink)}
+@media print{
+  @page{size:1920px 1080px;margin:0}
+  html,body{overflow:visible;height:auto;background:var(--bg)}
+  #stage{position:static;transform:none!important;width:auto;height:auto}
+  .slide{position:relative;width:1920px;height:1080px;opacity:1;visibility:visible;page-break-after:always;break-after:page}
+  .slide:last-child{page-break-after:auto;break-after:auto}
+  #bar,#hint,#notes{display:none}
+  .slide::after{display:none}
+}
+#bar{position:fixed;left:0;bottom:0;height:4px;background:var(--accent);transition:width .3s ease}
+#hint{position:fixed;right:16px;bottom:12px;color:var(--soft);font:14px 'Inter',sans-serif}
+#notes{position:fixed;left:0;right:0;bottom:0;max-height:30vh;overflow:auto;background:#111111ee;color:#fff;padding:16px 24px;font:18px/1.5 'Inter',sans-serif;display:none}
 </style></head><body>
 <div id="stage">
-<section id="cover" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;justify-content:space-between">
-<p style="font-size:32px;font-weight:700;letter-spacing:6px;text-transform:uppercase;color:#F2B134">kell</p>
-<div style="display:flex;flex-direction:column;gap:40px">
-<h1 style="font-size:120px;font-weight:700;line-height:1.05;color:#F3F0E8">A better coding agent starts with a proven plan.</h1>
-<p style="font-size:44px;line-height:1.25;color:#B9C0C7">Small tasks go to cheap models. Hard reasoning stays with the best.</p>
-</div>
-<p style="font-size:24px;color:#8C949C">For incubator and department teams · October 2026</p>
 
+<section id="cover" class="slide on cover">
+  <div class="cover-art">
+    <img src="kell_deck/img/cover.jpg" alt="">
+    <div class="fade"></div>
+    <span class="credit">Eye Film Museum, Amsterdam. Fons Heijnsbroek, CC0.</span>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;max-width:1080px">
+    <div class="brand">kell</div>
+    <div class="pill">November 2026</div>
+  </div>
+  <div class="cover-main">
+    <p class="eyebrow">Pay per task</p>
+    <h1>Work, priced<br>per task.</h1>
+    <p class="lede" style="max-width:1000px">A market for granular verification. Every step checked, priced and receipted.</p>
+  </div>
+  <div class="cover-foot"><span>Procedures · Tools · Verification</span><span>kell.org.in</span></div>
 </section>
-<section id="problem" class="slide" style="background:#F3F0E8;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
-<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#9A5B00">The problem</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.1">One premium model does everything, and forgets what worked.</h2>
-<div style="display:flex;gap:32px">
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Every task starts from zero</h3>
-<p style="font-size:32px;line-height:1.4;color:#4A5158">The agent re-invents the approach each time, even for work that has been done well before.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Small jobs use the dearest model</h3>
-<p style="font-size:32px;line-height:1.4;color:#4A5158">Summaries, reformatting and first drafts are paid for at the price of the hardest reasoning.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">No record of what passed</h3>
-<p style="font-size:32px;line-height:1.4;color:#4A5158">Nobody can say which approach actually worked, so good methods are not reused.</p>
-</div>
-</div>
-<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#5B6168">kell · 2</p>
 
+<section id="problem" class="slide">
+  <p class="eyebrow">The problem</p>
+  <h2>The demo works. The task does not.</h2>
+  <div class="band" style="height:250px">
+    <img src="kell_deck/img/problem.jpg" alt="">
+    <span class="credit">BalticServers data centre. BalticServers.com, CC BY-SA 3.0.</span>
+  </div>
+  <div class="three">
+    <div class="card"><p class="pill">The demo</p><h3>A good minute</h3><p>A prompt, a plausible answer, a round of applause.</p></div>
+    <div class="card"><p class="pill">The run</p><h3>A silent failure</h3><p>Ten steps, one bad call, a bill for every retry.</p></div>
+    <div class="card accent"><p class="pill">The buyer</p><h3>No receipt</h3><p>Pays by usage, carries the risk, cannot tell what passed.</p></div>
+  </div>
+  <p class="note">Today the work goes to an agency, an intern or a chat window. None of them leaves a receipt. The unit everyone is missing is the task.</p>
 </section>
-<section id="how" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
-<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#F2B134">How it works</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.1">Find a proven way, hand off the small parts, check the result.</h2>
-<div style="display:flex;gap:32px">
-<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<p style="font-size:44px;font-weight:700;color:#F2B134">1</p>
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Find</h3>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">The agent asks the library for a proven way to do this kind of task.</p>
-<p style="font-size:24px;font-family:'JetBrains Mono', 'Courier New', monospace;color:#8FD5B8">find_ways(task)</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<p style="font-size:44px;font-weight:700;color:#F2B134">2</p>
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Hand off</h3>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">Small sub-tasks go to a cheap open model. Hard reasoning stays put.</p>
-<p style="font-size:24px;font-family:'JetBrains Mono', 'Courier New', monospace;color:#8FD5B8">call_model(glm-5.3-flash)</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<p style="font-size:44px;font-weight:700;color:#F2B134">3</p>
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Check</h3>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">The result is checked before it is used, and the outcome is recorded.</p>
-<p style="font-size:24px;font-family:'JetBrains Mono', 'Courier New', monospace;color:#8FD5B8">report_result(passed)</p>
-</div>
-</div>
-<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#8C949C">kell · 3</p>
 
+<section id="whynow" class="slide">
+  <p class="eyebrow">Why now</p>
+  <h2>Agents can run ten steps. Nobody can prove they ran.</h2>
+  <p class="lede">Tool use, long context and cheap inference made multi-step work possible in the last two years. The missing piece is not capability. It is proof and a price.</p>
+  <div class="three">
+    <div class="card"><p class="pill">Then</p><h3>One prompt</h3><p>One answer, checked by a human, priced by the hour.</p></div>
+    <div class="card"><p class="pill">Now</p><h3>Ten steps</h3><p>Five tools, a real artifact, cheap enough to sell per task.</p></div>
+    <div class="card accent"><p class="pill">Missing</p><h3>A receipt</h3><p>What passed, what it cost, who is owed.</p></div>
+  </div>
+  <p class="note">The unlock is verification, not another model.</p>
 </section>
-<section id="library" class="slide" style="background:#F3F0E8;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
-<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#9A5B00">The global library</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.1">Ways that worked, with the receipts to show it.</h2>
-<div style="display:flex;gap:32px;align-items:stretch">
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
-<p style="font-size:24px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9A5B00">Claims</p>
-<p style="font-size:32px;line-height:1.4">Small statements, each with its source and when it was true.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
-<p style="font-size:24px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9A5B00">Procedures</p>
-<p style="font-size:32px;line-height:1.4">Step-by-step ways built from those claims, with conditions for when they apply.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
-<p style="font-size:24px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9A5B00">Evidence</p>
-<p style="font-size:32px;line-height:1.4">Every reuse records pass or fail. A way that stops working loses trust and is retired.</p>
-</div>
-</div>
-<p style="font-size:32px;line-height:1.4;color:#4A5158">Anyone can read it. Publishing is a deliberate act, tied to a named person.</p>
-<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#5B6168">kell · 4</p>
 
+<section id="insight" class="slide">
+  <p class="eyebrow">The insight</p>
+  <h2>Verification is the product.</h2>
+  <p class="lede">The model is not the moat. The check is. Chat wrappers sell the answer; agencies sell the hour; we sell the check that lets a buyer trust the work.</p>
+  <div class="three">
+    <div class="card"><p class="pill">Granular</p><h3>Every step is checked</h3><p>The procedure names the check for each step, not only the final answer.</p></div>
+    <div class="card"><p class="pill">Priced</p><h3>Every check has a cost</h3><p>The quote covers the input, the output and the verification work.</p></div>
+    <div class="card accent"><p class="pill">Receipted</p><h3>Every run is recorded</h3><p>The step, the check, the output, the cost and the author’s share are one record.</p></div>
+  </div>
+  <p class="note">Everyone else sells the model call; we sell the check that lets a buyer trust it.</p>
 </section>
-<section id="playbooks" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
-<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#F2B134">Research playbooks and tools</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.1">Proven research routines, and a way to pay for the tools from one balance.</h2>
-<div style="display:flex;gap:32px">
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Playbooks, first</h3>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">Market sizing, competitor scan, funding landscape, company due diligence, source-checked fact sheets.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Tools, one balance</h3>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">Discover a tool, inspect its price, run it. Planned: tool calls paid from the same balance as model calls.</p>
-</div>
-</div>
-<p style="font-size:24px;color:#8C949C">Planned items are being confirmed with tool providers; nothing on this slide is live yet.</p>
-<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#8C949C">kell · 5</p>
 
+<section id="product" class="slide">
+  <p class="eyebrow">The product</p>
+  <h2>A procedure is an HTN, written in natural language.</h2>
+  <p class="lede">A compound task decomposes into methods. A method decomposes into subtasks. A subtask calls a tool. Each element can be checked and priced on its own.</p>
+  <div class="flow five">
+    <div class="step"><span class="n">01</span><h3>Task</h3><p>“Create a NeurIPS-format report from this project.”</p></div>
+    <div class="step"><span class="n">02</span><h3>Method</h3><p>Distill the sources, draft the sections, render the PDF.</p></div>
+    <div class="step"><span class="n">03</span><h3>Subtask</h3><p>Search the literature. Write the abstract. Compile LaTeX.</p></div>
+    <div class="step"><span class="n">04</span><h3>Tool</h3><p>Exa, a model call, a LaTeX compiler, a storage write.</p></div>
+    <div class="step"><span class="n">05</span><h3>Check</h3><p>The condition the step must meet before the next one starts.</p></div>
+  </div>
+  <p class="note">First principles: break the task into elements, then check and price each element.</p>
 </section>
-<section id="demo" class="slide" style="background:#F3F0E8;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
-<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#9A5B00">Where it runs</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.1">It works inside the tools people already use.</h2>
-<div style="display:flex;gap:32px">
-<div style="flex:1;display:flex;flex-direction:column;gap:16px">
-<div style="height:380px;background:#FFFFFF;border:1px dashed #B8B2A3;border-radius:16px;display:flex;align-items:center;justify-content:center">
-<p style="font-size:24px;color:#5B6168">[screenshot: Claude Code]</p>
-</div>
-<h3 style="font-size:32px;font-weight:700">Claude Code</h3>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px">
-<div style="height:380px;background:#FFFFFF;border:1px dashed #B8B2A3;border-radius:16px;display:flex;align-items:center;justify-content:center">
-<p style="font-size:24px;color:#5B6168">[screenshot: Claude on the web]</p>
-</div>
-<h3 style="font-size:32px;font-weight:700">Claude on the web</h3>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px">
-<div style="height:380px;background:#FFFFFF;border:1px dashed #B8B2A3;border-radius:16px;display:flex;align-items:center;justify-content:center">
-<p style="font-size:24px;color:#5B6168">[screenshot: the kell site]</p>
-</div>
-<h3 style="font-size:32px;font-weight:700">The kell site</h3>
-</div>
-</div>
-<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#5B6168">kell · 6</p>
 
+<section id="flow" class="slide">
+  <p class="eyebrow">How it works</p>
+  <h2>Input, quote, pay, run, verify, pay the author.</h2>
+  <div class="flow">
+    <div class="step"><span class="n">01</span><h3>Input</h3><p>Files, text, answers. No coalescing by default.</p></div>
+    <div class="step"><span class="n">02</span><h3>Quote</h3><p>The input, the output spec and the tools become one price.</p></div>
+    <div class="step"><span class="n">03</span><h3>Pay</h3><p>One task, one purchase. A failed run releases it.</p></div>
+    <div class="step"><span class="n">04</span><h3>Run</h3><p>The HTN executes. Tools and models are metered per step.</p></div>
+    <div class="step"><span class="n">05</span><h3>Verify</h3><p>Each step passes its check; the run records the result.</p></div>
+    <div class="step"><span class="n">06</span><h3>Royalty</h3><p>The author is paid from the completed run.</p></div>
+  </div>
+  <p class="note">The buyer sees the price before the run. The author is paid after verification. Nobody pays for a failed step.</p>
 </section>
-<section id="measured" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
-<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#F2B134">Measured so far</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.1">The hand-off works, and the cost per call is tiny. The task-level savings are next.</h2>
-<div style="display:flex;gap:32px">
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<p style="font-size:120px;font-weight:700;line-height:1;color:#F2B134">7</p>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">pilot calls completed and recorded in the ledger</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<p style="font-size:120px;font-weight:700;line-height:1;color:#F2B134">$0.004</p>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">total provider cost of those seven calls</p>
-</div>
-</div>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">Early pilot, public data only. We make no savings claim until we measure cost per solved task on real work, together with you.</p>
-<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#8C949C">kell · 7</p>
 
+<section id="proof" class="slide">
+  <p class="eyebrow">Proof</p>
+  <h2>A procedure that works: the academic talk.</h2>
+  <p class="lede">It scopes the claim, distils the sources, drafts assertion-first slides, renders every slide, verifies the terminology and the reviewer persona, then gates the result. The output is a deck, a transcript and a PDF.</p>
+  <div class="flow five">
+    <div class="step"><span class="n">01</span><h3>Scope</h3><p>Claim, audience, time slot, reviewer persona.</p></div>
+    <div class="step"><span class="n">02</span><h3>Distil</h3><p>Sources, citations, the one finding.</p></div>
+    <div class="step"><span class="n">03</span><h3>Draft</h3><p>One assertion per slide, one visual.</p></div>
+    <div class="step"><span class="n">04</span><h3>Verify</h3><p>Dependency ledger, per-slide images, persona questions.</p></div>
+    <div class="step"><span class="n">05</span><h3>Gate</h3><p>Cohesivity, contextuality, sense-making; send failures back.</p></div>
+  </div>
+  <div class="two">
+    <div class="card accent">
+      <p class="pill">The price</p>
+      <h3>₹100 procedure + tools</h3>
+      <p>Fifty to the author, fifty to kell, tools at cost. The buyer pays for the talk, not the retries.</p>
+    </div>
+    <div class="card">
+      <div class="mini">
+        <div>
+          <img src="kell_deck/img/proof.jpg" alt="">
+          <p class="credit-inline">Double Octuple press. Sue Clark, public domain.</p>
+        </div>
+        <div>
+          <p class="pill">The verification</p>
+          <h3>Slides, checks, transcript, PDF</h3>
+          <p>Every slide rendered and checked; every term traced; the final deck downloadable as a PDF.</p>
+          <a class="pdf-link" href="kell_presentation.pdf">Download this deck as PDF →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">The procedure is the product. This deck is the receipt.</p>
 </section>
-<section id="teams" class="slide" style="background:#F3F0E8;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
-<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#9A5B00">For teams</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.1">A team keeps control of who uses what, and what it costs.</h2>
-<div style="display:flex;gap:32px">
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Limits and a stop button</h3>
-<p style="font-size:32px;line-height:1.4;color:#4A5158">Budgets per person and per month. One switch stops all spending.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Members and usage</h3>
-<p style="font-size:32px;line-height:1.4;color:#4A5158">Invite people, see usage by person, export the audit log.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#FFFFFF;padding:40px;border:1px solid #DDD8CC;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Your own keys</h3>
-<p style="font-size:32px;line-height:1.4;color:#4A5158">Use kell’s models, your own provider keys, or both.</p>
-</div>
-</div>
-<p style="font-size:32px;line-height:1.4;color:#4A5158">Today the pooled models take public material only. Private code is planned on providers that keep no copy of it.</p>
-<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#5B6168">kell · 8</p>
 
+<section id="usecases" class="slide">
+  <p class="eyebrow">Use cases</p>
+  <h2>One click, one price, one verification.</h2>
+  <p class="lede">The same procedure shape fits the jobs a team needs every week. Pick the task, pay the price, get the output and the verification.</p>
+  <div class="band" style="height:190px">
+    <img src="kell_deck/img/usecases.jpg" alt="">
+    <span class="credit">Code on a monitor. Markus Spiske, CC0.</span>
+  </div>
+  <div class="three">
+    <div class="card"><p class="pill">Security</p><h3>Security audit for a repo</h3><p>Dependency review, secret scan, licence check, and a ranked list of fixes.</p></div>
+    <div class="card"><p class="pill">Quality</p><h3>Test and coverage report</h3><p>Run the suite, measure coverage, name the untested paths, open the gaps.</p></div>
+    <div class="card"><p class="pill">Launch</p><h3>Preview a release</h3><p>Build, deploy a preview, check the critical paths, hand back the URL and the log.</p></div>
+  </div>
+  <p class="note">One click is not a magic button. It is a procedure that has already done the work of deciding what to check.</p>
 </section>
-<section id="sold" class="slide" style="background:#101418;color:#F3F0E8;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:56px">
-<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#F2B134">How it is paid for</p>
-<h2 style="font-size:72px;font-weight:700;line-height:1.1">Prepaid credits in rupees, for Indian teams first.</h2>
-<div style="display:flex;gap:32px">
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Pay once, spend down</h3>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">A balance you top up. A call is refused at zero, so there are no surprise bills.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Pooled keys, no setup</h3>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">People do not bring their own keys. kell holds the provider accounts.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#1A2026;padding:40px;border:1px solid #2B343C;border-radius:16px">
-<h3 style="font-size:44px;font-weight:700;line-height:1.15">Invoices for teams</h3>
-<p style="font-size:32px;line-height:1.4;color:#B9C0C7">GST invoices with your company details are planned for team accounts.</p>
-</div>
-</div>
-<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#8C949C">kell · 9</p>
 
+<section id="model" class="slide">
+  <p class="eyebrow">Business model</p>
+  <h2>A ₹100 procedure, verified step by step.</h2>
+  <div class="econ">
+    <div>
+      <p class="price">₹100 <span>procedure fee</span></p>
+      <div class="bar">
+        <i style="width:50%;background:#b45309"></i>
+        <i style="width:50%;background:#111"></i>
+      </div>
+      <p class="small">50 author / 50 kell. Verification is inside the procedure fee; tools are passed through at cost: about ₹20, so the buyer pays ₹120.</p>
+    </div>
+    <table class="table">
+      <thead><tr><th>Line</th><th>₹</th></tr></thead>
+      <tbody>
+        <tr><td>Author royalty: 50% of the procedure fee</td><td>50</td></tr>
+        <tr><td>kell margin: 50% of the procedure fee</td><td>50</td></tr>
+        <tr><td>Tools at cost: models, APIs, storage, render</td><td>20</td></tr>
+        <tr><td><b>Buyer pays</b></td><td><b>120</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Value pricing: the anchor is the agency invoice, not the GPU bill. At ₹120 the contribution margin is 42 percent, before fixed costs.</p>
 </section>
-<section id="next" class="slide" style="background:#F2B134;color:#101418;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;justify-content:space-between">
-<p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#101418">What we would like to do with you</p>
-<h2 style="font-size:96px;font-weight:700;line-height:1.05">Run a two-week pilot on one real task from your team.</h2>
-<div style="display:flex;gap:32px">
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:3px solid #101418;padding-top:24px">
-<p style="font-size:32px;font-weight:700">1. Pick the task</p>
-<p style="font-size:32px;line-height:1.4">A coding or research job you already do.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:3px solid #101418;padding-top:24px">
-<p style="font-size:32px;font-weight:700">2. Measure it</p>
-<p style="font-size:32px;line-height:1.4">Cost per solved task, with and without kell.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:12px;border-top:3px solid #101418;padding-top:24px">
-<p style="font-size:32px;font-weight:700">3. Decide together</p>
-<p style="font-size:32px;line-height:1.4">Keep it, change it, or stop. Your call.</p>
-</div>
-</div>
-<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#101418">kell · 10 · [contact details]</p>
 
+<section id="market" class="slide">
+  <p class="eyebrow">Market</p>
+  <h2>Every task a team repeats is a procedure someone can sell.</h2>
+  <p class="lede">The supply is the people who already do the work: the analyst, the auditor, the release engineer. A procedure lets someone in Kanpur sell work to a buyer in San Francisco without moving.</p>
+  <div class="two">
+    <div class="card">
+      <p class="pill">Royalty ledger</p>
+      <h3>Every run names the author.</h3>
+      <p>The procedure version, the buyer, the tools used, the output hash and the author’s share are one record.</p>
+    </div>
+    <div class="card">
+      <p class="pill">Paid on verification</p>
+      <h3>The verification is the receipt.</h3>
+      <p>A run that completes pays. A run that fails releases the purchase. The author is paid for a task that worked, not for a listing.</p>
+    </div>
+  </div>
+  <p class="note">Bottom up: one author, one procedure, many runs. Count the tasks, not the TAM circle.</p>
 </section>
+
+<section id="traction" class="slide">
+  <p class="eyebrow">Traction</p>
+  <h2>The pieces exist. The market is the work.</h2>
+  <div class="two">
+    <div class="card"><h3>Live</h3><p>Procedure pages, one-run purchases, verification, reviews, artifacts, and a working run path in chat.</p></div>
+    <div class="card"><h3>Not</h3><p>Not a chat wrapper. Not a subscription. Not unlimited runs for one price.</p></div>
+  </div>
+  <p class="note">The honest claim: a procedure can be bought, run and verified. The goal is to become the default procedural memory for work.</p>
+</section>
+
+<section id="ask" class="slide">
+  <p class="eyebrow">The ask</p>
+  <h2>Bring one real task. We will quote it, run it, and hand you the receipt.</h2>
+  <div class="three">
+    <div class="step"><span class="n">01</span><h3>Pick the task</h3><p>A research report, a deck, a code change, something you already do.</p></div>
+    <div class="step"><span class="n">02</span><h3>Get a quote</h3><p>A price for this input and this output, before the run.</p></div>
+    <div class="step"><span class="n">03</span><h3>See the split</h3><p>Tools, author royalty, kell margin: on one page.</p></div>
+  </div>
+  <p class="contact">kell.org.in · Chaitanya</p>
+  <p class="note">Make the story partially real: one task, one price, one receipt. If it holds, the next conversation is the round.</p>
+</section>
+
 </div>
 <div id="bar"></div><div id="hint">← → to move · N for notes · F for full screen</div><div id="notes"></div>
 <script>
-const NOTES=["One line to open with: kell makes a coding agent cheaper and more reliable by giving it a proven plan first and handing the small parts to small models. Everything after this slide shows how, and what we have actually measured so far.", "Frame the problem in the audience's terms: they already use AI coding tools. The cost and the lack of memory are what they feel. Do not quote a percentage here; we have not measured one yet.", "This is the whole product in one picture. The agent keeps working in Claude Code, Claude on the web or the kell site. kell adds the plan, the cheaper hand-offs and the record. The glm-5.3-flash model is an open model that kell hosts access to.", "The library is the part nobody else can copy quickly: it is knowledge plus proof. Be honest that it is early. The next slide covers the research playbooks being added now.", "Be clear about status: the playbooks are being written now; the one-balance tool access is a plan that depends on agreements with tool providers. The discover, inspect, run pattern is the same one existing agent-tool marketplaces use, which is why people will find it familiar.", "Replace the three placeholders with real screenshots before presenting, or switch to the live demo here. Show one delegated call in each place if time allows.", "These numbers come straight from the usage ledger (settled calls in the pilot organisation on 28 October 2026). They are small because the pilot is small. Do not turn them into a percentage saving. The honest next step is a joint measurement on a real task from your team.", "The organisation admin pages are built but switched off in production until we turn them on for a pilot team. Be direct about private code: not today. The plan is a second tier on zero-retention providers with a signed agreement.", "Do not state prices on this slide. If asked, say pricing is set after we measure cost per solved task in a joint pilot. The payment integration is built and tested but not yet switched on.", "Close with the ask. Replace the contact placeholder with the real email or number. Keep the pilot small and measurable."];
+const NOTES=[
+"Open with the sentence: work is priced per task. Every step is checked, priced and receipted. One company, one line, no preamble.",
+"The pain first: the demo works, the task does not. Name what the buyer does today, the agency, the intern, the chat window, and why none of them leaves a receipt.",
+"Why now: tool use and cheap inference made ten-step work possible. The unlock is not another model, it is proof and a price.",
+"The insight: the model is not the moat, the check is. Chat wrappers sell the answer, agencies sell the hour, we sell the check.",
+"The product: a procedure is an HTN in natural language. Break the task into elements, then check and price each element.",
+"How it works: input, quote, pay, run, verify, royalty. A failed run releases the purchase. The author is paid after verification.",
+"Proof: the academic talk. Scope, distil, draft, verify, gate. The output is a deck, a transcript and a PDF. This deck is the receipt.",
+"Use cases: a security audit for a repository, a test and coverage report, a release preview. Same shape, different checks.",
+"Business model: the procedure fee splits fifty to the author and fifty to kell; tools pass through at cost. Value pricing anchors on the agency invoice, not the GPU bill. At one hundred twenty, the contribution margin is forty two percent.",
+"Market: the supply is the people who already do the work. One author, one procedure, many runs. Someone in Kanpur can sell work to a buyer in San Francisco without moving.",
+"Traction: procedure pages, one-run purchases, verification, reviews and the chat run path are live. Not a chat wrapper, not a subscription, not unlimited runs.",
+"The ask: one real task. We quote it, run it, and hand over the receipt. Make the story partially real, then talk about the round."
+];
 const slides=[...document.querySelectorAll('.slide')];let i=0;
 const stage=document.getElementById('stage'),bar=document.getElementById('bar'),nb=document.getElementById('notes');
 function fit(){const s=Math.min(innerWidth/1920,innerHeight/1080);stage.style.transform='translate('+(-960*s)+'px,'+(-540*s)+'px) scale('+s+')'}
