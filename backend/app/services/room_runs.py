@@ -272,12 +272,10 @@ async def start(
     # `way_runs.start` runs the licence gate and binds the purchase itself (one purchase, one run), so this path does
     # not repeat either — doing it twice would bind a purchase twice and fail the second time.
     summary = "\n".join(f"{v}" for k, v in sorted(dict(supplied).items()) if isinstance(v, str) and v.strip())
-    run = await way_runs.start(pool, row["parent"], owner_id=str(owner_id), input=summary, mode="headless")
+    # The room and the person's answers go in with the run, so every step (the first included) reads them.
+    run = await way_runs.start(pool, row["parent"], owner_id=str(owner_id), input=summary, mode="headless",
+                               room_id=str(room_id), step_inputs=dict(supplied))
     run_id = str(run.get("run_id") or run.get("id") or "")
-    if run_id:
-        await pool.execute(
-            "UPDATE way_runs SET room_id = $2::uuid, step_inputs = $3::jsonb WHERE id = $1::uuid",
-            run_id, str(room_id), json.dumps(dict(supplied)))
     return {"room_id": str(room_id), "run_id": run_id,
             "state": "running" if run_id else "failed", "run": {"run_id": run_id, "status": "running"},
             "inputs": needed}

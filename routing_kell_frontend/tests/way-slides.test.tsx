@@ -107,8 +107,13 @@ describe("a Way shows one step per slide", () => {
   it("the arrows move one step at a time and stop at the ends", async () => {
     await mount();
     const [prev, next] = [...host!.querySelectorAll(".dg-way-arrow")] as HTMLButtonElement[];
-    expect(next.disabled).toBe(true);
     expect(trackOffset()).toContain("-200%");                    // on step 3 of 3
+    // After the last step comes the Results page, and that is the end of the deck.
+    await act(async () => { next.click(); });
+    expect(host!.querySelector(".dg-way-page[data-current]")?.getAttribute("aria-label")).toBe("What this run produced");
+    expect(next.disabled).toBe(true);
+    await act(async () => { prev.click(); });
+    expect(slideTitle()).toBe("Build the slides");
     await act(async () => { prev.click(); });
     expect(slideTitle()).toBe("Draft the argument");
     expect(trackOffset()).toContain("-100%");
@@ -175,6 +180,84 @@ describe("a Way shows one step per slide", () => {
       if (next.disabled) break;
       await act(async () => { next.click(); });
     }
+  });
+
+  // Everything a run took in and gave out is on a page (owner, 2026-11-28: "there could be inputs, questions or
+  // outputs from the procedure after it is done, everything, input, output, should be visible").
+  const RICH = {
+    ...FULL,
+    input: "A 12-minute NeurIPS talk on sparse routing",
+    outputs: [
+      { order: 1, title: "Scope the talk", actor: "human", output: "Area chair in efficient NLP; 12 + 3 minutes." },
+      { order: 2, title: "Draft the argument", actor: "ai", output: "The spine of the argument.",
+        files: [{ name: "outline.md", size_bytes: 900, media_type: "text/markdown", text: true, url: "/f/outline" }] },
+      FULL.outputs[2],
+    ],
+    artifacts: [
+      { name: "outline.md", size_bytes: 900, media_type: "text/markdown", text: true, url: "/f/outline" },
+      FULL.artifacts[0],
+    ],
+    steps: [
+      { n: 1, title: "Scope the talk", kind: "human", description: "Who will judge the talk, and how long is the slot?",
+        inputs: [{ key: "venue", label: "Venue" }], supplied: { venue: "NeurIPS 2026" } },
+      { n: 2, title: "Draft the argument", kind: "prompt", produces: "outline.md" },
+      { n: 3, title: "Build the slides", kind: "prompt", imports: ["outline.md"], produces: "talk_deck.md" },
+    ],
+    sandbox: { provider: "agent37", state: "ended" },
+  };
+
+  it("opens with what the run was given and ends with what it produced", async () => {
+    await mount(RUN, RICH);
+    const pages = [...host!.querySelectorAll(".dg-way-page")].map((p) => p.getAttribute("aria-label"));
+    expect(pages).toEqual(["What this run was given", "What this run produced"]);
+    const extra = [...host!.querySelectorAll(".dg-way-xtab")].map((t) => t.textContent);
+    expect(extra).toEqual(["Inputs", "Results · 2"]);
+    await act(async () => { (host!.querySelectorAll(".dg-way-xtab")[0] as HTMLButtonElement).click(); });
+    const given = host!.querySelector(".dg-way-page[data-current]")!.textContent || "";
+    expect(given).toContain("A 12-minute NeurIPS talk on sparse routing");
+    expect(given).toContain("Venue");
+    expect(given).toContain("NeurIPS 2026");
+    expect(trackOffset()).toContain("-0%");
+  });
+
+  it("a step's page shows the question it asked, what the person gave it, and the files it read", async () => {
+    await mount(RUN, RICH);
+    await act(async () => { tabs()[0].click(); });
+    const one = current()!.textContent || "";
+    expect(one).toContain("Who will judge the talk");
+    expect(one).toContain("NeurIPS 2026");
+    expect(one).toContain("your answer");
+    expect(one).toContain("Area chair in efficient NLP");
+    await act(async () => { tabs()[2].click(); });
+    expect(current()!.querySelector(".dg-way-reads")!.textContent).toContain("outline.md");
+  });
+
+  it("a step's own file opens on that step's page", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/f/outline")) return { ok: true, text: async () => "# The outline" } as unknown as Response;
+      const body = u.includes("/steps/cost") ? { steps: STEPS } : u.endsWith("/run") ? RUN : RICH;
+      return { ok: true, json: async () => body } as unknown as Response;
+    }));
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    await act(async () => { root!.render(<WayRunPanel roomId="room-1" wayId="way-1" title="A talk" />); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    await act(async () => { tabs()[1].click(); });
+    const view = [...current()!.querySelectorAll("button")].find((b) => b.textContent === "View") as HTMLButtonElement;
+    await act(async () => { view.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(current()!.querySelector("li[data-open='true'] .dg-way-fname")!.textContent).toBe("outline.md");
+    expect(current()!.textContent).toContain("The outline");
+  });
+
+  it("the results page lists every file and says the run ran in a sandbox", async () => {
+    await mount(RUN, RICH);
+    const last = host!.querySelectorAll(".dg-way-xtab");
+    await act(async () => { (last[last.length - 1] as HTMLButtonElement).click(); });
+    const page = host!.querySelector(".dg-way-page[data-current]")!;
+    expect([...page.querySelectorAll(".dg-way-fname")].map((e) => e.textContent)).toEqual(["outline.md", "talk_deck.md"]);
+    expect(page.textContent).toContain("Agent37 sandbox");
+    expect(page.textContent).toContain("Your answers");
   });
 
   it("says the run's text could not be read when that call fails, instead of pretending nothing was written", async () => {

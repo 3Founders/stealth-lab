@@ -44,7 +44,19 @@ type RunState = {
   /** The version's price in paise, or null for a free Way. */
   price_paise?: number | null
 }
-type Output = { order: number; title: string; output: string; files?: FileOut[] }
+type Output = { order: number; title: string; output: string; actor?: string; files?: FileOut[]
+  files_refused?: Refused[] }
+/** What the run says about a step beyond its output: what it read, what it asked of the person, what they gave it. */
+type RunStep = {
+  n: number; title?: string; kind?: string; by?: string
+  imports?: string[]; produces?: string | string[]
+  inputs?: { key: string; label?: string; file?: string }[]
+  supplied?: Record<string, string>
+  description?: string
+}
+type Sandbox = { provider: string; state: "starting" | "ready" | "ended" }
+/** A page of the deck: the run's inputs, one step, or the results. Steps keep their order as the key. */
+type Page = { key: string; kind: "inputs" | "step" | "results"; step?: StepDef }
 type FileOut = { name: string; size_bytes?: number; media_type?: string; text?: boolean; url: string }
 type Refused = { name: string; why: string }
 
@@ -206,6 +218,9 @@ export default function WayRunPanel({
   const [steps, setSteps] = useState<StepDef[]>([])
   const [outputs, setOutputs] = useState<Output[]>([])
   const [files, setFiles] = useState<FileOut[]>([])
+  const [runSteps, setRunSteps] = useState<RunStep[]>([])
+  const [runInput, setRunInput] = useState("")
+  const [sandbox, setSandbox] = useState<Sandbox | null>(null)
   const [refused, setRefused] = useState<Refused[]>([])
   const [downloadAllUrl, setDownloadAllUrl] = useState("")
   const [values, setValues] = useState<Record<string, string>>({})
@@ -240,8 +255,14 @@ export default function WayRunPanel({
             artifacts?: FileOut[]
             artifacts_refused?: Refused[]
             download_all?: string
+            steps?: RunStep[]
+            input?: string
+            sandbox?: Sandbox
           }>(`/v1/goals/runs/${encodeURIComponent(r.run.run_id)}`)
           setOutputs(full.outputs || [])
+          setRunSteps(Array.isArray(full.steps) ? full.steps : [])
+          setRunInput(typeof full.input === "string" ? full.input : "")
+          setSandbox(full.sandbox || null)
           setFiles(full.artifacts || [])
           setRefused(full.artifacts_refused || [])
           setDownloadAllUrl(full.download_all || "")
@@ -305,9 +326,10 @@ export default function WayRunPanel({
     } catch (e) { setError(String((e as Error)?.message || e)) } finally { setBusy(false) }
   }
 
-  async function viewFile(f: FileOut) {
-    if (openFile === f.name) { setOpenFile(null); return }
-    setOpenFile(f.name); setOpenText(""); setOpenErr(null)
+  async function viewFile(f: FileOut, where = "results") {
+    const k = `${where}:${f.name}`
+    if (openFile === k) { setOpenFile(null); return }
+    setOpenFile(k); setOpenText(""); setOpenErr(null)
     // Images, PDFs and HTML are handed to the browser by URL, so only text-like files are read into memory here.
     const type = (f.media_type || "").toLowerCase()
     const byUrl = type.startsWith("image/") || type === "application/pdf" || type === "text/html" || !f.text
@@ -358,7 +380,7 @@ export default function WayRunPanel({
    * it: the step working, else the one waiting on a person, else the last one done. Once the person uses the
    * arrows it is theirs until they leave, so a poll every 3s cannot yank the slide out from under them.
    */
-  const [at, setAt] = useState<number | null>(null)
+  const [at, setAt] = useState<number | string | null>(null)
   const [driven, setDriven] = useState(false)
   // Only a position the RUN decided counts. `steps[0]` is a placeholder for "nothing has loaded yet"; latching it
   // would freeze the deck on step 1 and never move to the step the run is actually on once the list arrives
@@ -383,8 +405,24 @@ export default function WayRunPanel({
     if (!driven && settled != null) setAt(settled)
   }, [driven, settled])
 
-  const idx = at != null ? Math.max(0, steps.findIndex((s) => s.order === at)) : 0
-  const slide = steps[idx]
+  const stepInfo = (order: number) => runSteps.find((r) => r.n === order)
+  /** Every input the person gave, by step: the declared label next to the value. */
+  const given = runSteps.flatMap((r) => Object.entries(r.supplied || {}).map(([key, value]) => ({
+    step: r.n, title: r.title || steps.find((s) => s.order === r.n)?.title || `Step ${r.n}`,
+    label: r.inputs?.find((i) => i.key === key)?.label || view?.inputs?.find((i) => i.step === r.n && i.key === key)?.label || key,
+    value,
+  })))
+  const answers = outputs.filter((o) => o.actor === "human")
+  const hasInputs = Boolean(runInput.trim()) || given.length > 0
+  const hasResults = Boolean(view?.run?.run_id) && (finished || files.length > 0 || refused.length > 0)
+  const pages: Page[] = [
+    ...(hasInputs ? [{ key: "inputs", kind: "inputs" as const }] : []),
+    ...steps.map((s) => ({ key: `s${s.order}`, kind: "step" as const, step: s })),
+    ...(hasResults ? [{ key: "results", kind: "results" as const }] : []),
+  ]
+  // `at` is a step order, or "inputs" / "results" for the two pages around the steps.
+  const idx = at == null ? 0 : Math.max(0, pages.findIndex((p) => (typeof at === "number" ? p.step?.order === at : p.key === at)))
+  const slide = steps.length ? (pages[idx]?.step || steps[0]) : undefined
   // Keep the current step's tab visible in the bottom strip as the deck moves: with sixteen steps the strip scrolls
   // sideways, and the one you are on must not be the one you cannot see.
   const stripRef = useRef<HTMLOListElement | null>(null)
@@ -395,13 +433,14 @@ export default function WayRunPanel({
     el?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
   }, [idx])
   const go = (n: number) => {
-    if (!steps.length) return
+    if (!pages.length) return
     setDriven(true)
-    setAt(steps[Math.min(steps.length - 1, Math.max(0, n))].order)
+    const p = pages[Math.min(pages.length - 1, Math.max(0, n))]
+    setAt(p.step ? p.step.order : p.key)
   }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!steps.length) return
+      if (!pages.length) return
       // Never steal an arrow from the message box or an input, and never from a dialog.
       const t = e.target as HTMLElement | null
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
@@ -410,7 +449,7 @@ export default function WayRunPanel({
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [idx, steps.length])
+  }, [idx, pages.length])
 
   return (
     <section className="dg-way-main" aria-label={title ? `${title}: steps and run` : "Way run"}>
@@ -462,9 +501,91 @@ export default function WayRunPanel({
               viewer for each step's outputs"). Only transform and opacity animate (docs/ios_animation.md §6). */}
           <div className="dg-way-track-frame">
             <div className="dg-way-track" style={{ transform: `translate3d(-${idx * 100}%, 0, 0)` }}>
-              {steps.map((s, i) => {
+              {pages.map((page, pi) => {
+                const current = pi === idx
+                if (page.kind === "inputs") return (
+                  <article key="inputs" className="dg-way-page" data-current={current ? "true" : undefined}
+                    aria-hidden={current ? undefined : true} aria-label="What this run was given">
+                    <div className="dg-way-slide-top"><span className="dg-way-kind">inputs</span></div>
+                    <h2 className="dg-way-slide-title">What this run was given</h2>
+                    {runInput.trim() && <div className="dg-way-slide-out"><Markdown text={runInput} /></div>}
+                    {given.length > 0 && (
+                      <dl className="dg-way-given">
+                        {given.map((g) => (
+                          <div key={`${g.step}.${g.label}`}>
+                            <dt>{g.label}<span className="dg-way-stepof">step {g.step}</span></dt>
+                            <dd>{g.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                  </article>
+                )
+                if (page.kind === "results") return (
+                  <article key="results" className="dg-way-page" data-current={current ? "true" : undefined}
+                    aria-hidden={current ? undefined : true} aria-label="What this run produced">
+                    <div className="dg-way-slide-top">
+                      <span className="dg-way-kind">{view?.state === "done" ? "results" : "so far"}</span>
+                      {sandbox && <span className="dg-way-slide-count">ran in an isolated {sandbox.provider === "agent37" ? "Agent37" : sandbox.provider} sandbox</span>}
+                    </div>
+                    <h2 className="dg-way-slide-title">
+                      {view?.state === "done" ? "What this run produced" : view?.state === "failed" ? "What it produced before it stopped" : "What it has produced so far"}
+                    </h2>
+                    {answers.length > 0 && (
+                      <section className="dg-way-used">
+                        <h3>Your answers</h3>
+                        <dl className="dg-way-given">
+                          {answers.map((a) => (<div key={a.order}><dt>{a.title}<span className="dg-way-stepof">step {a.order}</span></dt><dd>{a.output}</dd></div>))}
+                        </dl>
+                      </section>
+                    )}
+                    {files.length > 0 ? (
+                      <section className="dg-way-used">
+                        <h3>Files ({files.length})</h3>
+                        <ul className="dg-way-slide-files">
+                          {files.map((f) => (
+                            <li key={f.name} data-open={openFile === `results:${f.name}` ? "true" : "false"}>
+                              <div className="dg-way-filerow">
+                                <span className="dg-way-fname">{f.name}</span>
+                                <span className="dg-way-fsize">{kb(f.size_bytes)}</span>
+                                <span className="dg-way-facts">
+                                  <button type="button" onClick={() => void viewFile(f, "results")} aria-expanded={openFile === `results:${f.name}`}>
+                                    {openFile === `results:${f.name}` ? "Hide" : "View"}
+                                  </button>
+                                  <button type="button" onClick={() => void downloadOne(f)}>Download</button>
+                                </span>
+                              </div>
+                              {openFile === `results:${f.name}` && <FileViewer file={f} text={openText} error={openErr} />}
+                            </li>
+                          ))}
+                        </ul>
+                        {files.length > 1 && (
+                          <p><button type="button" className="dg-way-all" disabled={busy} onClick={() => void downloadZip()}>
+                            Download all ({files.length})
+                          </button></p>
+                        )}
+                      </section>
+                    ) : (
+                      <p className="dg-way-slide-out dg-way-note">No files yet. Each step&apos;s own text is on its page.</p>
+                    )}
+                    {refused.length > 0 && (
+                      <section className="dg-way-used">
+                        <h3>Not kept</h3>
+                        <ul className="dg-way-refused">
+                          {refused.map((r) => (<li key={r.name}><span className="dg-way-fname">{r.name}</span><span className="dg-way-fsize">{r.why}</span></li>))}
+                        </ul>
+                      </section>
+                    )}
+                  </article>
+                )
+                const s = page.step!
+                const i = steps.findIndex((x) => x.order === s.order)
                 const wrote = outputs.find((o) => o.order === s.order)
-                const current = i === idx
+                const info = stepInfo(s.order)
+                const reads = (info?.imports || []).filter(Boolean)
+                const gave = Object.entries(info?.supplied || {})
+                const asks = s.is_human || info?.kind === "human"
+                const question = asks ? (info?.description || (view?.waiting?.order === s.order ? view?.waiting?.description : "")) : ""
                 return (
                   <article
                     key={s.order}
@@ -484,6 +605,24 @@ export default function WayRunPanel({
                       {stateOf(s.order) === "review" && <span className="dg-way-kind" data-tone="review">waiting</span>}
                     </div>
                     <h2 className="dg-way-slide-title">{s.title}</h2>
+                    {/* What the step used: the question it put to the person, what they supplied for it, and the files
+                        it read from earlier steps. Shown before its output, the order a reader needs them in. */}
+                    {(question || gave.length > 0 || reads.length > 0) && (
+                      <section className="dg-way-used" aria-label="What this step used">
+                        {question && <p className="dg-way-ask"><span className="dg-way-kind" data-tone="review">asks you</span>{question}</p>}
+                        {gave.length > 0 && (
+                          <dl className="dg-way-given">
+                            {gave.map(([k, v]) => (<div key={k}><dt>{info?.inputs?.find((d) => d.key === k)?.label || k}</dt><dd>{v}</dd></div>))}
+                          </dl>
+                        )}
+                        {reads.length > 0 && (
+                          <p className="dg-way-reads">Read {reads.map((r, ri) => (
+                            <span key={r}>{ri ? ", " : ""}<span className="dg-way-fname">{r}</span></span>
+                          ))} from earlier steps</p>
+                        )}
+                      </section>
+                    )}
+                    {asks && wrote?.output && <p className="dg-way-kind dg-way-answered">your answer</p>}
                     {wrote?.output
                       ? <div className="dg-way-slide-out"><Markdown text={wrote.output} /></div>
                       : outputs.length > 0 || outputsError
@@ -497,12 +636,33 @@ export default function WayRunPanel({
                               : stateOf(s.order) === "review" ? "This step waits for you." : "No output from this step yet."}
                           </p>}
                     {(wrote?.files?.length ?? 0) > 0 && (
-                      // The step's files are listed here, by name; opening one happens in Files below, so there is
-                      // exactly one viewer per file and the slide stays a slide.
+                      // The step's files open on its own slide, in the fixed viewer, so a step's page holds everything
+                      // it made. The same file also appears on the Results page.
                       <ul className="dg-way-slide-files">
-                        {wrote!.files!.map((f) => (
-                          <li key={f.name}><span className="dg-way-fname">{f.name}</span><span className="dg-way-fsize">{kb(f.size_bytes)}</span></li>
-                        ))}
+                        {wrote!.files!.map((f) => {
+                          const full = files.find((x) => x.name === f.name) || f
+                          const open = openFile === `s${s.order}:${f.name}`
+                          return (
+                            <li key={f.name} data-open={open ? "true" : "false"}>
+                              <div className="dg-way-filerow">
+                                <span className="dg-way-fname">{f.name}</span>
+                                <span className="dg-way-fsize">{kb(f.size_bytes)}</span>
+                                {full.url && (
+                                  <span className="dg-way-facts">
+                                    <button type="button" onClick={() => void viewFile(full, `s${s.order}`)} aria-expanded={open}>{open ? "Hide" : "View"}</button>
+                                    <button type="button" onClick={() => void downloadOne(full)}>Download</button>
+                                  </span>
+                                )}
+                              </div>
+                              {open && <FileViewer file={full} text={openText} error={openErr} />}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+                    {(wrote?.files_refused?.length ?? 0) > 0 && (
+                      <ul className="dg-way-refused">
+                        {wrote!.files_refused!.map((r) => (<li key={r.name}><span className="dg-way-fname">{r.name}</span><span className="dg-way-fsize">{r.why}</span></li>))}
                       </ul>
                     )}
                   </article>
@@ -516,14 +676,22 @@ export default function WayRunPanel({
           <nav className="dg-way-strip" aria-label="Steps">
             <button type="button" className="dg-way-arrow" onClick={() => go(idx - 1)} disabled={idx === 0} aria-label="Previous step">←</button>
             <ol className="dg-way-strip-list" ref={stripRef}>
-              {steps.map((s, i) => (
+              {hasInputs && (
+                <li key="inputs">
+                  <button type="button" className="dg-way-xtab" aria-current={pages[idx]?.key === "inputs" ? "step" : undefined}
+                    onClick={() => go(0)} title="What this run was given">
+                    <span className="dg-way-tab-t">Inputs</span>
+                  </button>
+                </li>
+              )}
+              {steps.map((s) => (
                 <li key={s.order}>
                   <button
                     type="button"
                     className="dg-way-tab"
-                    aria-current={i === idx ? "step" : undefined}
+                    aria-current={pages[idx]?.step?.order === s.order ? "step" : undefined}
                     data-state={stateOf(s.order)}
-                    onClick={() => go(i)}
+                    onClick={() => go(pages.findIndex((p) => p.step?.order === s.order))}
                     title={`Step ${s.order}: ${s.title}`}
                   >
                     <span className="dg-way-tab-n">{stateOf(s.order) === "done" ? "✓" : s.order}</span>
@@ -531,8 +699,16 @@ export default function WayRunPanel({
                   </button>
                 </li>
               ))}
+              {hasResults && (
+                <li key="results">
+                  <button type="button" className="dg-way-xtab" aria-current={pages[idx]?.key === "results" ? "step" : undefined}
+                    onClick={() => go(pages.length - 1)} title="What this run produced">
+                    <span className="dg-way-tab-t">Results{files.length ? ` · ${files.length}` : ""}</span>
+                  </button>
+                </li>
+              )}
             </ol>
-            <button type="button" className="dg-way-arrow" onClick={() => go(idx + 1)} disabled={idx === steps.length - 1} aria-label="Next step">→</button>
+            <button type="button" className="dg-way-arrow" onClick={() => go(idx + 1)} disabled={idx === pages.length - 1} aria-label="Next step">→</button>
           </nav>
         </section>
       )}
@@ -591,47 +767,6 @@ export default function WayRunPanel({
 
       {error && <p className="dg-way-error" role="alert">{error}</p>}
 
-      {files.length > 0 && (
-        <section className="dg-way-block">
-          <h2>Files</h2>
-          <ul className="dg-way-files">
-            {files.map((f) => {
-              const open = openFile === f.name
-              return (
-                <li key={f.name} data-open={open ? "true" : "false"}>
-                  <div className="dg-way-filerow">
-                    <span className="dg-way-fname">{f.name}</span>
-                    <span className="dg-way-fsize">{kb(f.size_bytes)}</span>
-                    <span className="dg-way-facts">
-                      <button type="button" onClick={() => void viewFile(f)} aria-expanded={open}>
-                        {open ? "Hide" : "View"}
-                      </button>
-                      <button type="button" onClick={() => void downloadOne(f)}>Download</button>
-                    </span>
-                  </div>
-                  {open && <FileViewer file={f} text={openText} error={openErr} />}
-                </li>
-              )
-            })}
-          </ul>
-          {files.length > 1 && (
-            <p><button type="button" className="dg-way-all" disabled={busy} onClick={() => void downloadZip()}>
-              Download all ({files.length})
-            </button></p>
-          )}
-        </section>
-      )}
-
-      {refused.length > 0 && (
-        <section className="dg-way-block">
-          <h2>Not kept</h2>
-          <ul className="dg-way-refused">
-            {refused.map((r) => (
-              <li key={r.name}><span className="dg-way-fname">{r.name}</span><span className="dg-way-fsize">{r.why}</span></li>
-            ))}
-          </ul>
-        </section>
-      )}
     </section>
   )
 }

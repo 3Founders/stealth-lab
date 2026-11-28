@@ -1046,6 +1046,8 @@ _contribution_routes.register(
 from app.mcp_server import chat_routes as _chat_routes  # noqa: E402 -- the website OpenAI-compatible chat (kell pilot models)
 
 _chat_routes.register(server, _TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request)
+from app.mcp_server import run_chat_routes as _run_chat_routes  # noqa: E402 -- the model door for a run's sandboxed agent
+_run_chat_routes.register(server, lambda: _LIFESPAN_STATE.get("pool"))
 
 from app.mcp_server import billing_routes as _billing_routes  # noqa: E402 -- buying prepaid credits (Razorpay)
 
