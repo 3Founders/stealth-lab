@@ -382,6 +382,16 @@
 .dg-composer .dk-bar-btn:hover:not(:disabled) { transform: translateY(-1px); color: var(--ink); border-color: var(--rule-strong, var(--rule)); background: transparent; }
 .dg-composer .dk-bar-btn[data-on] { color: var(--ink); border-color: var(--rule-strong, var(--rule)); background: var(--soft, rgba(0, 0, 0, .05)); }
 .dg-composer .dk-bar-btn:disabled { opacity: .45; cursor: default; }
+/* The thinking level: the same pill as the bar's switches, with a small select inside so the levels are visible. */
+.dk-think { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 14px;
+  border: 1px solid var(--rule, #e5e7eb); border-radius: 999px; color: var(--grey); font-size: 11.5px; }
+.dk-think:focus-within { border-color: var(--rule-strong, var(--rule)); color: var(--ink); }
+.dk-think[data-level]:not([data-level="auto"]) { color: var(--ink); border-color: var(--rule-strong, var(--rule)); background: var(--soft, rgba(0, 0, 0, .05)); }
+.dk-think span { letter-spacing: .04em; }
+.dk-think select { font: inherit; font-size: 11.5px; height: 24px; border: 0; background: transparent; color: inherit;
+  cursor: pointer; padding: 0 2px; }
+.dk-think select:focus-visible { outline: 2px solid var(--cobalt, #1f4fd8); outline-offset: 2px; border-radius: 6px; }
+.dk-think option { color: var(--ink); background: var(--paper, #fff); }
 /* The edits panel: the files the turn changed, with their diffs, above the bar that sent it. */
 .dk-edits { margin: 6px 0 2px; border: 1px solid var(--rule, #e5e7eb); border-radius: 12px; padding: 8px 10px; max-height: 260px; overflow-y: auto;
   background: var(--surface, #fff); animation: dk-panel-in var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; }
@@ -390,6 +400,19 @@
 .dk-edits-head span { font-size: 11.5px; color: var(--text-2, #4b5563); }
 .dk-edits-head button { margin-left: auto; }
 @media (prefers-reduced-motion: reduce) { .dk-edits { animation: none } .dk-bar-btn:hover { transform: none } }
+/* The turn's changed files, in the conversation itself: the reply is often one word, and this is the work it did. */
+.dk-turn-files { margin: 4px 0 2px; border: 1px solid var(--rule, #e5e7eb); border-radius: 10px; padding: 8px 10px;
+  background: color-mix(in oklab, var(--paper, #fff) 88%, rgba(0, 0, 0, .03)); }
+.dk-turn-files p { margin: 0 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); }
+.dk-turn-files ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.dk-turn-files li { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.dk-turn-files .dk-note { margin: 0; }
+.dk-file-open { font: inherit; font-size: 12px; padding: 0; border: 0; background: none; color: var(--cobalt, #1f4fd8);
+  text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.dk-file-open:hover { color: var(--ink); }
+/* The right panel's Changes: the last turn's files first; the folder's older changes fold away. */
+.dk-changes-earlier { margin-top: 6px; }
+.dk-changes-earlier > summary { cursor: pointer; font-size: 11px; color: var(--grey); padding: 4px 0; }
 .dk-model-pick { grid-column: 1 / -1; display: grid; gap: 4px; padding: 6px; border: 1px solid var(--rule-strong);
   border-radius: 8px; background: var(--paper); }
 .dk-model-pick input { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; padding: 4px 6px;

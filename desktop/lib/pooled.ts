@@ -38,10 +38,14 @@ const readJson = (file: string): any => {
 const priceOf = (m: Model): number =>
   typeof m.input === "number" && typeof m.output === "number" ? m.input + m.output : Infinity
 
-/** The models on kell's credits in the order a turn uses them (owner, 2026-11-07): DeepSeek V4.1 Flash for nearly everything, the
- *  others only when the one before cannot answer, cheapest first. The server's room agent uses the same ladder (MODEL_LADDER in
- *  backend/app/mcp_server/server.py). */
-export const MODEL_LADDER = ["deepseek-v4.1-flash", "glm-5.3-flash", "mimo-v2.6-flash", "deepseek-v4-pro", "kimi-k3"]
+/** The models on kell's credits in the order a turn uses them: the ladder's head is the cheap rung the plugin runs nearly
+ *  everything on, the second is what it escalates to when the triage cannot read a prompt (lib/kellplugin.ts modelPlan).
+ *
+ *  glm-5.3-flash leads (2026-11-24): it is cheaper than DeepSeek V4.1 Flash ($0.15/$0.50 vs $0.20/$0.60 per Mtok) and it
+ *  returns its reasoning, so the chat's Thoughts show what the agent was thinking. DeepSeek V4.1 Flash answers with no
+ *  reasoning at all (its stream carries `reasoning_content: null`), which made the Thoughts switch look broken on every
+ *  turn. The server's room agent keeps its own ladder (MODEL_LADDER in backend/app/mcp_server/server.py). */
+export const MODEL_LADDER = ["glm-5.3-flash", "deepseek-v4.1-flash", "mimo-v2.6-flash", "deepseek-v4-pro", "kimi-k3"]
 export const DEFAULT_MODEL = MODEL_LADDER[0]
 
 const home = (env: NodeJS.ProcessEnv) => env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab")
@@ -200,12 +204,29 @@ export async function personalEngineConfig(env: NodeJS.ProcessEnv = process.env,
   const models: Model[] = (Array.isArray(body?.data) ? body.data : [])
     .filter((m: any) => typeof m?.id === "string")
     .map((m: any) => ({ id: m.id, input: m.stealthlab?.input_per_mtok, output: m.stealthlab?.output_per_mtok }))
-  if (!models.length) return { ok: false, reason: "no-models", message: "No models are available to this account yet." }
+  if (!models.length) {
+    // A loopback gateway is the developer's own server, not the hosted account: say which one is empty.
+    const local = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(origin)
+    return { ok: false, reason: "no-models", message: local
+      ? "The local kell server has no models. Start it with its provider connections, or point kell at the hosted server."
+      : "No models are available to this account yet. Add a plan or top up at kell.org.in/pricing." }
+  }
   shared.__kellPersonalModels = models.map((m) => m.id)
   // The engine calls this app's own /api/gateway (it adds the current website session to each call), never the gateway directly:
   // a session refreshes every hour, and the engine keeps whatever key it started with.
   const local = `${localOrigin(env)}/api/gateway/v1`
   return { ok: true, engine: buildConfig(models, local, token, {}, cfg, env, "kell-desktop-local") }
+}
+
+/** The personal lane when the gateway lists no models: start the engine on kell's default ladder so the
+ *  app is usable, and let the gateway's answer on the first turn say what the account needs. The catalog
+ *  stays empty, so Settings does not pretend the account has models (2026-11-23). */
+export function personalEngineFallback(env: NodeJS.ProcessEnv = process.env): PooledEngine | null {
+  const cfg = readJson(path.join(home(env), "config.json"))
+  const token: string = cfg?.token || ""
+  if (!token) return null
+  const local = `${localOrigin(env)}/api/gateway/v1`
+  return buildConfig(MODEL_LADDER.map((id) => ({ id })), local, token, {}, cfg, env, "kell-desktop-local")
 }
 
 /** Dollars left in the person's own wallet, or null when it cannot be read (then the model call decides). */

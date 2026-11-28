@@ -1,6 +1,6 @@
 {
   "name": "kell-desktop",
-  "version": "0.1.33",
+  "version": "0.1.36",
   "private": true,
   "description": "kell desktop: the cheapest model that can do it, with the right tool",
   "homepage": "https://www.kell.org.in",
@@ -8,13 +8,14 @@
   "scripts": {
     "dev": "next dev -p 3400",
     "bundle:cli": "node scripts/bundle-cli.mjs",
-    "build": "npm run bundle:cli && next build && node scripts/standalone.mjs",
+    "build": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\" && npm run bundle:cli && next build && node scripts/standalone.mjs",
     "typecheck": "tsc --noEmit",
     "start": "next start -p 3400",
     "electron:build": "tsc -p electron && npm run electron:bundle",
     "electron:bundle": "esbuild electron/updater.ts --bundle --platform=node --format=cjs --external:electron --outfile=electron/dist/updater.js",
     "predist": "node scripts/seed-electron-checksums.mjs",
     "dist": "npm run build && npm run electron:build && electron-builder --win nsis --publish never",
+    "deploy:local": "npm run build && npm run electron:build && electron-builder --win dir && node scripts/deploy-local.mjs",
     "dist:linux": "npm run build && npm run electron:build && electron-builder --linux AppImage deb --publish never"
   },
   "build": {

@@ -201,3 +201,10 @@ and removed), and an in-app email one-time code (needs the Magic Link template e
 - `roomsAccount()` reads the Supabase key from the view's localStorage; if the site changes its auth storage, the
   same-account check and the connect banner break.
 - A `*/` inside a doc comment ended it early once (TS errors far from the cause); keep example URLs with `/**` out of comments.
+- The engine is a child of the app's local Next server and dies with the app, so the first open after launch is a cold
+  start (the history copy or a large folder can make it slow). A warm open reuses it; the start note waits 4 s, no longer
+  claims an update, and the sidebar reads the local chat store while it waits (2026-11-23).
+- A **local** MCP server answers `/v1/models` from `backend/deploy/provider_connections.json`; with
+  `STEALTH_PROVIDER_CONNECTIONS_FILE` unset it returns `data: []`, and the desktop app reports that the local server has
+  no models. `backend/.env` now sets it to `deploy/provider_connections.json`, and the server must be started from
+  `backend/` so `load_dotenv()` finds that file (2026-11-23).

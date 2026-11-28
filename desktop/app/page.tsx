@@ -189,7 +189,8 @@ function TreeFolder({ entry, directory, depth, onOpen, selected }: {
 }
 
 /** A model call refused for want of a website session (lib/websession.ts SIGN_IN_TO_RUN): the page offers the sign-in instead of an error. */
-const needsWebSignIn = (e?: string | null) => !!e && /sign in to run models/i.test(e)
+const needsWebSignIn = (e?: string | null) => !!e && /sign in (to run models|to use your kell plan)/i.test(e)
+const isLocalGateway = (g?: string | null) => !!g && /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(g)
 
 /** Small talk does not need the catalog; everything else is searched for a Goal/Way first (2026-11-16). */
 const CHAT_ONLY = /^\s*(hi|hello|hey|thanks|thank you|ok|okay|yes|no|yep|nope|cool|great|good|nice|lol|sure|bye)\b[\s!.?]*$/i
@@ -283,6 +284,9 @@ export default function Home() {
   const [directory, setDirectory] = useState("")
   const [engine, setEngine] = useState<{ up: boolean; error?: string } | null>(null)
   const [opening, setOpening] = useState(false)
+  // The engine start note waits a moment before it says anything: a warm start returns at once, and a
+  // flash of "starting" on every project open read like a restart (2026-11-23).
+  const [slowOpen, setSlowOpen] = useState(false)
   // Projects opened before, newest first (this device only), shown in the sidebar instead of the model list.
   const [recents, setRecents] = useState<string[]>([])
   // The recent-project list is the app's own store (app/api/projects, ~/.stealthlab/chats.db), not localStorage: the
@@ -316,6 +320,7 @@ export default function Home() {
   const [rightOpen, setRightOpen] = useState(true)
   const [resizing, setResizing] = useState<"left" | "right" | null>(null)
   const shellRef = useRef<HTMLDivElement>(null)
+  const rightPanelRef = useRef<HTMLElement>(null)
   // Only the middle of the project sidebar scrolls. The wordmark above it and the account row below it stay put, the way
   // the website chat's .dg-side-scroll / .dg-me-wrap do (routing_kell_frontend/app/chat/chat.css). Each fixed band gets a
   // soft shadow while the list has content hidden behind it; it is written to the element, not to state, so scrolling
@@ -547,6 +552,7 @@ export default function Home() {
   // The chat being read from the app's store (or the engine's backfill): a switch says so instead of going blank.
   const [sessLoading, setSessLoading] = useState<string | null>(null)
   const sessionSeq = useRef(0)                             // only the last clicked chat may fill the pane
+  const sessionsSeq = useRef(0)                            // only the last session-list read may fill the sidebar
   // A new session discards whatever a procedure search that is still running would put on screen: its picker, its
   // card, or its error belonged to the chat the person just left (2026-11-16).
   const turnGen = useRef(0)
@@ -687,6 +693,13 @@ export default function Home() {
     } catch (e: any) { setFileErr(String(e?.message || e)) }
     finally { setFileBusy(false) }
   }
+  // The file view is added above the panel's other sections; a panel scrolled down to the Way editor
+  // would otherwise look like it never changed. Bring the file into view when one is picked (2026-11-24).
+  useEffect(() => {
+    if (!filePath) return
+    const el = rightPanelRef.current
+    if (el) el.scrollTo({ top: 0, behavior: "smooth" })
+  }, [filePath])
   // The delegation for the current turn: kell's Goal/Way/Tool, the model that runs the turn, and the scoped side call.
   // `planRef` keeps the last plan even when the router answered after the prompt had already gone out.
   const [delegation, setDelegation] = useState<Delegation | null>(null)
@@ -760,20 +773,45 @@ export default function Home() {
     setChatModel(m)
     try { if (m) localStorage.setItem("kell.chat.model", m); else localStorage.removeItem("kell.chat.model") } catch { /* the state still changes */ }
   }, [])
+  // How hard the chosen model thinks (owner, 2026-11-24). Kept per model, with "default" for kell's router, in
+  // ~/.stealthlab/desktop/thinking.json: the gateway adds it to each model call (lib/thinking.ts). Auto leaves the
+  // provider's own default, which is what the app did before this control existed.
+  const [thinking, setThinking] = useState<Record<string, string>>({})
+  useEffect(() => {
+    let alive = true
+    fetch("/api/thinking").then((r) => r.json()).then((j) => { if (alive && j?.map) setThinking(j.map) }).catch(() => undefined)
+    return () => { alive = false }
+  }, [])
+  const thinkKey = chatModel || "default"
+  const thinkLevel = thinking[thinkKey] || "auto"
+  const chooseThinking = useCallback((level: string) => {
+    setThinking((m) => ({ ...m, [thinkKey]: level }))
+    void fetch("/api/thinking", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ level, model: chatModel || undefined }) }).catch(() => undefined)
+  }, [chatModel, thinkKey])
   // What the model thought, and which files this chat changed: both live in the bar above the message box, so they are
   // one click away instead of being lost (2026-11-19). Thoughts default on; the choice outlasts a reload.
   const [showThoughts, setShowThoughts] = useState(true)
   useEffect(() => {
-    try { if (localStorage.getItem("kell.show.thoughts") === "off") setShowThoughts(false) } catch { /* storage blocked */ }
+    // v2: the first key could be left "off" by an older build that defaulted off, which made the switch look broken
+    // after an update. A fresh key means the feature is on unless it is turned off from here (2026-11-24).
+    try { if (localStorage.getItem("kell.show.thoughts.v2") === "off") setShowThoughts(false) } catch { /* storage blocked */ }
   }, [])
   const toggleThoughts = () => {
     setShowThoughts((on) => {
       const next = !on
-      try { localStorage.setItem("kell.show.thoughts", next ? "on" : "off") } catch { /* kept for this run */ }
+      try { localStorage.setItem("kell.show.thoughts.v2", next ? "on" : "off") } catch { /* kept for this run */ }
       return next
     })
   }
   const [editsOpen, setEditsOpen] = useState(false)
+  const editsSeen = useRef(0)
+  // A turn that changes files opens the Edits strip once; closing it stays closed until the next new edit.
+  useEffect(() => {
+    const n = files.length + otherFiles.length
+    if (n > 0 && editsSeen.current === 0) setEditsOpen(true)
+    editsSeen.current = n
+  }, [files.length, otherFiles.length])
   // Opening or starting a chat always returns the middle column to the session itself.
   useEffect(() => { setAgentView("main") }, [sessionID])
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -929,6 +967,12 @@ export default function Home() {
     }, 3_000)
     return () => window.clearInterval(t)
   }, [])
+  // A warm open finishes before this fires, so the note is for a real cold start or a folder switch.
+  useEffect(() => {
+    if (!opening) { setSlowOpen(false); return }
+    const t = window.setTimeout(() => setSlowOpen(true), 4_000)
+    return () => window.clearTimeout(t)
+  }, [opening])
   // Typeface (View > Font): apply the saved choice, tell the native menu which one it is, then follow later menu clicks.
   useEffect(() => {
     const font = readFont()
@@ -977,14 +1021,18 @@ export default function Home() {
   }, [])
 
   const loadSessions = useCallback(async () => {
+    const seq = ++sessionsSeq.current
     try {
       // Backfill once from the engine, then read the app's own store (docs/localdb.md). Timeouts keep a starting or
       // dead engine from holding the sidebar and the last chat behind it (2026-11-16).
       await fetch("/api/local/sync", { method: "POST", signal: AbortSignal.timeout(8_000) }).catch(() => undefined)
+      if (seq !== sessionsSeq.current) return
       const dir = dirRef.current
       const j = await (await fetch(`/api/local/sessions${dir ? `?directory=${encodeURIComponent(dir)}` : ""}`, { signal: AbortSignal.timeout(10_000) })).json()
+      if (seq !== sessionsSeq.current) return
       setSessions(Array.isArray(j.sessions) ? j.sessions : [])
       const p = await (await fetch("/api/sessions?projects=1", { signal: AbortSignal.timeout(8_000) })).json()
+      if (seq !== sessionsSeq.current) return
       if (Array.isArray(p.projects)) mergeProjects(p.projects.map((x: { dir: string }) => x.dir))
     } catch { /* the lists stay as they were */ }
   }, [])
@@ -1159,6 +1207,8 @@ export default function Home() {
   )
   // The answer each running chat has written so far, so opening one mid-turn shows what has been said, not a blank pane.
   const turnText = useRef<Record<string, string>>({})
+  // Chats already told that their model returned no reasoning: the note is once per chat, not once per turn.
+  const thoughtNote = useRef<Set<string>>(new Set())
   const pendingLines = useRef<Array<{ sid: string; line: Line }>>([])   // a blocking event seen while another chat was open
   // A finished chat's notice in the app, and the device notification that goes with it.
   const [doneNote, setDoneNote] = useState<{ id: string; title: string; why?: string } | null>(null)
@@ -1468,6 +1518,14 @@ export default function Home() {
       if (!chosen) return
       dir = chosen; setDirectory(chosen)
     }
+    // If the engine already serves this folder, there is nothing to start. Reusing it keeps a warm
+    // app from blanking the engine and showing the starting note for a request that returns at once
+    // (2026-11-23: the note read like a restart on every open).
+    let warm = false
+    try {
+      const cur = await (await fetch("/api/engine", { signal: AbortSignal.timeout(2_000) })).json()
+      warm = !!cur.up && !!cur.directory && samePath(cur.directory, dir)
+    } catch { /* start it below */ }
     // The pane belongs to the new folder from this moment: an empty chat and its own sessions, never the last project's,
     // while the engine boots. Waiting for the engine left the old conversation under the new name and looked like the
     // folder never opened (2026-11-16). A running turn is ended by the engine switch itself, so say so.
@@ -1477,7 +1535,7 @@ export default function Home() {
     turnGen.current++
     onScreen.current = null
     setSideView("project")                                // an open project shows its sessions, not the project list
-    setEngine(null); setOpening(true)
+    if (!warm) { setEngine(null); setOpening(true) }       // a warm engine stays up: no flash, no restart
     dirRef.current = dir
     // The engine serves one folder: the old project's turns cannot outlive the switch. Their streams will end on their
     // own; the pane starts clean, with no stale running dots or notices from the previous project (2026-11-17).
@@ -1489,20 +1547,28 @@ export default function Home() {
     setDelegateAnswer(""); setDelegateErr(""); setDelegateNote(""); setDelegateStatus(""); setDelegateAsk(""); setSessLoading(null)
     setStopNote(endedTurn ? "Opening another folder ended the turn that was running. Steps that already ran stay." : "")
     setAgentView("main")
+    // The app's own store is read even when the engine is down: the chats are still there to read, and the last chat
+    // opens from that store without waiting for an engine that may never come up. Read it before the engine POST, so
+    // the sidebar fills while a cold start runs instead of showing only the start note (2026-11-23).
+    void loadSessions()
     let j: { up?: boolean; error?: string }
-    try {
-      const r = await fetch("/api/engine", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir }) })
-      j = await r.json()
-    } catch (err) { j = { up: false, error: err instanceof Error ? err.message : String(err) } }
-    finally { setOpening(false) }
+    if (warm) {
+      setOpening(false)
+      j = { up: true }
+    } else {
+      try {
+        const r = await fetch("/api/engine", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir }) })
+        j = await r.json()
+      } catch (err) { j = { up: false, error: err instanceof Error ? err.message : String(err) } }
+      finally { setOpening(false) }
+    }
     setEngine(j.up ? { up: true } : { up: false, error: j.error || "the engine did not start" })
     if (j.up) remember(dir)
     if (j.up) {
       // The folder (and the chat to reopen, when the app is restoring the last one) is kept in the app's store.
       void fetch("/api/last", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory: dir, sessionID: session ?? null }) }).catch(() => undefined)
     }
-    // The app's own store is read even when the engine is down: the chats are still there to read, and the last chat
-    // opens from that store without waiting for an engine that may never come up.
+    // Read again after the engine is up: the local sync may have been skipped while it was starting.
     await loadSessions()
     if (session) void openSession(session)
   }
@@ -1964,6 +2030,9 @@ export default function Home() {
     let ended = false
     let failed = false
     let said = false
+    // Whether the model sent any reasoning this turn. When it sends none and Thoughts is on, the chat says so once
+    // per session instead of looking like the switch is broken (2026-11-24).
+    let sawThought = false
     // What the person asked for in the composer, and whether the engine ran something else (said once, not per step).
     const wantModel = chatModel
     let modelMismatch = false
@@ -2015,7 +2084,7 @@ export default function Home() {
           // The model's own words before the answer. The engine names it "reasoning"; the older name is kept so a
           // different engine build still shows it. Never merged into the reply (2026-11-19).
           const delta = String(d.delta ?? d.text ?? "")
-          if (delta && live()) appendThought(delta)
+          if (delta && live()) { sawThought = true; appendThought(delta) }
         }
         else if (t === "session.tool.input.started") {
           // The tool's name comes only here; the called / success / failed events carry the call's id (2026-11-07: every chip read "tool").
@@ -2119,6 +2188,15 @@ export default function Home() {
     if (live()) {
       if (!said) setLines((l) => [...l, { who: "assistant", text: ended ? "kell got no answer from the model for this. Try again, or check Settings > Models."
         : "The connection to the engine ended before an answer came. Try again.", at: Date.now() }])
+      // Thoughts on and nothing to show: say why once per chat, so the switch does not look broken. Only for a turn that
+      // actually answered -- a failed turn has its own message (2026-11-24).
+      if (ended && said && showThoughts && !sawThought && turn.sid && !thoughtNote.current.has(turn.sid)) {
+        thoughtNote.current.add(turn.sid)
+        const model = chatModel || sessionModel
+        setLines((l) => [...l, { who: "assistant",
+          text: `${model ? `${model} returns` : "This chat's model returns"} no reasoning, so there is nothing to show under Thoughts. Pick a model that does in the composer, and its thinking appears here as it runs.`,
+          at: Date.now() }])
+      }
       // Let React flush the last line, then let an active goal judge the turn (app/api/goal). A failed turn pauses it.
       setTimeout(() => { if (onScreen.current === turn.sid) goalAfterTurn.current(turn.sid, failed) }, 80)
       // The session's snapshot record lands shortly after the last stream event, and how long is not fixed: check now, then
@@ -3021,7 +3099,13 @@ export default function Home() {
                 </button>
               </div>
               <p className="dk-note mono" title={directory} style={{ overflowWrap: "anywhere" }}>{directory}</p>
-              {opening && <p className="dk-note" role="status">Starting the coding engine… the first start after an update can take a minute or two.</p>}
+              {opening && (
+                <p className="dk-note" role="status">
+                  {slowOpen
+                    ? "Still opening the coding engine… a cold start or a large folder can take several minutes."
+                    : "Opening the coding engine…"}
+                </p>
+              )}
               {engine && !engine.up && !opening && (engine.error || sessionID) && !needsWebSignIn(engine.error) && (
                 <div className="dk-err" role="status">
                   <p style={{ margin: "0 0 6px" }}>The coding engine didn&rsquo;t start{engine.error ? `: ${engine.error}` : "."}</p>
@@ -3031,7 +3115,7 @@ export default function Home() {
               {needsWebSignIn(engine?.error) && desktop() && (
                 // Models on your own plan run on the website session (the same sign-in as the rooms): one click, in your browser, nothing copied.
                 <div className="dk-err" role="status">
-                  <p style={{ margin: "0 0 6px" }}>Sign in once more to run models on your kell plan (the same sign-in the rooms use). It opens in your browser; nothing is copied.</p>
+                  <p style={{ margin: "0 0 6px" }}>Sign in to run models on your kell plan (the same sign-in the rooms use). It opens in your browser; nothing is copied.</p>
                   <div className="dk-row" style={{ margin: 0 }}>
                     <button type="button" className="btn-ink" onClick={async () => { await connectRooms("google"); void openProject() }}>Continue with Google</button>
                     <button type="button" className="btn-ink" onClick={async () => { await connectRooms("github"); void openProject() }}>Continue with GitHub</button>
@@ -3040,6 +3124,19 @@ export default function Home() {
                   </div>
                   {signinNote && <p className="dk-note">{signinNote}</p>}
                 </div>
+              )}
+
+              {engine?.up && settings?.lane === "personal" && (settings.catalog?.length ?? 0) === 0 && (
+                <p className="dk-note" role="status">
+                  {isLocalGateway(settings.gateway)
+                    ? "The local kell server has no models. Start it with its provider connections."
+                    : (
+                      <>
+                        No models are on this account yet.{" "}
+                        <a href="https://www.kell.org.in/pricing" target="_blank" rel="noreferrer">Add a plan or top up</a>, then restart kell.
+                      </>
+                    )}
+                </p>
               )}
 
               {/* Sessions first, then files; each folds away (the choice is kept for this run). */}
@@ -3408,7 +3505,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                   if (l.who === "thought") {
                     if (!showThoughts) return null
                     return (
-                      <details className="dk-thought" key={i} open={i === lines.length - 1}>
+                      <details className="dk-thought" key={i} open>
                         <summary>Thoughts</summary>
                         <div className="dk-thought-text">{l.text}</div>
                       </details>
@@ -3517,6 +3614,29 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                     </div>
                   )
                 })}
+                {/* What the turn changed, in the conversation itself. The reply is often just "done"; the files it
+                    wrote are the work, and they used to be visible only in the right panel (2026-11-24). A file name
+                    opens it in the viewer. */}
+                {!busy && files.length > 0 && (
+                  <div className="dg-run" data-agent="true">
+                    <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                    <div className="dg-col">
+                      <div className="dg-meta"><b>Kell</b><span className="dg-badge">files</span></div>
+                      <div className="dk-turn-files">
+                        <p>{files.length} file{files.length === 1 ? "" : "s"} changed in the last turn</p>
+                        <ul>
+                          {files.slice(0, 12).map((f) => (
+                            <li key={f.file}>
+                              <button type="button" className="dk-file-open" title={`Open ${f.file}`} onClick={() => void openFile(f.file)}>{f.file}</button>
+                              <span className="dk-note">{f.status === "added" && !f.patch ? "new" : `+${f.additions} −${f.deletions}`}</span>
+                            </li>
+                          ))}
+                          {files.length > 12 && <li className="dk-note">and {files.length - 12} more — see Changes</li>}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {pendingTurn && pendingTurn.sid === sessionID && (
                   // The procedure search result, in the conversation itself: the Ways, or the Goals that matched with
                   // no written Way. kell is stopped until the person picks one or says to work without one (2026-11-16).
@@ -3740,14 +3860,24 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                 ))}
               </ul>
             )}
-            {editsOpen && (files.length > 0 || otherFiles.length > 0) && (
+            {editsOpen && (
               <div className="dk-edits" role="region" aria-label="Edits in this chat">
                 <div className="dk-edits-head">
                   <b>Edits</b>
-                  <span>{files.length} file{files.length === 1 ? "" : "s"} in the last turn{otherMore ? ` · ${otherMore} more earlier` : ""}</span>
+                  <span>{files.length ? `${files.length} file${files.length === 1 ? "" : "s"} in the last turn` : "No files changed in this chat yet"}{otherMore ? ` · ${otherMore} more earlier` : ""}</span>
                   <button type="button" className="dk-icon dk-icon-sm" aria-label="Close edits" onClick={() => setEditsOpen(false)}>×</button>
                 </div>
-                <FileList files={files} />
+                {(files.length > 0 || otherFiles.length > 0)
+                  ? <>
+                      {files.length > 0 && <FileList files={files} />}
+                      {otherFiles.length > 0 && (
+                        <details className="dk-changes-earlier">
+                          <summary>{otherMore ? `${otherFiles.length} of ${otherFiles.length + otherMore}` : otherFiles.length} earlier change{otherFiles.length === 1 && !otherMore ? "" : "s"} in this folder</summary>
+                          <FileList files={otherFiles} />
+                        </details>
+                      )}
+                    </>
+                  : <p className="dk-note">No edits in this chat yet.</p>}
                 {filesNote && <p className="dk-note">{filesNote}</p>}
               </div>
             )}
@@ -3766,6 +3896,19 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                   means kell's router picks the rung, which is what the app did before there was a bar to choose on. */}
               <ModelPicker value={chatModel} catalog={settings?.catalog || []} onChange={chooseChatModel}
                 label="Model for the main chat" />
+              {/* The thinking level for the model on this bar (or kell's router, when none is picked): Auto keeps the
+                  provider's default; the levels are the ones Z.ai and DeepSeek document (2026-11-24). */}
+              <label className="dk-think" data-level={thinkLevel}
+                title="How hard the model thinks before it answers. Auto keeps the provider's default; GLM-5.3 cannot turn thinking off.">
+                <span>Thinking</span>
+                <select value={thinkLevel} onChange={(e) => chooseThinking(e.target.value)} aria-label="Thinking level">
+                  <option value="auto">Auto</option>
+                  <option value="off" disabled={/glm/i.test(chatModel)}>Off</option>
+                  <option value="low">Low</option>
+                  <option value="high">High</option>
+                  <option value="max">Max</option>
+                </select>
+              </label>
               {/* Two things the turn produces that used to be invisible: the model's own reasoning, and the files it
                   changed. Both are one click from the bar that sent the message (2026-11-19). */}
               <button type="button" className="dk-bar-btn" aria-pressed={showThoughts} data-on={showThoughts || undefined}
@@ -3773,7 +3916,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
                 onClick={toggleThoughts}>Thoughts</button>
               <button type="button" className="dk-bar-btn" aria-pressed={editsOpen} data-on={editsOpen || undefined}
                 title={files.length ? `${files.length} file${files.length === 1 ? "" : "s"} changed in this chat` : "No edits in this chat yet"}
-                disabled={!files.length && !otherFiles.length} onClick={() => setEditsOpen((o) => !o)}>
+                onClick={() => setEditsOpen((o) => !o)}>
                 Edits{files.length ? ` ${files.length}` : ""}
               </button>
               {busy && (
@@ -3850,7 +3993,7 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
           )}
         </section>
 
-        <aside className="dk-panel" aria-label="File, changes, steps and tools">
+        <aside className="dk-panel" ref={rightPanelRef} aria-label="File, changes, steps and tools">
           {/* While the divider is dragged, a transparent shield keeps a file view or an embedded frame from swallowing the pointer. */}
           {resizing === "right" && <div className="dk-shield" aria-hidden="true" />}
           {/* The agents in this session: the session itself and the model the router delegated to. Clicking one swaps the
@@ -3910,6 +4053,24 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
               </button>
             ))}
           </div>
+          {/* Changes are visible here, not only behind the composer's Edits button: the right panel is where a
+              person looks while reviewing a turn (2026-11-24). Only the last turn's files are listed first; the
+              working tree's older changes are folded away so the turn's own work is not buried (2026-11-24). */}
+          {(files.length > 0 || otherFiles.length > 0) && (
+            <section className="dk-changes" aria-label="Changes in this chat">
+              <div className="dk-panel-head">
+                <h2>Changes</h2>
+                <span className="dk-note">{files.length ? `${files.length} file${files.length === 1 ? "" : "s"} in the last turn` : "no file in the last turn"}</span>
+              </div>
+              {files.length > 0 && <FileList files={files} />}
+              {otherFiles.length > 0 && (
+                <details className="dk-changes-earlier">
+                  <summary>{otherMore ? `${otherFiles.length} of ${otherFiles.length + otherMore}` : otherFiles.length} earlier change{otherFiles.length === 1 && !otherMore ? "" : "s"} in this folder</summary>
+                  <FileList files={otherFiles} />
+                </details>
+              )}
+            </section>
+          )}
           {/* The file view: the file picked in the sidebar's tree, read-only, with its size and a copy button. */}
           {filePath && (
             <section className="dk-viewer" aria-label={`File ${filePath}`}>
@@ -3946,7 +4107,10 @@ Remake it with kell-docs at the same path; keep everything else as it is.`, [])}
             </section>
           )}
           {/* The Way bar that sat here (Submit a Way) was removed (owner, 2026-11-28): a Way is run as an execution
-              (the sidebar's Executions), and written or improved on its own page. */}
+              (the sidebar's Executions), and written or improved on its own page.
+              The 0.1.34 work had the panel return when a file was closed; that is deliberately NOT kept here -- with
+              the panel gone, closing a file returns the right sidebar to its other contents (Changes, files), which
+              is what main already does. */}
         </aside>
         <div className="dk-scrim-right" onClick={() => setRightOpen(false)} aria-hidden="true" />
       </div>

@@ -7,7 +7,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import type { OC, Client } from "./oc-types"
-import { pooledEngineConfig, personalEngineConfig, ownKeyLane } from "./pooled"
+import { pooledEngineConfig, personalEngineConfig, personalEngineFallback, ownKeyLane } from "./pooled"
 import { freshSignIn } from "./signin"
 import { withDocsPath } from "./docs"
 import { engineEnv, kellEntriesFromOpenCode, moveHistoryOnce } from "./enginehome"
@@ -20,6 +20,7 @@ export type Engine = { baseUrl: string; password: string; directory: string }
 // 10 minutes: a project on OneDrive with a few GB of files can spend several minutes in the
 // engine's first scan before it prints its port (2026-11-22: a 6 GB CS6101 folder missed 3 min).
 export const ENGINE_START_MS = 600_000
+const ENGINE_START_MIN = Math.round(ENGINE_START_MS / 60_000)
 
 // The platform package inside the app (electron-builder unpacks these binaries beside app.asar) and the binary's name.
 const platformBin = () => (process.platform === "win32" ? "opencode.exe" : "opencode")
@@ -84,30 +85,56 @@ export async function engineStart(directory: string): Promise<Engine> {
 async function startEngine(directory: string): Promise<Engine> {
   const exe = findEngineExe()
   if (!exe) throw new Error("kell's coding engine is missing from this install; reinstall kell")
-  engineStop()
   // Which lane pays: a joined organization first; else a developer's own key when `kell setup --client opencode` set one up;
   // else the signed-in person's own plan through kell's gateway (the models come from the gateway, so this waits on it).
   await freshSignIn()                                  // an expired sign-in made every gateway call answer 401
   let pooled = pooledEngineConfig()
   if (!pooled && !ownKeyLane()) {
     const personal = await personalEngineConfig()
-    if (!personal.ok) throw new Error(personal.message)
-    pooled = personal.engine
+    if (!personal.ok) {
+      // An empty model catalog is not a broken engine. Start on kell's default ladder so the app is
+      // usable; the gateway's answer on the first turn says what the account needs (2026-11-23).
+      if (personal.reason === "no-models") {
+        const fallback = personalEngineFallback()
+        if (!fallback) throw new Error(personal.message)
+        pooled = fallback
+      } else {
+        throw new Error(personal.message)
+      }
+    } else {
+      pooled = personal.engine
+    }
   }
+  // Only now stop the engine that is running: a failed sign-in or lane lookup must not leave the app
+  // with no engine at all (2026-11-23). The stop still precedes the history move, which needs the
+  // database to itself.
+  engineStop()
   // kell's own folders, never OpenCode's (lib/enginehome.ts); the first start there brings the old history across once
   // (a worker thread: the app keeps answering meanwhile).
   await moveHistoryOnce()
   let engine: Engine | undefined
   engine = await new Promise<Engine>((ok, no) => {
-    const read = (chunk: any, fail: boolean) => {
-      const text = String(chunk)
-      const url = text.match(/server listening on (http\S+)/)?.[1]
-      const pass = text.match(/server password (\S+)/)?.[1]
+    // The port and password can arrive in one chunk or across two; buffer stdout instead of matching each
+    // chunk, so a split line does not turn a healthy start into a timeout (2026-11-23).
+    let out = ""
+    // stderr is diagnostics, not a failure: the engine may warn before it prints its port. It is attached to
+    // the timeout/exit error instead of failing the start the moment anything is written there.
+    let err = ""
+    const why = () => {
+      const last = err.trim().split(/\r?\n/).filter(Boolean).slice(-2).join(" ")
+      return last ? `: ${last.slice(0, 300)}` : ""
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const read = (chunk: any) => {
+      if (engine) return
+      out += String(chunk)
+      if (out.length > 200_000) out = out.slice(-200_000)
+      const url = out.match(/server listening on (http\S+)/)?.[1]
+      const pass = out.match(/server password (\S+)/)?.[1]
       if (url && pass && engine === undefined) {
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         ok(engine = { baseUrl: url, password: pass, directory })
       }
-      if (fail && !engine) no(new Error("engine failed to start"))
     }
     // The organization lane: when this machine ran `kell join`, the child gets an inline provider on the company's
     // gateway, authenticated with the person's kell sign-in. Nothing provider-shaped is on the machine.
@@ -136,16 +163,26 @@ async function startEngine(directory: string): Promise<Engine> {
     })
     // The first start after an app update migrates the engine's history database (hundreds of MB for a long-used install),
     // which took well over 30 s on the owner's machine (2026-11-14): 30 s gave up on an engine that was still starting.
-    const timer = setTimeout(() => {
-      if (!engine) no(new Error("the coding engine did not start in 3 minutes; press Retry, and if it keeps failing restart kell"))
+    timer = setTimeout(() => {
+      if (!engine) no(new Error(`the coding engine did not start in ${ENGINE_START_MIN} minutes${why()}; press Retry, and if it keeps failing restart kell`))
     }, ENGINE_START_MS)
-    state.child.stdout?.on("data", (c: Buffer) => read(c.toString(), false))
-    state.child.stderr?.on("data", (c: Buffer) => read(c.toString(), true))
+    state.child.stdout?.on("data", read)
+    state.child.stderr?.on("data", (c: Buffer) => {
+      const text = String(c)
+      err = (err + text).slice(-4000)
+      read(text)                 // in case this build prints the ready lines on stderr; the buffer above is diagnostics
+    })
     // An engine that exits before reporting its port (killed by a newer start, or crashed) fails its start now, instead of
     // leaving the caller to wait out the timer. Only this start's own child clears the shared state.
     const child = state.child
+    child.on("error", (err) => {
+      // A spawn failure (a missing binary, a permission error) emits "error", not "exit"; without
+      // this listener the caller waited out the whole start timeout (2026-11-23).
+      if (!engine) { if (timer) clearTimeout(timer); no(new Error(`the coding engine could not start: ${err.message}`)) }
+      if (state.child === child) { state.engine = undefined; state.child = undefined }
+    })
     child.on("exit", (code) => {
-      if (!engine) { clearTimeout(timer); no(new Error(`the coding engine stopped while starting (exit ${code ?? "?"})`)) }
+      if (!engine) { if (timer) clearTimeout(timer); no(new Error(`the coding engine stopped while starting (exit ${code ?? "?"})${why()}`)) }
       if (state.child === child) { state.engine = undefined; state.child = undefined }
     })
   })
