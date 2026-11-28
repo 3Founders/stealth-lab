@@ -256,7 +256,7 @@ export default function WayPage({ id }: { id: string }) {
           const pick = (rows: CatalogueRow[], relation: string): WaySibling[] =>
             rows
               .filter((r) => r?.id && r.id !== way.id)
-              .slice(0, 6)
+              .slice(0, 10)
               .map((r) => ({
                 id: String(r.id),
                 goal_name: r.goal_name || "Untitled Way",
@@ -268,13 +268,13 @@ export default function WayPage({ id }: { id: string }) {
               }));
           try {
             const q = encodeURIComponent(String(way.goal_name || "").slice(0, 80));
-            let res = await fetch(`${MCP_ORIGIN}/v1/goals/submissions/public?q=${q}&limit=8`, {
+            let res = await fetch(`${MCP_ORIGIN}/v1/goals/submissions/public?q=${q}&limit=12`, {
               headers: { Accept: "application/json" },
             });
             let rows = res.ok ? (await res.json())?.ways : null;
             let siblings = Array.isArray(rows) ? pick(rows, "same Goal") : [];
             if (!siblings.length) {
-              res = await fetch(`${MCP_ORIGIN}/v1/goals/submissions/public?limit=8`, {
+              res = await fetch(`${MCP_ORIGIN}/v1/goals/submissions/public?limit=12`, {
                 headers: { Accept: "application/json" },
               });
               rows = res.ok ? (await res.json())?.ways : null;
